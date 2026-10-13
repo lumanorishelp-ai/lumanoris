@@ -175,6 +175,8 @@ lumanoris-dashboard/
 ├── autostart.bat             # Windows helper: opens two terminals (PHP + Next.js)
 ├── TODO.md                   # stale scratch notes for a ChatbotForm refactor
 ├── project_tree.txt          # generated snapshot of the tree, not consumed by any code
+├── .cpanel.yml               # cPanel Git Version Control deploy → scripts/deploy-backend.sh
+├── scripts/                  # verify.sh (single verification gate) · deploy-backend.sh (live backend deploy)
 ├── storage/                  # runtime artefacts, OUTSIDE the document root, contents gitignored
 │   ├── db_backup/            #   mysqldump output (default DB_BACKUP_DIR)
 │   ├── logs/                 #   php-error.log (default APP_LOG_FILE) + legacy logs
@@ -206,9 +208,11 @@ lumanoris-dashboard/
     ├── assets/               # user-uploaded images (.htaccess disables script execution)
     ├── database/
     │   ├── schema.sql        #   50 tables, utf8mb4_general_ci throughout
-    │   ├── migrations/       #   001–016 (incl. 002b), applied in filename order
+    │   ├── migrations/       #   001–017 (incl. 002b, no 014), applied in filename order
 │   ├── pending/          #   proposed migrations awaiting approval — NOT applied by migrate.php
-    │   ├── migrate.php       #   runner: dry-run by default, records schema_migrations
+    │   ├── migrate.php       #   runner: dry-run by default, records schema_migrations; --auto/--bootstrap/--approve for live deploy
+    │   ├── migration_lib.php #   runner logic (tested by migrate_selftest.php)
+    │   ├── deploy_mysql_defaults.php # deploy helper: writes a 0600 mysqldump option file from .env
     │   ├── iyzico_selftest.php #  payment integration self-test (offline + sandbox)
     │   ├── hoppa_selftest.php  #  plan purchase via Hoppa (offline + rolled-back DB; --e2e test env)
 │   ├── plan_limits_selftest.php, access_selftest.php, application_selftest.php # read-only/rolled-back self-tests
@@ -517,8 +521,68 @@ Only what the repository itself shows is documented here.
 - `api/admin/.htaccess` and `api/.htaccess` imply Apache with `mod_rewrite`, `mod_headers` and
   `mod_authz_core` for the PHP side in production.
 
-The actual hosting platform, process manager, TLS termination, and PHP deployment method could not
-be verified from the repository.
+The frontend's hosting, process manager and TLS termination could not be verified from the
+repository. The PHP backend's deployment is below.
+
+### Backend deploy (cPanel)
+
+The PHP backend runs on a cPanel host (Markahost) at `api.lumanoris.com`; the contents of `api/`
+sit in that domain's Document Root, next to the live `.env`. There is no SSH terminal. cPanel
+**Git Version Control** clones `main` from GitHub into a directory outside the web root (default
+`~/repositories/…`); **Deploy HEAD Commit** runs `.cpanel.yml`, which runs
+`scripts/deploy-backend.sh` with `DEPLOYPATH=$HOME/api.lumanoris.com`.
+
+The script, in order — any failure stops it with a non-zero exit:
+
+1. **Lock** (`flock`, or a `mkdir` lock with stale-PID takeover) — two deploys never overlap.
+2. **Backup** — `mysqldump --single-transaction` with the credentials from the live `.env`, passed
+   through a temporary 0600 option file (never on the command line), gzipped to
+   `~/lumanoris-deploy/backups/db-YYYYmmdd-HHMMSS.sql.gz`. The dump must exit 0, pass `gzip -t` and
+   end with mysqldump's `-- Dump completed` line, or the script stops before touching the database.
+   The newest 10 backups are kept.
+3. **Bootstrap** — `migrate.php --bootstrap` (once; a no-op afterwards).
+4. **Migrations** — `migrate.php --apply --auto`. If a file fails, the remaining files are not run
+   and the code is **not** copied: the old code keeps running against the additive schema.
+5. **Code** — `git archive HEAD:api` extracted over `DEPLOYPATH`: tracked files only, so `.env`,
+   `api/admin/.env`, `vendor/` and local junk never travel; `_restoretest.php` is excluded too.
+   `web/`, `docs/`, `.claude/` are outside `api/` and are never copied. Files deleted from the
+   repository are **not** deleted on the server.
+
+Logs: `~/lumanoris-deploy/logs/deploy-*.log` (full output, newest 30 kept) and
+`~/lumanoris-deploy/logs/ozet.log` (one line per run: time, result, commit, log file). Both are
+outside the web root. The script refuses a `STATE_DIR` inside `DEPLOYPATH` or `public_html`, and
+refuses a `DEPLOYPATH` without `.env` and `functions/db.php`.
+
+Environment overrides: `DEPLOYPATH` (required), `ENV_FILE` (default `$DEPLOYPATH/.env`),
+`STATE_DIR` (default `~/lumanoris-deploy`), `PHP_BIN` (default `php`), `MYSQLDUMP` (default
+`mysqldump`).
+
+**Deferred and destructive migrations** (`001`, `002`, `002b`, `003`, `005`, `006`) are never
+applied by a deploy. With the owner's approval, one file at a time, with lock + backup and without
+copying code:
+
+```bash
+DEPLOYPATH=$HOME/api.lumanoris.com bash scripts/deploy-backend.sh --approve 005_fix_table_collations.sql
+DEPLOYPATH=$HOME/api.lumanoris.com bash scripts/deploy-backend.sh --approve 002_clean_orphan_rows.sql --allow-destructive
+```
+
+Intended order for the integrity package: `001` → `002` → `002b` → `003` → `005` → `006`, after
+re-measuring orphan rows on the live data (the counts in `002`/`002b` are from 2026-08-26).
+
+**Without Git Version Control** (or to run an `--approve` without a terminal), use a one-shot cPanel
+**Cron Job**. Upload the repository (GitHub → Code → Download ZIP of `main`) with File Manager and
+extract it to `~/lumanoris-dashboard-main` (outside `public_html`), then add a cron job set to run
+every minute:
+
+```bash
+mkdir -p $HOME/lumanoris-deploy && mkdir $HOME/lumanoris-deploy/once-1 2>/dev/null && DEPLOYPATH=$HOME/api.lumanoris.com PHP_BIN=/usr/local/bin/php /bin/bash $HOME/lumanoris-dashboard-main/scripts/deploy-backend.sh >/dev/null 2>&1
+```
+
+The second `mkdir` succeeds only once, so the job runs exactly once even though cron fires every
+minute. Delete the cron job after `ozet.log` shows the result. For the next run change `once-1` to
+`once-2`. For an approved migration append `--approve FILE` (and `--allow-destructive` only where
+that file needs it) after `deploy-backend.sh`. Without `.git`, the script copies `api/` with `tar`,
+excluding `.env*`, `vendor/` and `_restoretest.php`.
 
 ## API
 
@@ -761,7 +825,21 @@ php api/database/migrate.php --apply
 php api/database/migrate.php --apply --allow-destructive  # needed for 002 and 002b
 ```
 
-Five tables are created lazily at runtime with `CREATE TABLE IF NOT EXISTS` — everything else is
+On the **live** server migrations run only through `scripts/deploy-backend.sh` (see
+[Deployment → Backend deploy (cPanel)](#backend-deploy-cpanel)), which adds three modes:
+
+| Flag | Does |
+| --- | --- |
+| `--bootstrap --backup=F` | First deploy only: when `schema_migrations` is missing or empty, records `004`/`010` as applied (with their checksums) and `001`/`002`/`002b`/`003`/`005`/`006` as deferred in `schema_migrations_deferred`. Otherwise does nothing. |
+| `--apply --auto --backup=F` | Applies files that are not applied, not deferred and not destructive. Deferred and destructive files are skipped and logged; `008` is skipped while `chatbot_hide`, `chatbot_uninterested` or `chatbot_in_list` has duplicate rows. Stops at the first failure (exit 1). Refuses to run without a fresh, complete backup or before the bootstrap. |
+| `--apply --approve=FILE --backup=F [--allow-destructive]` | Applies exactly one file, deferred or not. A destructive file also needs `--allow-destructive`. Used only with the owner's approval. |
+
+`--env=FILE` loads that `.env` first (the deploy script runs from the repo clone and passes the live
+one). `pending/` is never read in any mode. `migrate.php`'s destructive check matches `DELETE`,
+`TRUNCATE` and `DROP` at the start of a line; it does not catch `UPDATE` (`013` and `015` update
+rows and were approved on 2026-10-06).
+
+Six tables are created lazily at runtime with `CREATE TABLE IF NOT EXISTS` — everything else is
 assumed to exist:
 
 | Table | Created by |
@@ -770,7 +848,7 @@ assumed to exist:
 | `password_resets` | `AuthController::sendPasswordResetMail()` |
 | `checkout_idempotency` | `MarketplaceController::createSubscription()` |
 | `param_callback_events` | `SellerController::paramposCallback()` (replay protection) |
-| `schema_migrations` | `database/migrate.php` |
+| `schema_migrations`, `schema_migrations_deferred` | `database/migrate.php` |
 
 One conditional `ALTER TABLE` still runs at request time: `NotificationController` adds `message_tr`
 and `message_en` to `notifications`. The equivalent inside `createSubscription` was moved out to

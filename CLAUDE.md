@@ -83,7 +83,9 @@ Eksik ownership/auth kontrolü bulduğunda sırayla:
 - Sıra: `--status` çıktısını göster → uygulanacak dosyaları listele → `--apply` → tekrar `--status` göster.
 - `--apply` bekleyen tüm yıkıcı olmayan dosyaları birlikte uygular, tek dosya seçilemez. `migrate.php`'nin yıkıcılık kontrolü `UPDATE`'i yakalamaz. Bu yüzden `migrations/` altında onay bekleyen bir veri düzeltme dosyası varken `--apply` çalıştırma; o dosyayı onaya kadar `migrations/` dışında tut.
 - Bu izin yalnızca var olan migration'ı **uygulamayı** kapsar; yeni şema tasarımı hâlâ "önce raporla" kapsamında.
-- Canlı/uzak veritabanı için: uygulama sırasını ve her dosya için geri alma notunu yaz (DDL örtük commit yapar; geri alma ayrı bir ters migration demektir). Çalıştırmayı kullanıcı yapar.
+- **Canlıda migration yalnızca `scripts/deploy-backend.sh` ile** (cPanel Git Version Control → `.cpanel.yml`, ya da README → "Backend deploy (cPanel)"daki tek seferlik Cron komutu) ve yalnızca **yıkıcı olmayan, ertelenmemiş** dosyalar (`migrate.php --apply --auto`; kilit + yedek + log betikte). Yıkıcı ve ertelenmiş dosyalar (001/002/002b/003/005/006 ve ileride `MIGRATION_DEFERRED`'a eklenenler) yalnızca **kullanıcının açık onayıyla**, tek tek: `deploy-backend.sh --approve DOSYA [--allow-destructive]`. Deploy'u ve onaylı çalıştırmayı kullanıcı tetikler; Claude canlıya bağlanmaz, betiği canlıda çalıştırmaz.
+- **Sonuç:** `main`'e giren `migrations/` içindeki yıkıcı olmayan her dosya — `UPDATE` içerenler dahil — bir sonraki canlı deploy'da onaysız uygulanır. Onay bekleyen dosya `pending/`'de kalır (hiçbir mod okumaz); canlıda onaysız çalışmaması gereken yeni bir dosya `migration_lib.php` → `MIGRATION_DEFERRED`'a eklenir. `migrate_selftest` D bölümü, başlangıç kaydından sonra `--auto`'nun 004/010 ve 001–006'ya dokunmadığını, `pending/`'i okumadığını ve bekleyenlerin hiçbirinin yıkıcı olmadığını kilitler.
+- Canlı için yeni bir migration yazarken: uygulama sırasını ve her dosya için geri alma notunu yaz (DDL örtük commit yapar; geri alma ayrı bir ters migration demektir).
 
 ### Asla yapma
 

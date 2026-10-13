@@ -11,19 +11,19 @@ final class AppConfig {
     // ── Free-plan bot limits ───────────────────────────────────────────────
     const FREE_INDEPENDENT_BOT_LIMIT = 1;
     const FREE_PUBLIC_BOT_LIMIT      = 2;
+    // Madde 11 / GK-3 / GK-17 — yayınlanmış bir botu geri özele çekme hakkı,
+    // TOPLAM (aylık yenilenmez). Canlı değer `plans.privacy_right_limit`
+    // (migration 012); bu sabit tablo/kolon yoksa geri düşüş. pricing.js'te
+    // karşılığı yok (frontend bu değeri sunucudan okuyor).
+    const FREE_PRIVACY_RIGHT_LIMIT   = 1;
 
-    // ── Producer-plan bot limits ───────────────────────────────────────────
-    // H-10 — buradaki yorum güncelliğini yitirmişti ("chatbot_limits.php only
-    // ever applies the FREE_* limits"), iki farklı gerçeği tek cümlede
-    // birleştiriyordu. Doğrusu ikiye ayrılmış hâli:
+    // H-10 — FREE_* bir FALLBACK'tir, ölü değil: `plans.php` canlı kotaları
+    // `plans` tablosundan okuyor, tablo yoksa/plan bulunamazsa
+    // `fallbackPlan()` bu sabitlere düşüyor.
     //
-    //   • FREE_* bir FALLBACK'tir, ölü değil: `plans.php` canlı kotaları
-    //     `plans` tablosundan okuyor, tablo yoksa/plan bulunamazsa
-    //     `fallbackPlan()` bu sabitlere düşüyor.
-    //   • PRODUCER_* gerçekten ÖLÜ: üretici planı akışı kapalı (D-07,
-    //     `producer_plan.php`), bu iki sabiti hiçbir kod okumuyor.
-    const PRODUCER_INDEPENDENT_LIMIT = 10;
-    const PRODUCER_PUBLIC_LIMIT      = 20;
+    // S14 (2026-10-06) — kullanılmayan PRODUCER_INDEPENDENT_LIMIT /
+    // PRODUCER_PUBLIC_LIMIT sabitleri, üretici hesabı akışıyla birlikte
+    // kaldırıldı.
 
     // ── Eğitim metni tavanı ────────────────────────────────────────────────
     // B-13 — okuma tarafı (ChatController, Gemini'ye giden bağlam) 60.000
@@ -157,6 +157,7 @@ final class AppConfig {
     const TABLE_DIALOG_BOOKS   = 'user_dialog_books';
     const TABLE_COIN_BALANCES  = 'user_coin_balance';
     const TABLE_PURCHASE_CREDITS = 'chatbot_purchase_credits';
+    const TABLE_PRIVACY_RIGHT_USAGE = 'user_privacy_right_usage';
 
     // ── Error codes ────────────────────────────────────────────────────────
     const ERR_VALIDATION       = 'VALIDATION_ERROR';

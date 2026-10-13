@@ -11,19 +11,27 @@
  * Bu script:
  *   • dosyaları ada göre sıralayıp (001, 002, …) sırayla uygular,
  *   • uygulananları `schema_migrations` tablosunda tutar, tekrar çalıştırmaz,
+ *   • ertelenenleri `schema_migrations_deferred`'da tutar, onaysız çalıştırmaz,
  *   • her dosyayı kendi transaction'ında çalıştırır (DDL örtük commit
  *     yaptığında bunu söyler, sessizce geçmez),
+ *   • ilk hatada durur; sonraki dosyalar çalışmaz, çıkış kodu 1,
  *   • VARSAYILAN OLARAK KURU ÇALIŞIR. Gerçekten uygulamak için --apply gerekir.
  *
- * 002_clean_orphan_rows.sql kendi başlığında "Every statement here DELETES OR
- * REWRITES DATA" diyor. Bu yüzden veri silen migration'lar ayrıca
- * --allow-destructive ister; --apply tek başına onları çalıştırmaz.
+ * Veri silen migration'lar ayrıca --allow-destructive ister; --apply tek
+ * başına onları çalıştırmaz. `pending/` dizini hiçbir modda okunmaz.
  *
- * Kullanım:
+ * Kullanım (yerel):
  *   php api/database/migrate.php                  # ne yapılacağını listeler
  *   php api/database/migrate.php --apply          # yıkıcı olmayanları uygular
- *   php api/database/migrate.php --apply --allow-destructive
  *   php api/database/migrate.php --status
+ *
+ * Canlı — YALNIZCA scripts/deploy-backend.sh üzerinden (kilit + yedek + log):
+ *   --bootstrap --backup=F            başlangıç kaydı; tablo doluysa hiçbir şey yapmaz
+ *   --apply --auto --backup=F         yıkıcı olmayan, ertelenmemiş, ön kontrolü
+ *                                     geçen dosyalar; diğerleri atlanıp yazılır
+ *   --apply --approve=DOSYA --backup=F [--allow-destructive]
+ *                                     tek dosya, kullanıcı onayıyla
+ *   --env=DOSYA                       .env yolu (deploy betiği canlı dizindekini verir)
  */
 
 if (PHP_SAPI !== 'cli') {
@@ -31,121 +39,88 @@ if (PHP_SAPI !== 'cli') {
     exit("Bu script yalnızca komut satırından çalıştırılabilir.\n");
 }
 
+$args = array_slice($argv, 1);
+$opt  = static function (string $name) use ($args): ?string {
+    foreach ($args as $a) {
+        if (strpos($a, "--$name=") === 0) {
+            return substr($a, strlen($name) + 3);
+        }
+    }
+    return null;
+};
+
 require_once __DIR__ . '/../functions/env.php';
-require_once __DIR__ . '/../functions/db.php';
 
-$args             = array_slice($argv, 1);
-$apply            = in_array('--apply', $args, true);
-$allowDestructive = in_array('--allow-destructive', $args, true);
-$statusOnly       = in_array('--status', $args, true);
-
-$dir   = __DIR__ . '/migrations';
-$files = glob($dir . '/*.sql') ?: [];
-sort($files, SORT_STRING); // 001_, 002_, 003_ … sıra dosya adından gelir
-
-if ($files === []) {
-    exit("Migration bulunamadı: $dir\n");
+// Deploy betiği repo kopyasından çalışır; .env canlı dizinde. Varsayılan
+// yükleyiciden ÖNCE yüklenir (env_load ilk gelen değeri tutar).
+$envFile = $opt('env');
+if ($envFile !== null) {
+    if (!is_file($envFile)) {
+        fwrite(STDERR, "--env: dosya yok: $envFile\n");
+        exit(1);
+    }
+    env_load($envFile);
 }
+
+require_once __DIR__ . '/../functions/db.php';
+require_once __DIR__ . '/migration_lib.php';
+
+$dir = __DIR__ . '/migrations';
+$log = static function (string $line): void {
+    echo $line, "\n";
+};
 
 try {
-    $db   = Database::getInstance();
-    $conn = $db->getConnection();
+    $conn = Database::getInstance()->getConnection();
 } catch (Throwable $e) {
-    exit('Veritabanına bağlanılamadı: ' . $e->getMessage() . "\n");
+    fwrite(STDERR, 'Veritabanına bağlanılamadı: ' . $e->getMessage() . "\n");
+    exit(1);
 }
 
-$conn->exec(
-    'CREATE TABLE IF NOT EXISTS schema_migrations (
-        filename   VARCHAR(191) PRIMARY KEY,
-        checksum   CHAR(64)     NOT NULL,
-        applied_at DATETIME     NOT NULL
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4'
-);
-
-$applied = [];
-foreach ($conn->query('SELECT filename, checksum, applied_at FROM schema_migrations')->fetchAll(PDO::FETCH_ASSOC) as $row) {
-    $applied[$row['filename']] = $row;
-}
-
-/** Veriyi silen/yeniden yazan ifade içeriyor mu? */
-function isDestructive(string $sql): bool
-{
-    return (bool) preg_match('/^\s*(DELETE|TRUNCATE|DROP)\b/im', $sql);
-}
-
-$pending = 0;
-$failed  = 0;
-
-foreach ($files as $file) {
-    $name = basename($file);
-    $sql  = (string) file_get_contents($file);
-    $hash = hash('sha256', $sql);
-
-    if (isset($applied[$name])) {
-        $note = $applied[$name]['checksum'] === $hash
-            ? 'uygulanmış'
-            : 'UYGULANMIŞ AMA DOSYA DEĞİŞMİŞ — içeriği kontrol edin';
-        printf("  [=] %-40s %s (%s)\n", $name, $note, $applied[$name]['applied_at']);
-        continue;
+if (in_array('--bootstrap', $args, true)) {
+    $why = migrationCheckBackup($opt('backup'));
+    if ($why !== null) {
+        $log("DURDU: $why");
+        exit(1);
     }
-
-    $destructive = isDestructive($sql);
-    $pending++;
-
-    if ($statusOnly || !$apply) {
-        printf("  [ ] %-40s bekliyor%s\n", $name, $destructive ? '  ⚠ VERİ SİLER' : '');
-        continue;
-    }
-
-    if ($destructive && !$allowDestructive) {
-        printf("  [!] %-40s ATLANDI — veri siliyor, --allow-destructive gerekli\n", $name);
-        continue;
-    }
-
-    printf("  [>] %-40s uygulanıyor…\n", $name);
-
-    // DDL örtük commit yapar; yine de transaction açıyoruz ki saf DML
-    // migration'ları (002 gibi) atomik olsun.
-    $inTransaction = false;
     try {
-        $conn->beginTransaction();
-        $inTransaction = true;
+        migrationBootstrap($conn, $dir, $log);
     } catch (Throwable $e) {
-        $inTransaction = false;
+        $log('DURDU: ' . $e->getMessage());
+        exit(1);
     }
-
-    try {
-        $conn->exec($sql);
-
-        if ($inTransaction && $conn->inTransaction()) {
-            $conn->commit();
-        } elseif ($inTransaction) {
-            echo "      not: DDL örtük COMMIT yaptı, bu dosya geri alınamaz.\n";
-        }
-
-        $stmt = $conn->prepare(
-            'INSERT INTO schema_migrations (filename, checksum, applied_at) VALUES (?, ?, NOW())'
-        );
-        $stmt->execute([$name, $hash]);
-        echo "      tamam\n";
-    } catch (Throwable $e) {
-        if ($inTransaction && $conn->inTransaction()) {
-            $conn->rollBack();
-        }
-        $failed++;
-        echo '      HATA: ' . $e->getMessage() . "\n";
-        echo "      Sıra bozulmasın diye duruluyor — sonraki migration'lar çalıştırılmadı.\n";
-        break;
-    }
+    exit(0);
 }
+
+$apply = in_array('--apply', $args, true) && !in_array('--status', $args, true);
+$auto  = in_array('--auto', $args, true);
+
+$result = migrationRun($conn, [
+    'dir'              => $dir,
+    'apply'            => $apply,
+    'auto'             => $auto,
+    'allowDestructive' => in_array('--allow-destructive', $args, true),
+    'approve'          => $opt('approve'),
+    'backup'           => $opt('backup'),
+], $log);
 
 echo "\n";
-if (!$apply && $pending > 0) {
-    echo "$pending migration bekliyor. Uygulamak için: php api/database/migrate.php --apply\n";
-    echo "Veri silen dosyalar için ayrıca --allow-destructive gerekir.\n";
-} elseif ($failed > 0) {
-    echo "Bir migration başarısız oldu. Yukarıdaki hatayı giderip tekrar çalıştırın.\n";
+foreach ($result['skipped'] as $name => $why) {
+    echo "ATLANDI: $name — $why\n";
+}
+
+if ($result['failed'] !== null) {
+    echo "HATA: {$result['failed']} başarısız oldu. Yukarıdaki hatayı giderip tekrar çalıştırın.\n";
     exit(1);
-} elseif ($pending === 0) {
+}
+if ($result['error'] !== null) {
+    exit(1);
+}
+if (!$apply && $result['pending'] !== []) {
+    echo count($result['pending']) . " migration bekliyor. Uygulamak için: php api/database/migrate.php --apply\n";
+    echo "Veri silen dosyalar için ayrıca --allow-destructive gerekir.\n";
+} elseif ($apply) {
+    echo count($result['applied']) . " migration uygulandı.\n";
+} else {
     echo "Her şey güncel.\n";
 }

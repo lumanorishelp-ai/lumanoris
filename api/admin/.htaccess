@@ -21,7 +21,7 @@ RewriteEngine On
 RewriteBase /admin/
 
 # Deny first, then route. [F] short-circuits before the index.php fallback.
-RewriteRule (^|/)(db_backup|functions|partials|subpages|\.git)(/|$) - [F,L,NC]
+RewriteRule (^|/)(db_backup|functions|partials|subpages|cron|\.git)(/|$) - [F,L,NC]
 RewriteRule (^|/)(\.env|error_log|composer\.(json|lock))$ - [F,L,NC]
 
 RewriteCond %{REQUEST_FILENAME} !-f

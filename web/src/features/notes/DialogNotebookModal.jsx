@@ -5,7 +5,7 @@ import { Button } from '@/shared/ui/button';
 import { toast } from '@/shared/hooks/use-toast';
 import { BookMarked } from 'lucide-react';
 
-export default function DialogNotebookModal({ userId, botId, inputMessage, outputMessage, isOpen, onClose, onPublish }) {
+export default function DialogNotebookModal({ userId, botId, inputMessage, outputMessage, messageId, isOpen, onClose, onPublish }) {
     const [title, setTitle] = useState("");
     const [showFeedback, setShowFeedback] = useState(false);
     const [isSubmitting, setIsSubmitting] = useState(false); // Çift tıklamayı önlemek için
@@ -15,13 +15,13 @@ export default function DialogNotebookModal({ userId, botId, inputMessage, outpu
         setIsSubmitting(true);
 
         try {
+            // N-30 — soru/cevap METNİ gönderilmiyor: sunucu, kullanıcının kendi
+            // geçmişindeki bu bot mesajından ikisini de DB'den kopyalıyor ve
+            // bota sohbet erişimini denetliyor. inputMessage/outputMessage
+            // yalnızca önizleme için.
             const payload = {
-                user_id: userId,
-                chatbot_id: botId,
+                message_id: messageId,
                 name: title,
-                input_message: inputMessage,
-                output_message: outputMessage,
-                // gerekirse diğer alanları da ekle
             };
 
             const formData = new FormData();

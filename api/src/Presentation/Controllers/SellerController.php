@@ -264,14 +264,24 @@ class SellerController {
         reconcilePayments($db, $db->getConnection());
     }
 
+    /**
+     * N-22 — KAPATILDI (410). `POST /api/seller/marketplace_refund.php`.
+     *
+     * Bu uç yalnızca admin oturumuna bakıyordu, CSRF denetimi YOKTU: admin
+     * paneli açıkken ziyaret edilen üçüncü taraf bir sayfa, admin'in çerezini
+     * taşıyan bir POST ile herhangi bir ödemeyi iade ettirebilirdi (gerçek
+     * para hareketi). Hiçbir yer çağırmıyordu (`web/src`, `api/admin`,
+     * `api/router.php` araması, 2026-10-07).
+     *
+     * İade artık YALNIZCA admin panelinin CSRF korumalı "Paket Ödemeleri"
+     * ekranından (`api/admin/ajax/odemeler.php` → `hostedPlanRefund()`).
+     * İade fonksiyonları yerinde duruyor: `hostedPlanRefund()`
+     * (functions/hosted_plan_payments.php) ve iyzico `processRefund()`
+     * (functions/checkout_payments.php). iyzico/pazaryeri iadesi için şu an
+     * bir ekran yok (iyzico zaten anahtarsız, kapalı).
+     */
     public static function refund(): void {
-        require_method('POST');
-        AuthMiddleware::requireAdmin();
-        require_once __DIR__ . '/../../../functions/ParamPosMarketplace.php';
-        require_once __DIR__ . '/../../../functions/checkout_payments.php';
-        $data = json_decode($_POST['data'] ?? file_get_contents('php://input'), true) ?? null;
-        $db   = Database::getInstance();
-        processRefund($db, $db->getConnection(), $data ?? []);
+        JsonResponse::error('Bu işlem artık desteklenmiyor. İade admin panelinden yapılır.', 410, AppConfig::ERR_VALIDATION);
     }
 
     /**

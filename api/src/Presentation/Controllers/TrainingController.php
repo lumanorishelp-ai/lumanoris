@@ -274,7 +274,14 @@ class TrainingController {
     // reachable with no session and no size limit at all — anyone on the
     // internet could submit arbitrarily large/malformed PDFs and burn server
     // CPU/memory in Smalot\PdfParser (DoS).
-    private const MAX_PDF_BYTES = 15 * 1024 * 1024;
+    //
+    // 2026-10-05 (S21 kararı): 15 MB → 5 MB. 15 MB arayüzde vaat ediliyordu
+    // ama base64 ile ~20 MB istek gövdesi demekti; varsayılan
+    // post_max_size=8M'de fiili sınır ~6 MB'tı (L-01). 5 MB ≈ 6,7 MB gövde,
+    // 8M'nin altında kalıyor. Arayüzdeki sınır (create/page.jsx →
+    // KB_MAX_PDF_BYTES) bununla ELLE senkron. Artırılacaksa sunucu
+    // post_max_size'ı ile birlikte.
+    private const MAX_PDF_BYTES = 5 * 1024 * 1024;
 
     /**
      * PDF metnini çıkarır.
@@ -341,7 +348,11 @@ class TrainingController {
             JsonResponse::error('Geçersiz base64 verisi.', 400, AppConfig::ERR_VALIDATION);
         }
         if (strlen($pdfBytes) > self::MAX_PDF_BYTES) {
-            JsonResponse::error('PDF dosyası çok büyük (maks. 15MB).', 413, AppConfig::ERR_VALIDATION);
+            JsonResponse::error(
+                sprintf('PDF dosyası çok büyük (maks. %d MB).', self::MAX_PDF_BYTES / 1024 / 1024),
+                413,
+                AppConfig::ERR_VALIDATION
+            );
         }
 
         $tmpFile = tempnam(sys_get_temp_dir(), 'pdf');

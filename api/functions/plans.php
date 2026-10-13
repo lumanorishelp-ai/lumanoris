@@ -106,6 +106,7 @@ function fallbackPlan(): array
         'independent_bot_limit' => AppConfig::FREE_INDEPENDENT_BOT_LIMIT,
         'public_bot_limit'      => AppConfig::FREE_PUBLIC_BOT_LIMIT,
         'daily_message_limit'   => AppConfig::DAILY_FREE_MESSAGES,
+        'privacy_right_limit'   => AppConfig::FREE_PRIVACY_RIGHT_LIMIT,
         'is_default'            => 1,
         'source'                => 'appconfig-fallback',
     ];

@@ -11,6 +11,7 @@ export default function AddToListModal({ userId, botId, isOpen, onClose, header 
     const [initialListIds, setInitialListIds] = useState([]); // İlk açılıştaki durum (karşılaştırma için)
     const [showFeedback, setShowFeedback] = useState(false);
     const [loading, setLoading] = useState(false);
+    const [errorMsg, setErrorMsg] = useState('');
 
     // Listeleri ve botun durumunu çek
     const fetchListsStatus = async () => {
@@ -49,7 +50,7 @@ export default function AddToListModal({ userId, botId, isOpen, onClose, header 
     const handleAddNewList = async () => {
         const trimmedName = newListName.trim();
         if (trimmedName && !allLists.some(list => list.name === trimmedName)) {
-            const newListData = { user_id: userId, name: trimmedName };
+            const newListData = { name: trimmedName }; // kimlik oturumdan
 
             try {
                 const response = await fetch('/api/social/adduserlist.php', {
@@ -65,52 +66,59 @@ export default function AddToListModal({ userId, botId, isOpen, onClose, header 
                     setSelectedListIds(prev => [...prev, Number(result.listId)]); // Yeni listeyi otomatik seç
                     setNewListName('');
                     if (onCreateList) onCreateList(newListItem);
+                } else {
+                    setErrorMsg(result?.message || 'Liste oluşturulamadı.');
                 }
             } catch (error) {
                 console.error("Liste oluşturma hatası:", error);
+                setErrorMsg('Sunucuya ulaşılamadı. Liste oluşturulamadı.');
             }
         }
     };
 
+    /* N-35 — eskiden istekler gönderilip YANITLARINA BAKILMADAN "Kaydedildi"
+       deniyor ve pencere kapanıyordu; sunucu reddetse de kullanıcı kaydedildi
+       sanıyordu. Şimdi her yanıt kontrol ediliyor: hepsi başarılıysa kapanır;
+       biri başarısızsa pencere açık kalır, mesaj gösterilir ve gerçek durum
+       sunucudan yeniden okunur (yarım kalan değişiklik görünür). */
     const handleSave = async () => {
         setLoading(true);
+        setErrorMsg('');
 
-        // Farkları bul
         const added = selectedListIds.filter(id => !initialListIds.includes(id));
         const removed = initialListIds.filter(id => !selectedListIds.includes(id));
 
-        try {
-            // 1. Yeni eklenenleri API'ye gönder
-            const addPromises = added.map(listId =>
-                fetch('/api/social/addbottolist.php', {
+        const post = async (url, listId) => {
+            try {
+                const res = await fetch(url, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                    body: new URLSearchParams({ data: JSON.stringify({ chatbot_id: botId, list_id: listId }) })
-                })
-            );
+                    body: new URLSearchParams({ data: JSON.stringify({ chatbot_id: botId, list_id: listId }) }),
+                    credentials: 'include',
+                });
+                const result = await res.json().catch(() => null);
+                return res.ok && result?.success ? null : (result?.message || `HTTP ${res.status}`);
+            } catch {
+                return 'Sunucuya ulaşılamadı';
+            }
+        };
 
-            // 2. Çıkarılanları API'ye gönder
-            const removePromises = removed.map(listId =>
-                fetch('/api/social/deletebotfromlist.php', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                    body: new URLSearchParams({ data: JSON.stringify({ chatbot_id: botId, list_id: listId }) })
-                })
-            );
+        const errors = (await Promise.all([
+            ...added.map(listId => post('/api/social/addbottolist.php', listId)),
+            ...removed.map(listId => post('/api/social/deletebotfromlist.php', listId)),
+        ])).filter(Boolean);
 
-            await Promise.all([...addPromises, ...removePromises]);
-
-            setShowFeedback(true);
-            setTimeout(() => {
-                setShowFeedback(false);
-                onClose();
-            }, 1500);
-
-        } catch (error) {
-            console.error("Kaydetme hatası:", error);
-        } finally {
-            setLoading(false);
+        setLoading(false);
+        if (errors.length > 0) {
+            setErrorMsg(`Bazı değişiklikler kaydedilemedi: ${errors[0]}`);
+            await fetchListsStatus();
+            return;
         }
+        setShowFeedback(true);
+        setTimeout(() => {
+            setShowFeedback(false);
+            onClose();
+        }, 1500);
     };
 
     const changedCount =
@@ -207,6 +215,11 @@ export default function AddToListModal({ userId, botId, isOpen, onClose, header 
                         )}
                     </div>
 
+                    {errorMsg && (
+                        <p role="alert" className="mt-4 rounded-lg border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">
+                            {errorMsg}
+                        </p>
+                    )}
                     <div className="mt-5 flex items-center justify-between gap-3">
                         <span className="text-[11px] text-white/35">
                             {showFeedback

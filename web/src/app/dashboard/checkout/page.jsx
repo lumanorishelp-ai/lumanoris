@@ -5,23 +5,19 @@ import { UserContext } from "@/shared/contexts/UserContext";
 import { resolveCoverSrc } from "@/shared/lib/image";
 import { formatCurrency } from "@/shared/lib/format";
 import { toast } from "@/shared/hooks/use-toast";
-import dynamic from "next/dynamic";
 import DeleteConfirmModal from "@/shared/ui/DeleteConfirmModal";
-// Kart doğrulaması ve form alanları üyelik paketi ekranıyla ORTAK — iki
-// ödeme ekranının kuralları ayrışmasın diye tek kaynağa taşındı.
-import CardFields from "@/features/payment/CardFields";
-import { validateCard, toCardPayload, EMPTY_CARD } from "@/shared/lib/card";
-
-// Loaded on demand, like the other modals in this codebase.
-const MesafeliSatisPopup = dynamic(() => import("@/widgets/info/MesafeliSatisPopup"), { ssr: false });
-const TeslimatIadePopup = dynamic(() => import("@/widgets/info/TeslimatIadePopup"), { ssr: false });
+// N-17 ara önlemi (2026-10-07): kart formu (CardFields), kart doğrulaması
+// ve kartı createsubscription.php'ye gönderen kod KALDIRILDI. Kart verisi
+// sunucumuzdan geçiyordu (PCI-DSS, AUDIT N-17); ödeme sağlayıcısı Hoppa'ya
+// geçiyor ve hedefte kart verisi bize hiç gelmeyecek (Hoppa ödeme sayfası /
+// 3D Secure yönlendirmesi). O zamana kadar bu sayfa ödeme ALMAZ ve hiçbir
+// koşulda kart içeren istek göndermez. Sözleşme onayı da yalnızca ödeme
+// adımında gerekiyordu; Hoppa akışıyla birlikte geri gelecek.
 import {
   ArrowLeft,
   Trash2,
   ShoppingBag,
   ShieldCheck,
-  Lock,
-  CreditCard,
   Sparkles,
   CheckCircle2,
   ChevronRight,
@@ -36,12 +32,7 @@ export default function Checkout() {
   const [loading, setLoading] = useState(true);
   const [step, setStep] = useState(1);
   const [confirmedItems, setConfirmedItems] = useState([]);
-  const [cardInfo, setCardInfo] = useState(EMPTY_CARD);
-  const [cardErrors, setCardErrors] = useState({});
-  const [paying, setPaying] = useState(false);
   const [deleteTargetId, setDeleteTargetId] = useState(null);
-  const [legalAccepted, setLegalAccepted] = useState(false);
-  const [legalPopup, setLegalPopup] = useState(null);
 
   useEffect(() => {
     if (!userId) {
@@ -107,61 +98,6 @@ export default function Checkout() {
     setConfirmedItems(cartItems);
     setStep(2);
     window.scrollTo({ top: 0, behavior: "smooth" });
-  };
-
-  const handlePayment = async () => {
-    const errors = validateCard(cardInfo);
-    if (Object.keys(errors).length > 0) {
-      setCardErrors(errors);
-      return;
-    }
-    setCardErrors({});
-    setPaying(true);
-    const pendingToast = toast.loading("Ödemeniz işleniyor, lütfen bekleyin...");
-    try {
-      const payload = {
-        items: confirmedItems.map((item) => ({
-          chatbot_id: item.chatbot_id,
-          duration_weeks: item.duration_weeks || 4,
-        })),
-        card: toCardPayload(cardInfo),
-      };
-      const formData = new FormData();
-      formData.append("data", JSON.stringify(payload));
-      const res = await fetch("/api/marketplace/createsubscription.php", {
-        method: "POST",
-        body: formData,
-        credentials: "include",
-      });
-      const result = await res.json();
-      if (result.success) {
-        pendingToast.update({
-          variant: "success",
-          description: "Ödemeniz alındı. Yapay zeka modelleriniz hazırlanıyor.",
-          duration: 3000,
-        });
-        setCartItems([]);
-        setConfirmedItems([]);
-        setCardInfo(EMPTY_CARD);
-        setStep(1);
-        setTimeout(() => router.push("/dashboard"), 1500);
-      } else {
-        pendingToast.update({
-          variant: "destructive",
-          description: result.message || "Ödeme işlenemedi.",
-          duration: 8000,
-        });
-      }
-    } catch (error) {
-      console.error("Payment error:", error);
-      pendingToast.update({
-        variant: "destructive",
-        description: "Ödeme sunucusuna ulaşılamadı.",
-        duration: 8000,
-      });
-    } finally {
-      setPaying(false);
-    }
   };
 
   // The server is the only authority on price: getCart returns a finished
@@ -283,10 +219,10 @@ export default function Checkout() {
               paketlerini keşfetmek için pazaryerimize göz atın.
             </p>
             <button
-              onClick={() => router.push("/dashboard")}
+              onClick={() => router.push("/dashboard/explore")}
               className="px-6 py-3 rounded-xl bg-fuchsia-600 hover:bg-fuchsia-500 text-white font-medium text-xs shadow-lg shadow-fuchsia-600/20 transition-all transform hover:-translate-y-0.5 active:translate-y-0"
             >
-              Pazaryerine Göz At
+              Keşfet
             </button>
           </div>
         ) : step === 1 ? (
@@ -433,129 +369,23 @@ export default function Checkout() {
                 </div>
               </div>
 
-              {/* Payment Method Selection Card */}
-              <div className="rounded-3xl border border-zinc-800/80 bg-zinc-900/60 p-6 backdrop-blur-xl shadow-2xl">
-                <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
-                  <CreditCard className="w-4 h-4 text-fuchsia-400" />
-                  Ödeme Yöntemi
+              {/* N-17 ara önlemi: ödeme yöntemi seçimi, kart formu ve
+                  "Ödemeyi Onayla" düğmesi kaldırıldı. */}
+              <div className="rounded-3xl border border-amber-500/20 bg-amber-500/[0.06] p-6 backdrop-blur-xl shadow-2xl">
+                <h3 className="text-sm font-semibold text-white mb-2 flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-amber-400" />
+                  Ödeme altyapısı hazırlanıyor
                 </h3>
-
-                <div className="space-y-3">
-                  <label className="flex items-center justify-between p-4 rounded-2xl bg-fuchsia-950/20 border border-fuchsia-500/40 cursor-pointer shadow-lg">
-                    <div className="flex items-center gap-3">
-                      <input
-                        type="radio"
-                        name="payment"
-                        defaultChecked
-                        className="accent-fuchsia-500"
-                      />
-                      <div>
-                        <p className="text-xs font-semibold text-white">
-                          Kredi / Banka Kartı
-                        </p>
-                        <p className="text-caption text-zinc-400">
-                          Şifrelenmiş bağlantı üzerinden güvenli işlem
-                        </p>
-                      </div>
-                    </div>
-                    <Lock className="w-4 h-4 text-fuchsia-400" />
-                  </label>
-
-                  <label className="flex items-center justify-between p-4 rounded-2xl bg-zinc-950/40 border border-zinc-800/80 hover:border-zinc-700 transition-all opacity-50 cursor-not-allowed">
-                    <div className="flex items-center gap-3">
-                      <input
-                        type="radio"
-                        name="payment"
-                        disabled
-                        className="accent-fuchsia-500"
-                      />
-                      <div>
-                        <p className="text-xs font-semibold text-zinc-300">
-                          Kurumsal Fatura / Havale
-                        </p>
-                        <p className="text-caption text-zinc-500">
-                          Doğrulanmış kurumlar için yakında
-                        </p>
-                      </div>
-                    </div>
-                  </label>
-                </div>
-
-                {/* Card details — alanlar ve doğrulama üyelik paketi
-                    ekranıyla ortak (features/payment/CardFields). */}
-                <div className="mt-5">
-                  <CardFields
-                    card={cardInfo}
-                    errors={cardErrors}
-                    onChange={(next) => {
-                      setCardInfo(next);
-                      setCardErrors({});
-                    }}
-                    disabled={paying}
-                  />
-                </div>
-
-                <div className="mt-6 pt-6 border-t border-zinc-800/80">
-                  {/* TR distance-selling rules require the sales contract and
-                      the delivery/return terms to be presented and accepted
-                      before payment. Both popups already existed under
-                      widgets/info but were mounted nowhere, so checkout carried
-                      no legal text at all. */}
-                  <label className="mb-4 flex cursor-pointer items-start gap-3">
-                    <input
-                      type="checkbox"
-                      checked={legalAccepted}
-                      onChange={(e) => setLegalAccepted(e.target.checked)}
-                      className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer accent-fuchsia-500"
-                    />
-                    <span className="text-caption leading-relaxed text-zinc-400">
-                      <button
-                        type="button"
-                        onClick={(e) => { e.preventDefault(); setLegalPopup("sale"); }}
-                        className="text-fuchsia-300 underline underline-offset-2 hover:text-fuchsia-200"
-                      >
-                        Mesafeli Satış Sözleşmesi
-                      </button>
-                      {" ve "}
-                      <button
-                        type="button"
-                        onClick={(e) => { e.preventDefault(); setLegalPopup("delivery"); }}
-                        className="text-fuchsia-300 underline underline-offset-2 hover:text-fuchsia-200"
-                      >
-                        Teslimat ve İade Koşulları
-                      </button>
-                      {"'nı okudum ve kabul ediyorum."}
-                    </span>
-                  </label>
-                  <button
-                    onClick={handlePayment}
-                    disabled={paying || !legalAccepted}
-                    className="w-full py-4 rounded-xl bg-gradient-btn hover:brightness-110 hover:-translate-y-0.5 active:translate-y-0 text-white font-semibold text-xs shadow-glow transition-all duration-200 flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <ShieldCheck className="w-4 h-4" />
-                    <span>
-                      {paying
-                        ? "İşleniyor..."
-                        : `Ödemeyi Onayla ve Tamamla (${formatCurrency(total)})`}
-                    </span>
-                  </button>
-                </div>
+                <p className="text-sm leading-relaxed text-amber-100/85">
+                  Pazaryerinden satın alma, yeni ödeme altyapımız devreye girdiğinde
+                  açılacak. Şu an ödeme alınmıyor ve kart bilgisi istenmiyor. Sepetiniz
+                  korunuyor.
+                </p>
               </div>
             </div>
 
             {/* Final Summary Card */}
             <div className="lg:col-span-5 sticky top-6">
-              {/* COMP-001: "iyzico ile Öde" rozeti buradan KALDIRILDI.
-                  Sağlayıcı markasını geçerli bir üye iş yeri sözleşmesi
-                  olmadan göstermek izinsiz marka kullanımıdır; başvuru
-                  reddedildi (BLOCKERS B3). Sağlayıcı kesinleşene kadar
-                  rozetin yeri boş kalıyor — yerine sağlayıcı adı geçmeyen
-                  nötr bir güvenlik notu konuldu. */}
-              <div className="mb-4 flex items-center justify-center gap-1.5 text-caption text-zinc-500">
-                <Lock className="h-3 w-3" />
-                <span>Kart bilgileriniz sunucularımızda saklanmaz.</span>
-              </div>
-
               <div className="rounded-3xl border border-zinc-800/80 bg-zinc-900/60 p-6 backdrop-blur-xl shadow-2xl">
                 <h3 className="text-sm font-semibold text-white mb-4">
                   Ödeme Dökümü
@@ -599,8 +429,6 @@ export default function Checkout() {
         )}
       </main>
 
-      {legalPopup === "sale" && <MesafeliSatisPopup onClose={() => setLegalPopup(null)} />}
-      {legalPopup === "delivery" && <TeslimatIadePopup onClose={() => setLegalPopup(null)} />}
 
       <DeleteConfirmModal
         isOpen={!!deleteTargetId}

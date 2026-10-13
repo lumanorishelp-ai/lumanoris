@@ -8,25 +8,51 @@ export default function CommentModal({ isOpen, onClose, comments = [], onSend })
     const [input, setInput] = useState('');
     const [localComments, setLocalComments] = useState(comments);
     const [expandedComments, setExpandedComments] = useState(new Set());
+    const [sending, setSending] = useState(false);
+    const [sendError, setSendError] = useState('');
 
     useEffect(() => {
         setLocalComments(comments);
     }, [comments]);
 
-    const handleSend = () => {
+    /* N-34 — yorum eskiden istek sonucuna bakılmadan "Siz · Şimdi" olarak
+       listeye ekleniyordu; sunucu reddettiğinde de listede kalıyordu.
+       Şimdi: satır "Gönderiliyor…" olarak eklenir, `onSend` { ok: true }
+       dönerse kesinleşir; aksi hâlde satır geri alınır, yazılan metin girişe
+       geri konur ve hata mesajı pencerede kalır. `onSend` bu sözleşmeyi
+       uygulamıyorsa (dönüş yoksa) yorum kaydedilmemiş sayılır. */
+    const handleSend = async () => {
         const trimmed = input.trim();
-        if (!trimmed) return;
+        if (!trimmed || sending) return;
 
-        // Burada oluşturduğumuz objenin key'lerini aşağıdaki render kısmıyla aynı yapıyoruz
-        const newComment = {
+        const pendingKey = `pending-${Date.now()}`;
+        const pending = {
+            _key: pendingKey,
             comment: trimmed,
             comment_owner: 'Siz',
-            commented_at: 'Şimdi'
+            commented_at: 'Gönderiliyor…'
         };
 
-        setLocalComments(prev => [...prev, newComment]);
-        onSend?.(trimmed);
+        setSendError('');
+        setSending(true);
+        setLocalComments(prev => [...prev, pending]);
         setInput('');
+
+        let result;
+        try {
+            result = await onSend?.(trimmed);
+        } catch (err) {
+            result = { ok: false, message: err?.message };
+        }
+
+        if (result?.ok) {
+            setLocalComments(prev => prev.map(c => (c._key === pendingKey ? { ...c, commented_at: 'Şimdi' } : c)));
+        } else {
+            setLocalComments(prev => prev.filter(c => c._key !== pendingKey));
+            setInput(trimmed);
+            setSendError(result?.message || 'Yorum kaydedilemedi.');
+        }
+        setSending(false);
     };
 
     const toggleCommentExpansion = (index) => {
@@ -77,7 +103,7 @@ export default function CommentModal({ isOpen, onClose, comments = [], onSend })
         return tints[sum % tints.length];
     };
 
-    const canSend = Boolean(input.trim());
+    const canSend = Boolean(input.trim()) && !sending;
 
     return (
         <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
@@ -154,6 +180,11 @@ export default function CommentModal({ isOpen, onClose, comments = [], onSend })
                 </div>
 
                 <div className="border-t border-white/[0.06] px-5 py-4">
+                    {sendError && (
+                        <p role="alert" className="mb-2.5 rounded-lg border border-rose-500/20 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">
+                            Yorum eklenemedi — {sendError}
+                        </p>
+                    )}
                     <div className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/[0.03] p-1.5 pl-3.5 transition-colors focus-within:border-fuchsia-400/40">
                         <input
                             type="text"

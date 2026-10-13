@@ -58,7 +58,7 @@ export default function HeroSection() {
                   Hemen Başla
                   <ArrowRight className="ml-2 h-4 w-4" strokeWidth={1.5} />
                 </Link>
-                {/* "Hemen Keşfet": kayıt İSTEMEDEN pazaryerine götürüyor.
+                {/* "Keşfet" (N-45: eskiden "Hemen Keşfet"): kayıt İSTEMEDEN pazaryerine götürüyor.
                     "Hemen Başla" kayda gidiyor; ikisi bilerek ayrı, çünkü
                     revize listesinin amacı kullanıcının siteyi görmeden
                     kişisel verisini paylaşmak zorunda kalmaması. */}
@@ -66,7 +66,7 @@ export default function HeroSection() {
                   href="/dashboard/"
                   className="inline-flex items-center justify-center px-6 py-3 text-base font-medium text-white/85 hover:text-white bg-white/5 hover:bg-white/10 ring-1 ring-white/20 rounded-lg transition"
                 >
-                  Hemen Keşfet
+                  Keşfet
                   <Compass className="ml-2 h-4 w-4" strokeWidth={1.5} />
                 </Link>
                 <WatchVideoButton className="inline-flex items-center justify-center px-6 py-3 text-base font-medium text-white/85 hover:text-white bg-white/5 hover:bg-white/10 ring-1 ring-white/20 rounded-lg transition">

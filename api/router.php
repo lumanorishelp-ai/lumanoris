@@ -29,7 +29,7 @@ $denied = [
     '/(^|\/)\.git(\/|$)/i',
     '/(^|\/)\.ht[a-z]*$/i',
     // never expose the source tree or vendor code as static files
-    '/(^|\/)(src|vendor|migrations|database|functions)(\/|$)/i',
+    '/(^|\/)(src|vendor|migrations|database|functions|cron)(\/|$)/i',
 ];
 foreach ($denied as $pattern) {
     if (preg_match($pattern, $uri)) {

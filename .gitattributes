@@ -1,0 +1,4 @@
+# N-25 — migration checksum ve PHP kaynakları satır sonuna duyarlı olmasın diye
+# .sql ve .php her checkout'ta LF (core.autocrlf=true olan Windows kopyalarında da).
+*.sql text eol=lf
+*.php text eol=lf

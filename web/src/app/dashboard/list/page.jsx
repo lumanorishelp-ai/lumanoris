@@ -24,6 +24,7 @@ import {
   Eye,
   SlidersHorizontal,
   Folder,
+  RefreshCw,
 } from "lucide-react";
 import { toast } from "@/shared/hooks/use-toast";
 
@@ -453,8 +454,14 @@ export default function List() {
   const [inspectList, setInspectList] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [fetchError, setFetchError] = useState(null);
+  // N-04 (M0-3 b) — yükleme durumu yoktu: istek sürerken de, istek
+  // başarısız olduğunda da "Koleksiyon Bulunamadı" boş durumu çiziliyordu.
+  // Hata varken kullanıcıya "hiç listen yok, ilkini oluştur" demek yanlış.
+  const [listsLoading, setListsLoading] = useState(true);
 
   const fetchUserLists = async (uid) => {
+    setListsLoading(true);
+    setFetchError(null);
     try {
       const response = await fetch(`/api/social/getuserlists.php?id=${uid}`);
       const data = await response.json();
@@ -503,12 +510,15 @@ export default function List() {
       console.error("Listeler yüklenirken hata oluştu:", error);
       setListData([]);
       setFetchError("Sunucuya bağlanılamadı.");
+    } finally {
+      setListsLoading(false);
     }
   };
 
   useEffect(() => {
     if (!userId) {
       setListData([]);
+      setListsLoading(false);
       return;
     }
     fetchUserLists(userId);
@@ -691,19 +701,29 @@ export default function List() {
           <div className="flex items-center gap-4 px-3 text-xs font-mono text-zinc-400 border-t sm:border-t-0 pt-2 sm:pt-0 border-zinc-800">
             <div>
               <span>Toplam Koleksiyon: </span>
-              <strong className="text-white">{listData.length}</strong>
+              <strong className="text-white">
+                {listsLoading || fetchError ? "—" : listData.length}
+              </strong>
             </div>
           </div>
         </div>
 
-        {fetchError && (
-          <div className="mb-6 rounded-2xl border border-rose-500/20 bg-rose-500/10 px-5 py-4 text-sm text-rose-300">
-            {fetchError}
+        {listsLoading ? (
+          <div className="rounded-3xl border border-zinc-800/80 bg-[#08080E] p-12 text-center text-xs text-zinc-400">
+            Listeleriniz yükleniyor...
           </div>
-        )}
-
-        {}
-        {filteredLists.length === 0 ? (
+        ) : fetchError ? (
+          <div className="flex flex-col items-start gap-3 rounded-2xl border border-rose-500/20 bg-rose-500/10 px-5 py-4 text-sm text-rose-300 sm:flex-row sm:items-center sm:justify-between">
+            <span>{fetchError}</span>
+            <button
+              onClick={() => userId && fetchUserLists(userId)}
+              className="inline-flex shrink-0 items-center gap-2 rounded-xl border border-rose-400/30 px-3 py-1.5 text-xs font-medium text-rose-200 transition-colors hover:bg-rose-500/15"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              <span>Tekrar dene</span>
+            </button>
+          </div>
+        ) : filteredLists.length === 0 ? (
           <div className="relative overflow-hidden rounded-3xl border border-zinc-800/80 bg-gradient-to-b from-[#0B0B12] via-[#08080E] to-[#050509] p-12 text-center shadow-2xl">
             <div className="relative z-10 max-w-md mx-auto flex flex-col items-center">
               <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-gradient-to-b from-zinc-800 to-zinc-900 border border-zinc-700/60 shadow-xl text-violet-400 mb-5">

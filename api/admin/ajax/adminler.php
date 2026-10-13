@@ -1,6 +1,6 @@
 <?php
 require_once __DIR__ . '/_guard.php';
-require '../../functions/db.php';
+require __DIR__ . '/../../functions/db.php'; // N-21
 require_once __DIR__ . '/../functions/admin_login.php';
 $database = Database::getInstance();
 $conn = $database->getConnection();

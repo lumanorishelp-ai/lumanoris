@@ -31,7 +31,7 @@
 # --- whole directories that must never be walked ----------------------------
 <IfModule mod_rewrite.c>
     RewriteEngine On
-    RewriteRule (^|/)(db_backup|src|vendor|migrations|database|functions|\.git)(/|$) - [F,L,NC]
+    RewriteRule (^|/)(db_backup|src|vendor|migrations|database|functions|cron|\.git)(/|$) - [F,L,NC]
 </IfModule>
 
 # --- do not leak the directory listing when an index is missing -------------

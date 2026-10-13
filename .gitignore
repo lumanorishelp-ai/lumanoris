@@ -79,3 +79,6 @@ storage/*
 next-env.d.ts
 .history/
 .DS_Store
+
+# 12 — uçtan uca doğrulama ekran görüntüleri (yerel; yalnızca rapor commit edilir)
+docs/verification/2026-10/

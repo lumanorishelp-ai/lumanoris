@@ -36,7 +36,7 @@ export default function WithdrawalModal({ isOpen, onClose, moneyAmount, userId, 
                         setIban(result.iban);
                         setIbanError('');
                     } else {
-                        setIbanError('Para çekebilmek için önce Ayarlar > Banka ve Güvenlik bölümünden IBAN kaydetmelisiniz.');
+                        setIbanError('Para çekebilmek için kayıtlı bir IBAN gerekir. IBAN bilginiz Pazaryeri Başvurusu ile alınır.');
                     }
                 } catch (err) {
                     console.error("IBAN çekme hatası: ", err);

@@ -12,6 +12,21 @@ class MarketplaceController {
         }
 
         $db          = Database::getInstance();
+
+        // Faz 4 / E8 — ücretsiz herkese açık bot (iki fiyat da boş/0) satın
+        // alınmaz: herkes zaten sohbet edebilir. Bu kapı yokken satıcısı aktif
+        // bir yazarın fiyatsız botu sepete girip 0 ₺'lik abonelik/sipariş
+        // üretebiliyordu. Satıcı kontrolünden ÖNCE: ücretsiz bot için doğru
+        // mesaj "satıcı kaydı eksik" değil, "bu bot ücretsiz".
+        $priceRow = $db->selectSingle(
+            'COALESCE(ucret_haftalik, 0) AS weekly, COALESCE(ucret_aylik, 0) AS monthly
+             FROM chatbotlar WHERE id = ? AND is_independent = 0',
+            [$chatbotId]
+        );
+        if ($priceRow && (float) $priceRow['weekly'] <= 0 && (float) $priceRow['monthly'] <= 0) {
+            JsonResponse::error('Bu chatbot ücretsiz; satın almadan sohbet edebilirsiniz.', 422, AppConfig::ERR_VALIDATION);
+        }
+
         $sellerCheck = $db->selectSingle(
             "pms.status FROM param_marketplace_sellers pms
              JOIN chatbotlar c ON c.author_user_id = pms.user_id
@@ -640,8 +655,21 @@ class MarketplaceController {
 
             // An absent price is an unpriced bot, not a free one — refuse it
             // rather than recording a 0,00 TL sale.
+            //
+            // N-16 (Faz 4) — bu kapı fiyatı SONRADAN kaldırılmış (ücretsiz
+            // herkese açık olmuş, ör. 015 sonrası platform botu) ve eski bir
+            // sepet satırında kalmış botu da zaten durduruyordu; yalnızca mesaj
+            // kullanıcıya ne yapacağını söylemiyordu.
             if ($price <= 0) {
-                $failCheckout('Bu chatbot için geçerli bir fiyat tanımlanmamış.', AppConfig::ERR_VALIDATION);
+                $isFreePublic = (int) $bot['is_independent'] === 0
+                    && (float) $bot['ucret_haftalik'] <= 0
+                    && (float) $bot['ucret_aylik'] <= 0;
+                $failCheckout(
+                    $isFreePublic
+                        ? sprintf('"%s" artık ücretsiz; satın almadan sohbet edebilirsiniz. Lütfen sepetinizden çıkarın.', $bot['isim'])
+                        : 'Bu chatbot için geçerli bir fiyat tanımlanmamış.',
+                    AppConfig::ERR_VALIDATION
+                );
             }
 
             $days       = $isMonthly ? AppConfig::SUBSCRIPTION_MONTHLY : $durationWeeks * AppConfig::SUBSCRIPTION_WEEKLY;
@@ -1008,28 +1036,9 @@ class MarketplaceController {
         JsonResponse::success(['message' => 'Abonelik güncellendi.', 'id' => $id]);
     }
 
-    public static function buyProducerAccount(): void {
-        require_method('POST');
-        $userId = AuthMiddleware::requireAuth();
-        require_once __DIR__ . '/../../../functions/ParamPosMarketplace.php';
-        require_once __DIR__ . '/../../../functions/checkout_payments.php';
-        require_once __DIR__ . '/../../../functions/producer_plan.php';
-
-        $data = json_decode($_POST['data'] ?? '', true) ?? null;
-        if (!$data) JsonResponse::error('Eksik veri.', 400, AppConfig::ERR_VALIDATION);
-
-        $data['user_id'] = $userId;
-        $status = buyProducerAccount(Database::getInstance(), $data);
-        echo json_encode($status, JSON_UNESCAPED_UNICODE);
-        exit;
-    }
-
-    public static function getProducerPlanStatus(): void {
-        require_once __DIR__ . '/../../../functions/producer_plan.php';
-        $userId = AuthMiddleware::requireAuth();
-
-        $status = getProducerPlanStatus(Database::getInstance(), $userId);
-        echo json_encode(array_merge(['success' => true], $status));
-        exit;
-    }
+    // S14 (2026-10-06) — "Üretici hesabı" (750 ₺) kaldırıldı: buyProducerAccount
+    // ve getProducerPlanStatus uç noktaları, functions/producer_plan.php ve
+    // AppConfig::PRODUCER_* sabitleri silindi. Satış zaten fail-closed'du ve
+    // teklif üyelik paketleriyle çelişiyordu. producer_plans /
+    // producer_self_use_credits tabloları şemada duruyor (silmek yıkıcı).
 }

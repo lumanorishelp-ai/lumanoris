@@ -45,11 +45,24 @@ class ChatController {
             JsonResponse::error('Geçersiz gönderen.', 400, AppConfig::ERR_VALIDATION);
         }
 
+        // N-30 — istemci artık üretilmiş bot cevabı YAZAMAZ (generateReply onu
+        // sunucuda kaydediyor); yalnızca kullanıcı mesajı ve botun kendi
+        // karşılama mesajı. İkisi de sohbet erişimi ister — eskiden erişimi
+        // olmayan bota (ör. abone olunmamış ücretli bot) satır yazılabiliyor,
+        // "Diyalog" sayacı şişirilebiliyordu.
+        require_once __DIR__ . '/../../../functions/dialog_book.php';
+        $db = Database::getInstance();
+        try {
+            chatMessageWriteCheck(new ChatbotRepository(), $db, $userId, $chatbotId, $sentBy, (string) ($data['message'] ?? ''));
+        } catch (AppException $e) {
+            JsonResponse::fromException($e);
+        }
+
         $data['sent_by']   = $sentBy;
         $data['chatbot_id'] = $chatbotId;
         $data['user_id']   = $userId;
 
-        $id = Database::getInstance()->insert('chatbot_chats', $data);
+        $id = $db->insert('chatbot_chats', $data);
         JsonResponse::success(['message' => 'Mesaj kaydedildi!', 'id' => $id]);
     }
 
@@ -59,7 +72,8 @@ class ChatController {
         if (!$chatbotId) JsonResponse::error('chatbot_id gereklidir.', 400, AppConfig::ERR_VALIDATION);
 
         $results = Database::getInstance()->selectMulti(
-            'message, sent_by FROM chatbot_chats WHERE chatbot_id = ? AND user_id = ?',
+            // N-30: `id` defter kaydı için (bot mesajının kimliği) — eklemeli alan.
+            'id, message, sent_by FROM chatbot_chats WHERE chatbot_id = ? AND user_id = ? ORDER BY id',
             [$chatbotId, $userId]
         );
         JsonResponse::success(['messages' => $results]);
@@ -330,7 +344,8 @@ class ChatController {
             JsonResponse::error('Chatbot ID gerekli.', 400, AppConfig::ERR_VALIDATION);
         }
 
-        if (!(new ChatbotRepository())->userHasAccess($chatbotId, $userId, 'full')) {
+        // Faz 4 / GK-2 — 'chat' = sahip/abone + ücretsiz herkese açık bot.
+        if (!(new ChatbotRepository())->userHasAccess($chatbotId, $userId, 'chat')) {
             JsonResponse::error(
                 'Bu chatbot ile sohbet edebilmek için aktif bir aboneliğiniz olmalı.',
                 403,
@@ -472,7 +487,13 @@ class ChatController {
 
         $apiKey = AppConfig::googleGeminiApiKey();
         if (!$apiKey) {
+            // N-12 — burada yalnızca mesajın hakkı iade ediliyordu; belgeler
+            // için düşülen ek haklar kayboluyordu. Kardeş dallar (hak yetmedi,
+            // upstream hatası) hepsini iade ediyor; bu dal da aynı.
             refundMessage($db, $userId, $chatbotId, $allowanceSource);
+            foreach ($fileAllowanceSources as $source) {
+                refundMessage($db, $userId, $chatbotId, $source);
+            }
             JsonResponse::error('Yapay zeka servisi yapılandırılmamış.', 500, AppConfig::ERR_SERVER);
         }
 
@@ -519,6 +540,7 @@ class ChatController {
         // into an explicit SSE error frame the client can render.
         $httpStatus = 0;
         $errorBody  = '';
+        $streamBody = '';
 
         $ch = curl_init($url);
         curl_setopt_array($ch, [
@@ -529,7 +551,7 @@ class ChatController {
             // 30 sn bekliyordu — kullanıcı hatayı görüyor ama upstream isteği
             // (ve faturası) devam ediyordu. İkisi de artık 20 sn.
             CURLOPT_TIMEOUT        => 20,
-            CURLOPT_WRITEFUNCTION  => static function ($handle, string $chunk) use (&$httpStatus, &$errorBody): int {
+            CURLOPT_WRITEFUNCTION  => static function ($handle, string $chunk) use (&$httpStatus, &$errorBody, &$streamBody): int {
                 if ($httpStatus === 0) {
                     $httpStatus = (int) curl_getinfo($handle, CURLINFO_RESPONSE_CODE);
                 }
@@ -537,6 +559,7 @@ class ChatController {
                     $errorBody .= $chunk;
                     return strlen($chunk);
                 }
+                $streamBody .= $chunk; // N-30: cevap sonunda sunucuda kaydedilecek
                 echo $chunk;
                 @flush();
                 return strlen($chunk);
@@ -574,6 +597,18 @@ class ChatController {
                 JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
             ) . "\n\n";
             @flush();
+        } else {
+            // N-30 — bot cevabını SUNUCU kaydediyor (istemci addChat ile "bot"
+            // yazamaz). Kimlik son SSE karesiyle istemciye gidiyor; Diyalog
+            // Defteri kaydı bu kimliğe dayanıyor ve metni DB'den kopyalıyor.
+            require_once __DIR__ . '/../../../functions/dialog_book.php';
+            $replyText = geminiSseText($streamBody);
+            if ($replyText !== '') {
+                $savedId = chatSaveBotReply($db, $userId, $chatbotId, $replyText);
+                echo "event: saved\n";
+                echo 'data: ' . json_encode(['saved' => ['message_id' => $savedId]]) . "\n\n";
+                @flush();
+            }
         }
         exit;
     }

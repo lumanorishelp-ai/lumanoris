@@ -59,12 +59,11 @@ class ChatbotController {
             );
         }
 
-        if (!$isIndependent) {
-            $sellerStatus = $repo->getSellerStatus($authorUserId);
-            if ($sellerStatus !== 'active') {
-                JsonResponse::error('Önce Pazaryeri satıcı kaydınızı tamamlayın.', 422, AppConfig::ERR_SELLER_INACTIVE);
-            }
-        }
+        // Faz 4 / madde 2 / GK-2 — herkese açık bot oluşturmak artık satıcı
+        // kaydı İSTEMİYOR. Burada fiyat yazılamıyor (pickAllowed ücret
+        // alanlarını reddediyor), yani oluşturulan herkese açık bot her zaman
+        // ÜCRETSİZ herkese açık bottur. Fiyatlı satış hâlâ publishChatbot /
+        // updateChatbotPrice'ta aktif satıcı şartına (B1) bağlı.
 
         $data['owner_user_id'] = $data['author_user_id'];
 
@@ -227,9 +226,12 @@ class ChatbotController {
         $search  = InputSanitizer::string($_GET['search'] ?? '');
         $filters = self::paginationFromQuery() + ['search' => $search !== '' ? $search : null];
         $repo    = new ChatbotRepository();
+        // N-35: yalnızca `liked_by_me` için; oturum yoksa 0 (uç misafire açık kalır).
+        // Filtre olarak kullanılmaz — `exclude_uninterested` istenmediği sürece liste aynı.
+        $userId  = AuthMiddleware::optionalAuth();
 
         JsonResponse::success([
-            'bots'   => $repo->getPublished($filters),
+            'bots'   => $repo->getPublished($filters, $userId),
             'total'  => $repo->countPublished($filters),
             'limit'  => $filters['limit'],
             'offset' => $filters['offset'],
@@ -420,8 +422,18 @@ class ChatbotController {
         if (!$data || !$id) {
             JsonResponse::error('Eksik veri!', 400, AppConfig::ERR_VALIDATION);
         }
-        self::assertValidPrice($weekly, 'Haftalık', AppConfig::MAX_WEEKLY_PRICE, AppConfig::MIN_WEEKLY_PRICE);
-        self::assertValidPrice($monthly, 'Aylık', AppConfig::MAX_WEEKLY_PRICE * 4, round(AppConfig::MIN_WEEKLY_PRICE * 4 * AppConfig::DISCOUNT_MONTHLY_FACTOR));
+
+        // Faz 4 / madde 10 / GK-1 / GK-2 — iki yayın biçimi:
+        //   • fiyatsız ("Yayınla"): ücretsiz herkese açık; satıcı ŞARTI YOK.
+        //   • fiyatlı (pazaryeri satışı): eskisi gibi fiyat aralığı + aktif
+        //     satıcı (B1). Arayüz bu yolu bugün açmıyor ("Pazaryerine Kaydet"
+        //     yalnızca başvuru sayfasına götürür), ama sunucu sözleşmesi korunuyor.
+        // Geriye uyum: fiyat gönderen eski çağıran aynı davranışı alır.
+        $isPaid = $weekly > 0;
+        if ($isPaid) {
+            self::assertValidPrice($weekly, 'Haftalık', AppConfig::MAX_WEEKLY_PRICE, AppConfig::MIN_WEEKLY_PRICE);
+            self::assertValidPrice($monthly, 'Aylık', AppConfig::MAX_WEEKLY_PRICE * 4, round(AppConfig::MIN_WEEKLY_PRICE * 4 * AppConfig::DISCOUNT_MONTHLY_FACTOR));
+        }
 
         $repo = new ChatbotRepository();
         $bot  = $repo->findById($id);
@@ -445,14 +457,25 @@ class ChatbotController {
             JsonResponse::error(sprintf('%s planınızdaki %d herkese açık chatbot hakkınızı kullandınız.', getUserPlanName($db, $userId), $publicLimit), 422, AppConfig::ERR_LIMIT_REACHED);
         }
 
-        $sellerStatus = $repo->getSellerStatus($userId);
-        if ($sellerStatus !== 'active') {
-            JsonResponse::error('Önce Pazaryeri satıcı kaydınızı tamamlayın.', 422, AppConfig::ERR_SELLER_INACTIVE);
+        if ($isPaid) {
+            $sellerStatus = $repo->getSellerStatus($userId);
+            if ($sellerStatus !== 'active') {
+                JsonResponse::error('Önce Pazaryeri satıcı kaydınızı tamamlayın.', 422, AppConfig::ERR_SELLER_INACTIVE);
+            }
         }
 
-        $repo->updateById($id, ['is_independent' => 0, 'ucret_haftalik' => $weekly, 'ucret_aylik' => $monthly]);
+        $repo->updateById($id, [
+            'is_independent' => 0,
+            'ucret_haftalik' => $isPaid ? $weekly : null,
+            'ucret_aylik'    => $isPaid ? $monthly : null,
+        ]);
         self::releaseBotLimitLock($db->getConnection(), $limitLock);
-        JsonResponse::success(['message' => 'Chatbot herkese açık olarak yayınlandı!']);
+        JsonResponse::success([
+            'message' => $isPaid
+                ? 'Chatbot pazaryerinde satışa açıldı!'
+                : 'Chatbot herkese açık olarak yayınlandı! Herkes ücretsiz sohbet edebilir.',
+            'free'    => !$isPaid,
+        ]);
     }
 
     public static function unpublishChatbot(): void {
@@ -472,8 +495,64 @@ class ChatbotController {
             JsonResponse::error('Bu chatbot üzerinde yetkiniz yok.', 403, AppConfig::ERR_PERMISSION);
         }
 
-        $repo->unpublish($id);
-        JsonResponse::success(['message' => 'Chatbot yayından kaldırıldı.']);
+        // Madde 11 / GK-3 — yalnızca YAYINLANMIŞ bir bot özele çekilir ve hak
+        // düşer. Zaten özel olan bot için hak harcatılmaz (eskiden bu çağrı
+        // sessizce is_independent=1'i tekrar yazıyordu).
+        if ((int) $bot['is_independent'] === 1) {
+            JsonResponse::error('Bu chatbot zaten özel.', 400, AppConfig::ERR_DUPLICATE);
+        }
+
+        require_once __DIR__ . '/../../../functions/chatbot_limits.php';
+        $db   = Database::getInstance();
+        $conn = $db->getConnection();
+
+        // C-01 deseni: hak sayımı ile yazma arasında yarış olmasın — aynı
+        // kullanıcının iki eşzamanlı isteği aynı "kalan hak"ı okuyamasın.
+        $lock = self::acquireBotLimitLock($conn, $userId);
+
+        // N-07 — özele çekme bağımsız bot limitine TAKILMAZ (GK-3); bilinçli
+        // olarak burada bağımsız limiti kontrolü yok. Sınır özel yapma hakkı.
+        $tableReady = privacyUsageTableReady($db);
+        $limit      = getPrivacyRightLimit($db, $userId);
+        if ($tableReady && countPrivacyRightUsage($db, $userId) >= $limit) {
+            JsonResponse::error(
+                sprintf(
+                    '%s planınızdaki %d yayından kaldırma (özel yapma) hakkınızı kullandınız.',
+                    getUserPlanName($db, $userId),
+                    $limit
+                ),
+                422,
+                AppConfig::ERR_LIMIT_REACHED,
+                ['privacy_limit' => $limit, 'privacy_remaining' => 0]
+            );
+        }
+        if (!$tableReady) {
+            // Migration 012 uygulanmamış: hak sayılamıyor. Özele çekmeyi kırmak
+            // yerine eski davranış (sınırsız) — ama görünür olsun.
+            error_log('[unpublishChatbot] user_privacy_right_usage yok (migration 012); hak sayılmadan özele çekildi. bot=' . $id);
+        }
+
+        $conn->beginTransaction();
+        try {
+            $repo->unpublish($id);
+            if ($tableReady) {
+                recordPrivacyRightUsage($db, $userId, $id);
+            }
+            $conn->commit();
+        } catch (Throwable $e) {
+            if ($conn->inTransaction()) {
+                $conn->rollBack();
+            }
+            self::releaseBotLimitLock($conn, $lock);
+            throw $e;
+        }
+        self::releaseBotLimitLock($conn, $lock);
+
+        JsonResponse::success([
+            'message'           => 'Chatbot özel yapıldı (yayından kaldırıldı).',
+            'privacy_limit'     => $limit,
+            'privacy_remaining' => $tableReady ? privacyRightsRemaining($db, $userId) : null,
+        ]);
     }
 
     public static function getChatbotsMenu(): void {
@@ -492,13 +571,26 @@ class ChatbotController {
         $independentLimit = getIndependentBotLimit($db, $userId);
         $publicLimit      = getPublicBotLimit($db, $userId);
 
+        // Madde 2 — sınırsız kota sayısal olarak PHP_INT_MAX; istemciye bu
+        // devasa sayıyı göstermek yerine `*_limit: null` + `*_unlimited: true`
+        // (eklemeli alan; mevcut alanların sonlu kotalarda anlamı aynı).
+        $independentUnlimited = isUnlimitedBotLimit($independentLimit);
+        $publicUnlimited      = isUnlimitedBotLimit($publicLimit);
+
         JsonResponse::success([
             'independent_used'       => $counts['independent'],
-            'independent_limit'      => $independentLimit,
+            'independent_limit'      => $independentUnlimited ? null : $independentLimit,
+            'independent_unlimited'  => $independentUnlimited,
             'public_used'            => $counts['public'],
-            'public_limit'           => $publicLimit,
+            'public_limit'           => $publicUnlimited ? null : $publicLimit,
+            'public_unlimited'       => $publicUnlimited,
             'can_create_independent' => $counts['independent'] < $independentLimit,
             'can_create_public'      => $counts['public'] < $publicLimit,
+            // Madde 11 — yayından kaldırma (özel yapma) hakkı, toplam.
+            // privacy_used/remaining null = sayım yok (migration 012 eksik).
+            'privacy_limit'          => getPrivacyRightLimit($db, $userId),
+            'privacy_used'           => privacyUsageTableReady($db) ? countPrivacyRightUsage($db, $userId) : null,
+            'privacy_remaining'      => privacyUsageTableReady($db) ? privacyRightsRemaining($db, $userId) : null,
         ]);
     }
 
@@ -558,6 +650,15 @@ class ChatbotController {
         // chatbot's id could change its price.
         if (!$repo->findByIdAndOwner($id, $userId)) {
             JsonResponse::error('Bu chatbot üzerinde yetkiniz yok.', 403, AppConfig::ERR_PERMISSION);
+        }
+
+        // N-08 / Faz 4 — fiyat yalnızca aktif pazaryeri satıcısı tarafından
+        // atanabilir. Eskiden bu uçta satıcı kontrolü yoktu: satıcı olmayan
+        // kullanıcı ücretsiz herkese açık botuna fiyat yazarak onu vitrinden
+        // ve ücretsiz erişimden çıkarabiliyor, publishChatbot'un satıcı
+        // şartını da dolaylı yoldan atlıyordu.
+        if ($repo->getSellerStatus($userId) !== 'active') {
+            JsonResponse::error('Fiyat belirlemek için pazaryeri kaydınızın onaylanmış olması gerekir.', 422, AppConfig::ERR_SELLER_INACTIVE);
         }
 
         $ok   = $repo->updatePrice($id, $weekly, $monthly);

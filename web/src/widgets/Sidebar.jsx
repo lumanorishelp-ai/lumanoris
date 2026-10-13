@@ -1,9 +1,12 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import QuitModal from "@/features/auth/QuitModal";
+import { toast } from "@/shared/hooks/use-toast";
+import { logoutAndRedirect } from "@/shared/lib/logout";
 import logo from "@/images/header-logo-icon.png";
 import { Lumacoin } from "@/shared/ui/lumacoin";
 import { FREE_PLAN_NAME, isPaidPlan } from "@/shared/lib/pricing";
+import useMarketplaceRegistration from "@/shared/hooks/useMarketplaceRegistration";
 import {
   Plus,
   TrendingUp,
@@ -95,6 +98,43 @@ export function Sidebar({
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
   const [isQuitModalOpen, setIsQuitModalOpen] = useState(false);
+
+  // Madde 5 / GK-12 — "Satın Aldıklarım" yalnızca en az bir aboneliği
+  // (süresi dolmuşlar dahil) olan kullanıcıya görünür. Kaynak mevcut
+  // getmysubscriptions.php (tam satın alma geçmişini döndürüyor); yeni uç
+  // nokta yok. null = henüz bilinmiyor → öğe gizli (sonradan belirmesi,
+  // görünüp kaybolmasından iyi). İstek başarısız olursa öğe GÖSTERİLİR:
+  // bir ağ hatası kullanıcının satın aldıklarına giden yolu saklamamalı.
+  const [hasPurchases, setHasPurchases] = useState(null);
+  // Madde 4 / GK-5 — kaydı olmayana bakiye tutarı gösterilmez.
+  const registration = useMarketplaceRegistration(userId);
+  useEffect(() => {
+    if (!userId) {
+      setHasPurchases(false);
+      return;
+    }
+    let cancelled = false;
+    fetch("/api/wallet/getmysubscriptions.php", { credentials: "include" })
+      .then((res) => res.json())
+      .then((data) => {
+        if (cancelled) return;
+        setHasPurchases(
+          data?.success && Array.isArray(data.subscriptions)
+            ? data.subscriptions.length > 0
+            : true,
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setHasPurchases(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [userId]);
+
+  const exploreItems = EXPLORE_ITEMS.filter(
+    (item) => item.href !== "/dashboard/purchased" || hasPurchases === true,
+  );
 
   const displayName = account.fullname || account.username || "Kullanıcı";
   const avatarLetter = (account.fullname || account.username || "?")
@@ -320,9 +360,9 @@ export function Sidebar({
                 </div>
               )}
               <ul className="space-y-1 list-none p-0 m-0">
-                {EXPLORE_ITEMS.map((item) =>
+                {exploreItems.map((item) =>
                   renderNavItem(
-                    item.href === "/dashboard/wallet"
+                    item.href === "/dashboard/wallet" && registration.registered
                       ? { ...item, pill: formatCurrency(account.balance) }
                       : item,
                     "explore",
@@ -455,17 +495,9 @@ export function Sidebar({
         onClose={() => setIsQuitModalOpen(false)}
         onConfirm={async () => {
           setIsQuitModalOpen(false);
-          try {
-            await fetch("/api/auth/logout.php", {
-              method: "POST",
-              credentials: "include",
-            });
-          } catch (err) {
-            console.error("Logout error:", err);
-          }
-          if (typeof window !== "undefined") {
-            window.location.href = "/login";
-          }
+          // N-39: yalnızca sunucu çıkışı onaylarsa /login'e gider.
+          const result = await logoutAndRedirect();
+          if (!result.ok) toast.error(result.message);
         }}
       />
     </div>

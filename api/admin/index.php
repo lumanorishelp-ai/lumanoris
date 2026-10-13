@@ -17,7 +17,9 @@ error_reporting(E_ALL);
 // ERR-004: DB bağlantısı bu satırların ALTINDA kurulmalı. Üstünde kurulduğunda,
 // bağlantı hata verirse display_errors henüz ayarlanmamış oluyordu ve panel boş
 // gövdeli bir 500 döndürüyordu — canlıda neyin kırıldığı görünmüyordu.
-require_once '../functions/db.php';
+// N-21: göreli yol çalışma dizinine göre çözülüyordu (`php -S` api/ içinden
+// başlatılınca girişten sonra fatal error). __DIR__ ile dosyaya göre.
+require_once __DIR__ . '/../functions/db.php';
 $database = Database::getInstance();
 $conn = $database->getConnection();
 
@@ -50,6 +52,10 @@ $adminRoutes = [
     // `updateWithdrawalStatus()` yayında olmalarına rağmen çağrılamıyordu ve
     // her çekim talebi kalıcı olarak `beklemede` kalıyordu.
     '/admin/parcekme'           => 'parcekme.php',
+    // Faz 5 / madde 3 — pazaryeri başvuruları (GK-9, GK-23, GK-26).
+    '/admin/basvurular'         => 'basvurular.php',
+    // Faz 7a-3 — Hoppa paket ödemeleri ve iade.
+    '/admin/odemeler'           => 'odemeler.php',
     '/admin/odemeentegrasyon'   => 'odemeentegrasyon.php',
     '/admin/anasayfa'           => 'anasayfa.php',
     '/admin/hakkinda'           => 'hakkinda.php',
@@ -73,7 +79,7 @@ if (empty($_SESSION['csrf_token'])) {
 
 ?>
 <?php if (!isset($_SESSION['admin'])): ?>
-  <?php include("./partials/_login.php"); ?>
+  <?php include __DIR__ . '/partials/_login.php'; ?>
 <?php else: ?>
   <?php
   // G-17 — `getGlobalVars()` bir DİZİ döndürüyor (['theme_index' => '2']),
@@ -96,10 +102,10 @@ if (empty($_SESSION['csrf_token'])) {
       'text_color'   => 'text-white',
   ]);
   ?>
-  <?php include("./partials/_header.php"); ?>
+  <?php include __DIR__ . '/partials/_header.php'; ?>
 
   <div class="flex lg:flex-row">
-    <?php include("./partials/_sidebar.php"); ?>
+    <?php include __DIR__ . '/partials/_sidebar.php'; ?>
 
     <main id="admin-panel-content" class="flex-1 bg-gray-100 min-h-screen p-6 transition-all duration-300">
       <?php
@@ -109,7 +115,7 @@ if (empty($_SESSION['csrf_token'])) {
              . '<p class="mt-2 text-sm">Aradığınız yönetim sayfası mevcut değil.</p>'
              . '</div>';
       } elseif ($adminRoutes[$routePath] !== null) {
-          include $adminRoutes[$routePath];
+          include __DIR__ . '/' . $adminRoutes[$routePath];
       }
       ?>
     </main>

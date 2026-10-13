@@ -338,8 +338,8 @@ export default function DialogueModal({ isOpen, onClose, selectedHistory }) {
                 onClose={() => setCommentOpen(false)}
                 comments={comments}
                 onSend={async (commentText) => {
+                    // N-34: kimlik gönderilmez (sunucu oturumdan alır); sonuç CommentModal'a döner.
                     const payload = {
-                        user_id: userId,
                         dialog_id: selectedHistory.id,
                         comment: commentText
                     };
@@ -358,15 +358,15 @@ export default function DialogueModal({ isOpen, onClose, selectedHistory }) {
                         if (result.success)
                         {
                             setCommentCount(prev => prev + 1);
+                            return { ok: true };
                         }
-                        else
-                        {
-                            toast({ variant: "destructive", title: "Yorum eklenemedi", description: result.message });
-                        }
+                        toast({ variant: "destructive", title: "Yorum eklenemedi", description: result.message });
+                        return { ok: false, message: result.message };
                     }
                     catch (err)
                     {
                         toast({ variant: "destructive", title: "Yorum eklenemedi", description: err.message });
+                        return { ok: false, message: err.message };
                     }
                 }}
             />

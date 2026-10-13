@@ -3,7 +3,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import QuitModal from "@/features/auth/QuitModal";
 import { formatCurrency } from "@/shared/lib/format";
+import { toast } from "@/shared/hooks/use-toast";
+import { logoutAndRedirect } from "@/shared/lib/logout";
 import { isPaidPlan } from "@/shared/lib/pricing";
+import useMarketplaceRegistration from "@/shared/hooks/useMarketplaceRegistration";
 import {
   Search,
   Bell,
@@ -55,7 +58,7 @@ function NotificationPopup({ onClose, notifications, loading, onMarkAllRead }) {
   };
 
   return (
-    <div className="absolute right-0 top-full mt-3 z-40 w-80 sm:w-96 rounded-2xl border border-white/10 bg-[#09090E]/95 p-4 shadow-[0_20px_50px_rgba(0,0,0,0.8)] backdrop-blur-2xl ring-1 ring-white/5 animate-in fade-in slide-in-from-top-3 duration-150">
+    <div className="absolute right-0 top-full mt-3 z-40 w-80 sm:w-96 max-sm:inset-x-4 max-sm:w-auto rounded-2xl border border-white/10 bg-[#09090E]/95 p-4 shadow-[0_20px_50px_rgba(0,0,0,0.8)] backdrop-blur-2xl ring-1 ring-white/5 animate-in fade-in slide-in-from-top-3 duration-150">
       <div className="flex items-center justify-between pb-3.5 border-b border-white/5">
         <div className="flex items-center gap-2.5">
           <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-violet-500/10 border border-violet-500/20 text-violet-400">
@@ -127,7 +130,7 @@ function NotificationPopup({ onClose, notifications, loading, onMarkAllRead }) {
   );
 }
 
-function ProfilePopup({ user, profileImage, onLogout, onClose, onNavigate }) {
+function ProfilePopup({ user, profileImage, onLogout, onClose, onNavigate, showBalance }) {
   const go = (href) => {
     onClose();
     onNavigate(href);
@@ -213,9 +216,12 @@ function ProfilePopup({ user, profileImage, onLogout, onClose, onNavigate }) {
         >
           <Wallet className="w-3.5 h-3.5 shrink-0 text-emerald-400" />
           <span className="truncate">Bakiye &amp; Ödemeler</span>
-          <span className="ml-auto shrink-0 text-caption font-mono font-semibold text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
-            {formatCurrency(user.balance ?? 0)}
-          </span>
+          {/* Madde 4 / GK-5 — kaydı olmayana bakiye tutarı gösterilmez. */}
+          {showBalance && (
+            <span className="ml-auto shrink-0 text-caption font-mono font-semibold text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20">
+              {formatCurrency(user.balance ?? 0)}
+            </span>
+          )}
         </button>
         <button
           type="button"
@@ -257,6 +263,7 @@ export default function Header({
 }) {
   const router = useRouter();
   const navigate = onNavigate || ((href) => router.push(href));
+  const registration = useMarketplaceRegistration(userId);
   const [showProfile, setShowProfile] = useState(false);
   const [showNotification, setShowNotification] = useState(false);
   const [profileImage, setProfileImage] = useState(null);
@@ -328,19 +335,40 @@ export default function Header({
     (n) => !n.is_read,
   ).length;
 
-  const markAllNotificationsRead = () => {
+  /* N-38 — eskiden rozet hemen sıfırlanıyor, istekler yanıtına bakılmadan
+     gönderiliyordu; sunucu reddederse yenilemede bildirimler yine "okunmamış"
+     çıkıyordu. Şimdi yalnızca sunucunun onayladığı bildirimler okundu olur;
+     biri başarısızsa mesaj gösterilir. */
+  const markAllNotificationsRead = async () => {
     const unread = notifications.filter((n) => !n.is_read);
     if (unread.length === 0) return;
-    setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
-    unread.forEach((n) => {
-      const formData = new FormData();
-      formData.append("data", JSON.stringify({ id: n.id }));
-      fetch("/api/notification/readnotification.php", {
-        method: "POST",
-        body: formData,
-        credentials: "include",
-      }).catch((err) => console.error("Bildirim okundu işaretlenemedi:", err));
-    });
+    const results = await Promise.all(
+      unread.map(async (n) => {
+        try {
+          const formData = new FormData();
+          formData.append("data", JSON.stringify({ id: n.id }));
+          const res = await fetch("/api/notification/readnotification.php", {
+            method: "POST",
+            body: formData,
+            credentials: "include",
+          });
+          const result = await res.json().catch(() => null);
+          return res.ok && result?.success ? n.id : null;
+        } catch (err) {
+          console.error("Bildirim okundu işaretlenemedi:", err);
+          return null;
+        }
+      }),
+    );
+    const done = new Set(results.filter((id) => id !== null));
+    if (done.size > 0) {
+      setNotifications((prev) =>
+        prev.map((n) => (done.has(n.id) ? { ...n, is_read: true } : n)),
+      );
+    }
+    if (done.size < unread.length) {
+      toast.error("Bazı bildirimler okundu olarak işaretlenemedi. Lütfen tekrar deneyin.");
+    }
   };
 
   useEffect(() => {
@@ -452,17 +480,9 @@ export default function Header({
 
   const handleConfirmLogout = async () => {
     setQuitOpen(false);
-    try {
-      await fetch("/api/auth/logout.php", {
-        method: "POST",
-        credentials: "include",
-      });
-    } catch (err) {
-      console.error("Logout error:", err);
-    }
-    if (typeof window !== "undefined") {
-      window.location.href = "/login";
-    }
+    // N-39: yalnızca sunucu çıkışı onaylarsa /login'e gider.
+    const result = await logoutAndRedirect();
+    if (!result.ok) toast.error(result.message);
   };
 
   return (
@@ -495,15 +515,8 @@ export default function Header({
               <Command className="w-2.5 h-2.5" /> K
             </div>
           </div>
-
-          {/* Sadece masaüstünde görünür */}
-          <button
-            type="button"
-            onClick={goToExplore}
-            className={`hidden md:flex shrink-0 h-11 items-center gap-2 rounded-2xl border border-fuchsia-500/25 bg-fuchsia-500/10 px-4 text-xs font-semibold text-fuchsia-200 transition-all duration-200 hover:border-fuchsia-500/50 hover:bg-fuchsia-500/20 hover:text-white hover:shadow-[0_0_20px_rgba(217,70,239,0.15)] ${ICON_BTN_FOCUS}`}
-          >
-            <span>Keşfet</span>
-          </button>
+          {/* N-45: arama kutusunun yanındaki "Keşfet" düğmesi kaldırıldı
+              (müşteri isteği); Keşfet'e kenar çubuğundan ve aramadan gidiliyor. */}
         </div>
 
         {/* Action Controls & Profile Menu */}
@@ -523,7 +536,10 @@ export default function Header({
           ) : (
             <>
               {/* Notifications Trigger */}
-              <div className="relative" ref={notificationMenuRef}>
+              {/* N-43: dar ekranda `relative` yalnızca sm üstünde — panel o
+                  zaman başlığa göre konumlanır (inset-x-4); zile göre
+                  konumlanınca 390 px'te sola taşıp kesiliyordu. */}
+              <div className="sm:relative" ref={notificationMenuRef}>
                 <Tooltip content="Bildirimler">
                   <button
                     ref={notificationBtnRef}
@@ -607,6 +623,7 @@ export default function Header({
                     onLogout={handleLogout}
                     onClose={closeProfile}
                     onNavigate={navigate}
+                    showBalance={registration.registered}
                   />
                 )}
               </div>

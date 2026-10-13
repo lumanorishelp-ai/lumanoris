@@ -1,179 +1,141 @@
 'use client';
 import { useState, useEffect } from 'react';
-import useSellerStatus from '@/shared/hooks/useSellerStatus';
-import SellerOnboardingWizard from '@/features/seller/SellerOnboardingWizard';
+import Link from 'next/link';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/shared/ui/dialog';
 import { Button } from '@/shared/ui/button';
-import { Skeleton } from '@/shared/ui/skeleton';
-import { Check } from 'lucide-react';
-import {
-    MIN_WEEKLY_PRICE,
-    MAX_WEEKLY_PRICE,
-    SELLER_COMMISSION_WEEKLY,
-    SELLER_COMMISSION_MONTHLY,
-    deriveMonthlyPrice,
-    validatePrice,
-} from '@/shared/lib/pricing';
+import { Check, Globe2, Store, ArrowLeft } from 'lucide-react';
 
-export default function PublishModal({
-    isOpen,
-    onClose,
-    onPublished,
-    botId,
-    userId,
-    weeklyPrice,
-}) {
-    const seller = useSellerStatus(isOpen ? userId : null);
-    const [wPrice, setWPrice] = useState(weeklyPrice || '');
-    const [mPrice, setMPrice] = useState('');
-    const [monthlyTouched, setMonthlyTouched] = useState(false);
+/**
+ * Madde 10 — bağımsız botu yayınlamanın iki yolu:
+ *
+ *   • Yayınla: bot ücretsiz herkese açık olur (GK-1 / GK-2). Satıcı kaydı
+ *     gerekmez; sunucu fiyatsız publishChatbot'u herkese açık limitiyle
+ *     sınırlar. Herkes sohbet edebilir, mesajlar kullanıcıların günlük Luma
+ *     Coin'inden düşer.
+ *   • Pazaryerine Kaydet: ücretli satış şirket başvurusu ister (madde 3). Bu
+ *     seçenek YALNIZCA bilgi verir ve başvuru sayfasına götürür; satıcı
+ *     durumu yaratmaz, B1'i örtmez.
+ *
+ * Eskiden bu modal satıcı kaydı olmayan herkese eski kayıt sihirbazını
+ * (SellerOnboardingWizard) açıyor, kayıtlı satıcıya ise fiyat soruyordu —
+ * yani "herkese açık" ile "satılık" aynı şeydi.
+ */
+export default function PublishModal({ isOpen, onClose, onPublished, botId }) {
+    const [step, setStep] = useState('choose'); // choose | marketplace
+    const [publishing, setPublishing] = useState(false);
     const [showFeedback, setShowFeedback] = useState(false);
     const [errorMsg, setErrorMsg] = useState('');
 
     useEffect(() => {
         if (isOpen) {
-            setWPrice(weeklyPrice || '');
-            setMPrice(weeklyPrice ? String(deriveMonthlyPrice(weeklyPrice)) : '');
-            setMonthlyTouched(false);
+            setStep('choose');
             setErrorMsg('');
+            setPublishing(false);
         }
-    }, [isOpen, weeklyPrice]);
-
-    // Haftalık fiyat değiştiğinde ve aylık fiyat henüz elle düzenlenmediyse
-    // önerilen aylık değeri de güncelle. Bunu bir useEffect yerine burada
-    // (onChange içinde) yapmak, "modal açılışında seed edilen değer" ile
-    // "haftalık değişince otomatik türetme" arasındaki bir yarışı önlüyor —
-    // ikisi de aynı state'e (mPrice) yazan ayrı efektler olsaydı, hangisinin
-    // son çalıştığı render sırasına bağlı olurdu.
-    const handleWeeklyChange = (value) => {
-        setWPrice(value);
-        if (!monthlyTouched) {
-            setMPrice(value ? String(deriveMonthlyPrice(value)) : '');
-        }
-    };
-
-    const weekly = parseFloat(wPrice) || 0;
-    const monthly = parseFloat(mPrice) || 0;
-    const weeklyEarning = (weekly * SELLER_COMMISSION_WEEKLY).toFixed(2);
-    const monthlyEarning = (monthly * SELLER_COMMISSION_MONTHLY).toFixed(2);
+    }, [isOpen]);
 
     const handlePublish = async () => {
-        const weeklyError = validatePrice(weekly, 'Haftalık', MAX_WEEKLY_PRICE);
-        if (weeklyError) { setErrorMsg(weeklyError); return; }
-        const monthlyError = validatePrice(monthly, 'Aylık', MAX_WEEKLY_PRICE * 4, deriveMonthlyPrice(MIN_WEEKLY_PRICE));
-        if (monthlyError) { setErrorMsg(monthlyError); return; }
-
-        const payload = { id: botId, user_id: userId, ucret_haftalik: weekly, ucret_aylik: monthly };
-        const formData = new FormData();
-        formData.append('data', JSON.stringify(payload));
-
+        setPublishing(true);
+        setErrorMsg('');
         try {
-            const res = await fetch('/api/chatbot/publishchatbot.php', { method: 'POST', body: formData });
+            const formData = new FormData();
+            // Fiyat GÖNDERİLMİYOR: sunucu bunu ücretsiz herkese açık yayın sayar.
+            formData.append('data', JSON.stringify({ id: botId }));
+            const res = await fetch('/api/chatbot/publishchatbot.php', {
+                method: 'POST',
+                body: formData,
+                credentials: 'include',
+            });
             const result = await res.json();
-
             if (result.success) {
                 setShowFeedback(true);
                 setTimeout(() => {
                     setShowFeedback(false);
-                    if (onPublished) onPublished();
+                    onPublished?.();
                     onClose();
                 }, 1500);
             } else {
                 setErrorMsg(result.message || 'Yayınlama başarısız oldu.');
             }
         } catch (err) {
-            setErrorMsg('Bağlantı hatası: ' + err.message);
+            setErrorMsg('Sunucuya bağlanılamadı.');
+        } finally {
+            setPublishing(false);
         }
     };
 
     return (
         <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-            <DialogContent className="max-w-[420px] bg-luma-card border-transparent p-6">
+            <DialogContent className="max-w-[440px] bg-luma-card border-transparent p-6">
                 {showFeedback && (
                     <div className="absolute -top-3 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-emerald-500 px-3 py-1.5 text-xs font-semibold text-white shadow-glow">
                         <Check className="h-3.5 w-3.5" strokeWidth={2.5} /> Chatbot Yayınlandı
                     </div>
                 )}
-                <DialogTitle className="mb-1 text-title-sm font-semibold text-white">Herkese Açık Yayınla</DialogTitle>
 
-                {seller.loading ? (
-                    <div className="flex flex-col gap-2.5 py-3">
-                        <Skeleton className="h-4 w-full" />
-                        <Skeleton className="h-4 w-2/3" />
-                    </div>
-                ) : seller.status !== 'active' ? (
+                {step === 'choose' ? (
                     <>
-                        <DialogDescription className="mb-4 font-sans text-body font-normal leading-6 text-white/60">
-                            Chatbotunuzu herkese açık yayınlamak için önce pazaryeri satıcı kaydınızı tamamlamalısınız.
+                        <DialogTitle className="mb-1 text-title-sm font-semibold text-white">Chatbotu Yayınla</DialogTitle>
+                        <DialogDescription className="mb-5 font-sans text-body font-normal leading-6 text-white/60">
+                            Botunuzu nasıl paylaşmak istediğinizi seçin.
                         </DialogDescription>
-                        <SellerOnboardingWizard
-                            userId={userId}
-                            initialStatus={seller}
-                            onComplete={() => seller.refetch()}
-                        />
+
+                        <div className="flex flex-col gap-3">
+                            <button
+                                type="button"
+                                onClick={handlePublish}
+                                disabled={publishing}
+                                className="flex items-start gap-3 rounded-xl border border-emerald-500/25 bg-emerald-500/[0.06] p-4 text-left transition-colors hover:bg-emerald-500/[0.12] disabled:cursor-not-allowed disabled:opacity-60"
+                            >
+                                <Globe2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-300" />
+                                <span>
+                                    <span className="block text-body-sm font-semibold text-white">
+                                        {publishing ? 'Yayınlanıyor…' : 'Yayınla'}
+                                    </span>
+                                    <span className="block text-caption leading-relaxed text-white/55">
+                                        Doğrudan herkese açık olur ve Keşfet&apos;te görünür. Herkes ücretsiz sohbet
+                                        edebilir; mesajlar kullanıcıların günlük Luma Coin&apos;inden düşer.
+                                    </span>
+                                </span>
+                            </button>
+
+                            <button
+                                type="button"
+                                onClick={() => setStep('marketplace')}
+                                className="flex items-start gap-3 rounded-xl border border-white/10 bg-white/[0.03] p-4 text-left transition-colors hover:bg-white/[0.07]"
+                            >
+                                <Store className="mt-0.5 h-5 w-5 shrink-0 text-fuchsia-300" />
+                                <span>
+                                    <span className="block text-body-sm font-semibold text-white">Pazaryerine Kaydet</span>
+                                    <span className="block text-caption leading-relaxed text-white/55">
+                                        Botu pazaryerinde ücretli satmak için.
+                                    </span>
+                                </span>
+                            </button>
+                        </div>
+
+                        {errorMsg && <div className="mt-4 text-body-sm text-rose-400">{errorMsg}</div>}
                     </>
                 ) : (
                     <>
+                        <DialogTitle className="mb-1 text-title-sm font-semibold text-white">Pazaryerine Kaydet</DialogTitle>
                         <DialogDescription className="mb-5 font-sans text-body font-normal leading-6 text-white/60">
-                            Chatbotunuzu herkese açık yayınlamak için satış fiyatını belirleyin.
+                            Pazaryerinde ücretli satış yapabilmek için pazaryeri başvurusu gerekmektedir.
+                            Başvuru yalnızca şirketlere (şahıs ve kurumsal) açıktır ve ekibimiz tarafından
+                            incelenir.
                         </DialogDescription>
-
-                        <div className="mb-1.5 flex items-center justify-between gap-2 rounded-xl bg-luma-input px-5 py-4">
-                            <div className="flex flex-col gap-0.5">
-                                <span className="text-body-sm text-white/85">Bir Haftalık Satış Fiyatı</span>
-                                <input
-                                    type="number"
-                                    value={wPrice}
-                                    onChange={(e) => handleWeeklyChange(e.target.value)}
-                                    placeholder="0.00"
-                                    className="w-full bg-transparent font-display text-title-sm font-medium text-white placeholder:text-white/30 focus:outline-none"
-                                />
-                            </div>
-                            <span className="shrink-0 text-lg font-bold text-fuchsia-400">₺</span>
-                        </div>
-                        <p className="mb-4 text-caption text-white/40">
-                            İzin verilen aralık: {MIN_WEEKLY_PRICE}₺ – {MAX_WEEKLY_PRICE.toLocaleString('tr-TR')}₺
-                        </p>
-
-                        <div className="mb-1.5 flex items-center justify-between gap-2 rounded-xl bg-luma-input px-5 py-4">
-                            <div className="flex flex-col gap-0.5">
-                                <span className="text-body-sm text-white/85">Bir Aylık Satış Fiyatı</span>
-                                <input
-                                    type="number"
-                                    value={mPrice}
-                                    onChange={(e) => { setMonthlyTouched(true); setMPrice(e.target.value); }}
-                                    placeholder="0.00"
-                                    className="w-full bg-transparent font-display text-title-sm font-medium text-white placeholder:text-white/30 focus:outline-none"
-                                />
-                            </div>
-                            <span className="shrink-0 text-lg font-bold text-fuchsia-400">₺</span>
-                        </div>
-                        <p className="mb-4 text-caption text-white/40">
-                            İzin verilen aralık: {deriveMonthlyPrice(MIN_WEEKLY_PRICE)}₺ – {(MAX_WEEKLY_PRICE * 4).toLocaleString('tr-TR')}₺
-                            {' · '}Önerilen: haftalık fiyatın 4 katının %10 indirimlisi
-                        </p>
-
-                        {errorMsg && (
-                            <div className="mb-4 text-body-sm text-rose-400">{errorMsg}</div>
-                        )}
-
-                        {weekly > 0 && (
-                            <div className="mb-6 flex flex-col gap-1">
-                                <p className="text-body-sm text-fuchsia-400">Haftalık Satıştan Kazancın: <span className="font-medium text-white">{weeklyEarning}₺</span></p>
-                                <p className="text-body-sm text-fuchsia-400">Aylık Satıştan Kazancın: <span className="font-medium text-white">{monthlyEarning}₺</span></p>
-                            </div>
-                        )}
-
                         <div className="flex gap-2.5">
                             <Button
-                                onClick={onClose}
+                                onClick={() => setStep('choose')}
                                 variant="secondary"
-                                className="h-auto flex-1 border border-transparent bg-white/[0.06] py-3 text-body-lg hover:bg-white/[0.1]"
+                                className="h-auto flex-1 gap-1.5 border border-transparent bg-white/[0.06] py-3 hover:bg-white/[0.1]"
                             >
-                                İptal
+                                <ArrowLeft className="h-4 w-4" /> Geri
                             </Button>
-                            <Button onClick={handlePublish} className="h-auto flex-[2] py-3 text-body-lg">
-                                Yayınla
+                            <Button asChild className="h-auto flex-[2] py-3">
+                                <Link href="/dashboard/pazaryeri-basvurusu" onClick={onClose}>
+                                    Pazaryeri Başvurusu
+                                </Link>
                             </Button>
                         </div>
                     </>

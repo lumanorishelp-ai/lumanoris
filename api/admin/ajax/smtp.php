@@ -1,7 +1,7 @@
 <?php
 require_once __DIR__ . '/_guard.php';
 // Gerekli dosyaları dahil et
-require '../../functions/db.php';
+require __DIR__ . '/../../functions/db.php'; // N-21
 $database = Database::getInstance();
 $conn = $database->getConnection();
 

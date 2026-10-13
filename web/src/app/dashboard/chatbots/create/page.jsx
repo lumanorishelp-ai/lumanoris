@@ -1,10 +1,8 @@
 ﻿"use client";
-import { ModalPortal } from "@/shared/ui/modal-portal";
 
 import React, { useState, useEffect, useRef, useContext } from "react";
 import { UserContext } from "@/shared/contexts/UserContext";
 import { useRouter } from "next/navigation";
-import useSellerStatus from "@/shared/hooks/useSellerStatus";
 import {
   Select,
   SelectTrigger,
@@ -12,13 +10,12 @@ import {
   SelectContent,
   SelectItem,
 } from "@/shared/ui/select";
-import SellerOnboardingWizard from "@/features/seller/SellerOnboardingWizard";
+import Link from "next/link";
 import {
   Lock,
   Globe2,
   Sparkles,
   ArrowRight,
-  Crown,
   FileText,
   Rocket,
   Bot,
@@ -37,8 +34,6 @@ import {
   Cpu,
   Star,
   RefreshCw,
-  X,
-  CreditCard,
   User,
   Plus,
   Send,
@@ -144,135 +139,6 @@ function Skeleton({ className = "" }) {
   );
 }
 
-function BuyProducerAccountModal({ isOpen, onClose, userId, onPurchased }) {
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-
-  if (!isOpen) return null;
-
-  const handleBuy = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const formData = new FormData();
-      formData.append("data", JSON.stringify({}));
-      const res = await fetch("/api/marketplace/buyproduceraccount.php", {
-        method: "POST",
-        body: formData,
-        credentials: "include",
-      });
-      const result = await res.json();
-      if (result.success) {
-        if (onPurchased) onPurchased();
-        onClose();
-      } else {
-        setError(result.message || "Satın alma işlemi tamamlanamadı.");
-      }
-    } catch (err) {
-      console.error("Buy producer account error:", err);
-      setError("Sunucuya bağlanılamadı.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <ModalPortal onClose={onClose}>
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
-        <div className="relative w-full  rounded-2xl bg-zinc-900 border border-fuchsia-500/30 p-6 shadow-2xl shadow-fuchsia-950/50 space-y-6 overflow-hidden max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain">
-          {/* Glow ambient */}
-          <div className="pointer-events-none absolute -top-24 -right-24 h-48 w-48 rounded-full bg-fuchsia-500/20 blur-3xl" />
-  
-          <div className="flex items-center justify-between border-b border-white/[0.08] pb-4">
-            <div className="flex items-center gap-3">
-              <div className="p-2.5 rounded-xl bg-fuchsia-500/10 text-fuchsia-400 border border-fuchsia-500/20">
-                <Crown className="w-5 h-5" />
-              </div>
-              <div>
-                <h3 className="text-lg font-bold text-white">
-                  Üretici Hesabı Satın Al
-                </h3>
-                <p className="text-xs text-zinc-400">
-                  Sınırsız AI kapasitesi ve pazaryeri satıcı hakları
-                </p>
-              </div>
-            </div>
-            <button
-              onClick={onClose}
-              className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-white/10 transition cursor-pointer"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-  
-          <div className="space-y-4">
-            <div className="p-4 rounded-xl bg-zinc-950/60 border border-white/5 space-y-3">
-              <div className="flex items-baseline justify-between">
-                <span className="text-xs font-mono text-zinc-400 uppercase tracking-wider">
-                  Tek Seferlik Lisans
-                </span>
-                <span className="text-2xl font-black text-white">750 ₺</span>
-              </div>
-              <p className="text-xs text-zinc-400 leading-relaxed">
-                Bu lisans ile hesabınıza kalıcı üretici hakları tanımlanır. Ek
-                olarak yeni yayın hakları kazanırsınız.
-              </p>
-            </div>
-  
-            <div className="space-y-2.5">
-              {[
-                "5 Adet Herkese Açık Pazaryeri Botu Yayınlama Hakkı",
-                "2 Adet Bağımsız (Özel) Bot Oluşturma Hakkı",
-                "%80 Kazanç Payı ile Doğrudan Banka Hesabınıza Transfer",
-                "Öncelikli Vektör Veritabanı ve İşlem Gücü",
-              ].map((feat, idx) => (
-                <div
-                  key={idx}
-                  className="flex items-center gap-2.5 text-xs text-zinc-300"
-                >
-                  <div className="p-0.5 rounded-full bg-emerald-500/20 text-emerald-400">
-                    <Check className="w-3.5 h-3.5" />
-                  </div>
-                  <span>{feat}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-  
-          {error && (
-            <p className="text-xs text-rose-400 bg-rose-500/10 border border-rose-500/20 rounded-xl px-4 py-3">
-              {error}
-            </p>
-          )}
-  
-          <div className="flex items-center gap-3 pt-2">
-            <button
-              onClick={onClose}
-              className="flex-1 py-3 rounded-xl border border-white/10 text-xs font-semibold text-zinc-300 hover:bg-white/5 transition cursor-pointer"
-            >
-              Vazgeç
-            </button>
-            <button
-              onClick={handleBuy}
-              disabled={loading}
-              className="flex-1 py-3 rounded-xl bg-gradient-btn text-xs font-semibold text-white shadow-glow hover:brightness-110 hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {loading ? (
-                <RefreshCw className="w-4 h-4 animate-spin" />
-              ) : (
-                <>
-                  <CreditCard className="w-4 h-4" />
-                  <span>Ödemeyi Tamamla (750 ₺)</span>
-                </>
-              )}
-            </button>
-          </div>
-        </div>
-      </div>
-    </ModalPortal>
-  );
-}
-
 /** Sunucu `assets/kapak_fotografi/x.png` gibi goreli yol donuyor. */
 function assetUrl(path) {
   if (!path) return "";
@@ -346,6 +212,25 @@ function ImagePicker({
   );
 }
 
+/* Bilgi bankası PDF tavanı — TrainingController::MAX_PDF_BYTES ile ELLE
+   senkron (S21 kararı, 2026-10-05: 15 MB → 5 MB). */
+/* Kota kartlarındaki "Kapasite" satırı. Eskiden limit yoksa sabit
+   "1/2 Kullanıldı" / "0/5 Kullanıldı" yazıyordu — kullanıcının gerçek
+   sayısıyla ilgisi yoktu. Sınırsız kota (madde 2: onaylı satıcının herkese
+   açık hakkı) sunucudan `*_unlimited: true` olarak geliyor. */
+function capacityLabel(used, limit, unlimited) {
+  if (unlimited) return `${Number(used) || 0} / Sınırsız`;
+  if (limit === null || limit === undefined || limit === "—") return "—";
+  return `${Number(used) || 0} / ${limit}`;
+}
+
+const KB_MAX_PDF_MB = 5;
+/* Eğitim metni tavanı — AppConfig::MAX_TRAINING_CHARS ile ELLE senkron.
+   Sunucu bu sınırı aşan kısmı keser, dolunca 413 döner; sohbette metnin
+   tamamı (en fazla bu kadar) olduğu gibi modele verilir — arama/vektör yok. */
+const KB_MAX_CHARS = 60000;
+const KB_MAX_PDF_BYTES = KB_MAX_PDF_MB * 1024 * 1024;
+
 /* Sekmeler tek kaynakta: hem üstteki sekme çubuğu hem alttaki "Devam Et"
    gezinmesi bu diziden besleniyor. Liste JSX'in içinde satır içi duruyordu;
    ileri/geri hesabı sıranın tek yerden okunabilmesini gerektiriyor. */
@@ -379,7 +264,23 @@ const ROLE_PRESETS = [
   },
 ];
 
-function ChatbotForm({ selectedCard, bot, botId, userId, independentMode }) {
+function ChatbotForm({
+  selectedCard,
+  bot,
+  botId: initialBotId,
+  userId,
+  independentMode,
+}) {
+  /* N-02 devamı — ilk kayıttan sonra kullanıcı /dashboard/chatbots'a
+     atılıyordu; Bilgi Bankası'na ulaşmak için listeden "Yönet" ile geri
+     dönmesi gerekiyordu. Artık sunucunun döndürdüğü id burada tutuluyor ve
+     form aynı bileşende "kayıtlı bot" olarak devam ediyor. Bileşen yeniden
+     mount EDİLMİYOR (dış sayfanın id'yi yeniden okuması iskelet gösterip
+     form durumunu sıfırlardı); URL yalnızca history ile ?id=N yapılıyor,
+     yani yenilemede normal düzenleme yolu açılıyor. */
+  const [createdBotId, setCreatedBotId] = useState(null);
+  const botId = createdBotId ?? initialBotId;
+  const isPersisted = Boolean(bot) || createdBotId !== null;
   const router = useRouter();
   const { refetchAccount } = useContext(UserContext);
   const [botName, setBotName] = useState(bot?.chatbot?.isim || "");
@@ -444,7 +345,8 @@ function ChatbotForm({ selectedCard, bot, botId, userId, independentMode }) {
 
   // Secilen dosyayi dogrula ve onizlemesini uret. Sunucu tarafi da ayni
   // kontrolleri yapiyor (MIME + 5MB); burasi kullaniciya aninda geri bildirim.
-  // --- Bilgi Bankasi (RAG) -------------------------------------------
+  // --- Bilgi Bankasi (RAG degil: metin training_prompt'a eklenir, sohbette
+  // tamami modele verilir; bkz. KB_MAX_CHARS) ---------------------------
   // Backend zaten hazirdi ve hic cagrilmiyordu:
   //   POST /api/training/readpdf.php            -> PDF metni cikarir
   //   POST /api/training/readurl.php            -> sayfa metni cikarir (yeni)
@@ -457,7 +359,8 @@ function ChatbotForm({ selectedCard, bot, botId, userId, independentMode }) {
   const kbFileRef = useRef(null);
 
   const refreshCorpus = async () => {
-    if (!botId) return;
+    // N-02: yeni botun id'si -1 (truthy) — `!botId` onu yakalamıyordu.
+    if (!botId || botId === -1) return;
     try {
       const res = await fetch(
         `/api/training/get_training_chunks.php?botId=${botId}&offset=0`,
@@ -521,8 +424,8 @@ function ChatbotForm({ selectedCard, bot, botId, userId, independentMode }) {
       setKbError("Yalnızca PDF dosyası yükleyebilirsiniz.");
       return;
     }
-    if (file.size > 15 * 1024 * 1024) {
-      setKbError("PDF çok büyük (maks. 15 MB).");
+    if (file.size > KB_MAX_PDF_BYTES) {
+      setKbError(`PDF çok büyük (maks. ${KB_MAX_PDF_MB} MB).`);
       return;
     }
 
@@ -624,14 +527,14 @@ function ChatbotForm({ selectedCard, bot, botId, userId, independentMode }) {
     setIsBuilding(true);
     try {
       const chatbotData = {
-        id: bot ? botId : -1,
+        id: isPersisted ? botId : -1,
         isim: botName.trim(),
         aciklama: description,
         style_prompt: systemPrompt,
         sohbet_basi_mesaj: "",
       };
       if (categoryId) chatbotData.kategori_id = Number(categoryId);
-      if (!bot) {
+      if (!isPersisted) {
         chatbotData.is_independent = independentMode ? 1 : 0;
       }
       const formData = new FormData();
@@ -640,11 +543,26 @@ function ChatbotForm({ selectedCard, bot, botId, userId, independentMode }) {
       if (coverFile) formData.append("coverImage_file", coverFile);
       if (profileFile) formData.append("profileImage_file", profileFile);
       const res = await fetch(
-        bot ? "/api/chatbot/updatechatbot.php" : "/api/chatbot/savechatbot.php",
+        isPersisted
+          ? "/api/chatbot/updatechatbot.php"
+          : "/api/chatbot/savechatbot.php",
         { method: "POST", body: formData, credentials: "include" },
       );
       const result = await res.json();
-      if (result.success) {
+      if (result.success && !isPersisted && result.id) {
+        // İlk kayıt: listeye atma, aynı sihirbazda Bilgi Bankası'nı aç.
+        refetchAccount();
+        setCreatedBotId(Number(result.id));
+        // Görseller yüklendi; sonraki "Kaydet" onları yeniden göndermesin.
+        setCoverFile(null);
+        setProfileFile(null);
+        window.history.replaceState(
+          null,
+          "",
+          `${window.location.pathname}?id=${result.id}`,
+        );
+        goToTab("knowledge");
+      } else if (result.success) {
         refetchAccount();
         router.push("/dashboard/chatbots");
       } else {
@@ -990,13 +908,20 @@ function ChatbotForm({ selectedCard, bot, botId, userId, independentMode }) {
           </div>
         )}
 
-        {/* Tab 3: RAG Knowledge */}
+        {/* Tab 3: Bilgi Bankası (eğitim metni) */}
         {activeTab === "knowledge" && (
           <div className="space-y-4 animate-in fade-in duration-200">
-            {!botId ? (
+            {!isSavedBot ? (
               /* training_prompt bir bot satirina yazilir; kaydedilmemis botun
                  id'si yok. Eskiden bu alan her durumda tiklanabilir gorunuyordu
-                 ama hicbir sey yapmiyordu. */
+                 ama hicbir sey yapmiyordu.
+
+                 N-02 (M0-1) — bu kapı `!botId` ile kontrol ediliyordu, ama
+                 yeni botta botId -1 (truthy) olduğu için kapı HİÇ kapanmıyordu:
+                 yükleme `update_training_chunk.php`'ye id:-1 gönderiyor,
+                 sunucu `positiveInt(-1)=0` ile sahiplik kontrolünü düşürüp
+                 "Bu chatbot üzerinde yetkiniz yok." diyordu. URL yolu da
+                 aynı çağrıyı yaptığı için kaydedilmemiş botta o da bozuktu. */
               <div className="flex items-start gap-3 rounded-xl border border-amber-500/20 bg-amber-500/[0.06] p-4">
                 <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
                 <p className="text-xs leading-relaxed text-amber-200/80">
@@ -1020,9 +945,16 @@ function ChatbotForm({ selectedCard, bot, botId, userId, independentMode }) {
                   <span className="font-mono text-xs font-semibold text-white">
                     {corpusLength === null
                       ? "—"
-                      : `${corpusLength.toLocaleString("tr-TR")} karakter`}
+                      : `${corpusLength.toLocaleString("tr-TR")} / ${KB_MAX_CHARS.toLocaleString("tr-TR")} karakter`}
                   </span>
                 </div>
+                <p className="px-1 text-caption leading-relaxed text-zinc-500">
+                  Eklediğiniz belge ve sayfaların metni botun eğitim metnine
+                  eklenir ve her mesajda olduğu gibi modele verilir; ayrı bir
+                  arama ya da vektör dizini yoktur. En fazla{" "}
+                  {KB_MAX_CHARS.toLocaleString("tr-TR")} karakter saklanır,
+                  fazlası eklenmez.
+                </p>
 
                 {/* PDF */}
                 <button
@@ -1039,7 +971,7 @@ function ChatbotForm({ selectedCard, bot, botId, userId, independentMode }) {
                   </span>
                   <span className="block text-caption text-zinc-500">
                     Sıkça sorulan sorular, kataloglar veya şirket içi kılavuzlar
-                    (maks. 15 MB)
+                    (maks. {KB_MAX_PDF_MB} MB)
                   </span>
                 </button>
                 <input
@@ -1147,12 +1079,12 @@ function ChatbotForm({ selectedCard, bot, botId, userId, independentMode }) {
                 Erişim Türü:{" "}
                 {independentMode
                   ? "Bağımsız (Özel)"
-                  : "Herkese Açık (Pazaryeri)"}
+                  : "Herkese Açık (Ücretsiz)"}
               </h4>
               <p className="text-xs text-zinc-400 leading-relaxed">
                 {independentMode
                   ? "Bu bot sadece sizin hesabınızda kalacaktır. İstediniz an sitenize widget olarak ekleyebilirsiniz."
-                  : "Bu bot Pazaryerinde listelenecek ve diğer kullanıcılar tarafından jeton karşılığı kullanılabilecektir."}
+                  : "Bu bot Keşfet'te listelenecek; herkes ücretsiz sohbet edebilir, mesajlar kullanıcıların günlük Luma Coin'inden düşer."}
               </p>
             </div>
 
@@ -1173,7 +1105,7 @@ function ChatbotForm({ selectedCard, bot, botId, userId, independentMode }) {
                 <>
                   <Rocket className="w-4 h-4" />
                   <span>
-                    {bot
+                    {isPersisted
                       ? "Değişiklikleri Kaydet & Güncelle"
                       : "Sohbet Botunu Oluştur & Yayına Al"}
                   </span>
@@ -1329,14 +1261,11 @@ function ChatbotForm({ selectedCard, bot, botId, userId, independentMode }) {
 }
 
 function CreateChatbotInner({ userId, bot, botId, selectedCard }) {
-  const seller = useSellerStatus(userId);
   const isEditing = !!bot;
   const [choice, setChoice] = useState(
     isEditing ? (bot.chatbot?.is_independent ? "independent" : "public") : null,
   );
   const [limits, setLimits] = useState(null);
-  const [planActive, setPlanActive] = useState(null);
-  const [showBuyPlan, setShowBuyPlan] = useState(false);
 
   const fetchLimits = () => {
     if (!userId) return;
@@ -1366,12 +1295,6 @@ function CreateChatbotInner({ userId, bot, botId, selectedCard }) {
   useEffect(() => {
     if (isEditing || !userId) return;
     fetchLimits();
-    fetch(`/api/marketplace/getproducerplanstatus.php?user_id=${userId}`)
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.success) setPlanActive(!!data.active);
-      })
-      .catch(() => setPlanActive(false));
   }, [isEditing, userId]);
 
   if (!userId || (!isEditing && !limits)) {
@@ -1388,10 +1311,6 @@ function CreateChatbotInner({ userId, bot, botId, selectedCard }) {
 
   // State 1: New Chatbot and no selection made yet
   if (!isEditing && choice === null) {
-    const canBuyPlan =
-      (!limits.can_create_independent || !limits.can_create_public) &&
-      planActive === false;
-
     return (
       <div className="space-y-10">
         <PageHeader
@@ -1461,7 +1380,7 @@ function CreateChatbotInner({ userId, bot, botId, selectedCard }) {
 
             <div className="pt-6 mt-6 border-t border-white/5 flex items-center justify-between relative z-10">
               <span className="text-xs font-mono text-zinc-400">
-                Kapasite: {limits.independent_limit || "1/2 Kullanıldı"}
+                Kapasite: {capacityLabel(limits.independent_used, limits.independent_limit, limits.independent_unlimited)}
               </span>
               <span className="text-xs font-semibold text-violet-300 group-hover:translate-x-1 transition-transform flex items-center gap-1">
                 Seç ve Devam Et <ArrowRight className="w-4 h-4" />
@@ -1469,7 +1388,8 @@ function CreateChatbotInner({ userId, bot, botId, selectedCard }) {
             </div>
           </GlassCard>
 
-          {/* Card 2: Marketplace / Public */}
+          {/* Card 2: Herkese Açık (madde 2 / GK-2) — ücretsiz, satıcı kaydı gerekmez.
+              Fiyatlı pazaryeri satışı ayrı: şirket başvurusu (madde 3), aşağıdaki bağlantı. */}
           <GlassCard
             interactive={limits.can_create_public}
             disabled={!limits.can_create_public}
@@ -1487,26 +1407,26 @@ function CreateChatbotInner({ userId, bot, botId, selectedCard }) {
                   variant={limits.can_create_public ? "fuchsia" : "destructive"}
                 >
                   {limits.can_create_public
-                    ? "%80 Gelir Payı"
+                    ? "Ücretsiz"
                     : `Hakkınız Doldu (${limits.public_limit ?? "—"})`}
                 </Badge>
               </div>
 
               <div>
                 <h3 className="text-xl font-bold text-white group-hover:text-fuchsia-200 transition-colors">
-                  Pazaryerinde Yayınla
+                  Herkese Açık Chatbot Oluştur
                 </h3>
                 <p className="text-xs sm:text-sm text-zinc-400 mt-2 leading-relaxed">
-                  Chatbotunuz platform vitrininde yayınlanır. Binlerce kullanıcı
-                  tarafından keşfedilir ve jeton başına pasif gelir elde
-                  edersiniz.
+                  Chatbotunuz Keşfet'te herkese açık yayınlanır. Herkes ücretsiz
+                  sohbet edebilir; mesajlar kullanıcıların günlük Luma
+                  Coin'inden düşer.
                 </p>
               </div>
             </div>
 
             <div className="pt-6 mt-6 border-t border-white/5 flex items-center justify-between relative z-10">
               <span className="text-xs font-mono text-zinc-400">
-                Kapasite: {limits.public_limit || "0/5 Kullanıldı"}
+                Kapasite: {capacityLabel(limits.public_used, limits.public_limit, limits.public_unlimited)}
               </span>
               <span className="text-xs font-semibold text-fuchsia-300 group-hover:translate-x-1 transition-transform flex items-center gap-1">
                 Seç ve Devam Et <ArrowRight className="w-4 h-4" />
@@ -1515,32 +1435,16 @@ function CreateChatbotInner({ userId, bot, botId, selectedCard }) {
           </GlassCard>
         </div>
 
-        {/* Upgrade Callout Banner */}
-        {canBuyPlan && (
-          <div className="relative overflow-hidden rounded-2xl border border-fuchsia-500/30 bg-gradient-to-r from-fuchsia-950/40 via-violet-950/30 to-zinc-900 p-6 sm:p-8 flex flex-col sm:flex-row items-center justify-between gap-6 shadow-2xl">
-            <div className="flex items-center gap-4">
-              <div className="p-3 rounded-2xl bg-fuchsia-500/20 text-fuchsia-300 border border-fuchsia-500/30 shrink-0">
-                <Crown className="w-7 h-7" />
-              </div>
-              <div className="space-y-1">
-                <h4 className="text-base font-bold text-white">
-                  Üretici Limitinizi Yükseltin
-                </h4>
-                <p className="text-xs text-zinc-400 max-w-md">
-                  750₺ karşılığında 5 adet Herkese Açık ve 2 adet Bağımsız Bot
-                  oluşturma hakkını anında aktifleştirin.
-                </p>
-              </div>
-            </div>
-
-            <button
-              onClick={() => setShowBuyPlan(true)}
-              className="w-full sm:w-auto px-6 py-3.5 rounded-xl bg-gradient-btn text-xs font-bold text-white shadow-glow hover:brightness-110 hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 cursor-pointer shrink-0"
-            >
-              Şimdi Satın Al
-            </button>
-          </div>
-        )}
+        {/* Madde 10 — pazaryerinde ücretli satış şirket başvurusu ister. */}
+        <p className="text-xs text-zinc-400">
+          Botunuzu pazaryerinde ücretli satmak mı istiyorsunuz?{" "}
+          <Link
+            href="/dashboard/pazaryeri-basvurusu"
+            className="font-semibold text-fuchsia-300 hover:text-fuchsia-200"
+          >
+            Pazaryeri Başvurusu
+          </Link>
+        </p>
 
         {/* Visual Workflow Steps Preview */}
         <div className="pt-4 border-t border-white/10 space-y-4">
@@ -1560,7 +1464,7 @@ function CreateChatbotInner({ userId, bot, botId, selectedCard }) {
               },
               {
                 title: "3. Yayına Al",
-                desc: "Bağımsız özel bot olarak kullan veya Pazaryerinde satışa aç.",
+                desc: "Bağımsız özel bot olarak kullan ya da herkese açık yayınla.",
               },
             ].map((st, i) => (
               <div
@@ -1576,39 +1480,14 @@ function CreateChatbotInner({ userId, bot, botId, selectedCard }) {
           </div>
         </div>
 
-        <BuyProducerAccountModal
-          isOpen={showBuyPlan}
-          onClose={() => setShowBuyPlan(false)}
-          userId={userId}
-          onPurchased={() => {
-            setPlanActive(true);
-            fetchLimits();
-          }}
-        />
       </div>
     );
   }
 
   const independentMode = choice === "independent";
 
-  // State 2: Marketplace mode selected but seller registration pending
-  if (!independentMode && !seller.loading && seller.status !== "active") {
-    return (
-      <div className="space-y-8">
-        <PageHeader
-          eyebrow="Pazaryeri Doğrulaması"
-          eyebrowClassName="text-fuchsia-300"
-          title="Satıcı Profilinizi Tamamlayın"
-          description="Pazaryerinde yayınlanacak botlardan ödeme alabilmeniz için son bir adım kaldı."
-        />
-        <SellerOnboardingWizard
-          userId={userId}
-          initialStatus={seller}
-          onComplete={() => seller.refetch()}
-        />
-      </div>
-    );
-  }
+  // Faz 4 — eski "State 2" (herkese açık için satıcı sihirbazı) kaldırıldı:
+  // herkese açık bot artık satıcı kaydı istemiyor (M10).
 
   // State 3: Ready to create or edit chatbot form
   return (

@@ -393,10 +393,13 @@ class WalletController {
                     'is_current'    => $isCurrent,
                     // Pazarlama metni yerine gerçek kotalar — istemci
                     // isterse "3 bot / 50 mesaj" diye gösterebilir.
+                    // Migration 012: bot limitleri NULL = sınırsız. `(int)`
+                    // NULL'ı 0'a çevirirdi; sınırsız artık `null` olarak gidiyor.
                     'limits'        => [
-                        'independent_bots' => (int) $p['independent_bot_limit'],
-                        'public_bots'      => (int) $p['public_bot_limit'],
+                        'independent_bots' => $p['independent_bot_limit'] === null ? null : (int) $p['independent_bot_limit'],
+                        'public_bots'      => $p['public_bot_limit'] === null ? null : (int) $p['public_bot_limit'],
                         'daily_messages'   => (int) $p['daily_message_limit'],
+                        'privacy_rights'   => (int) ($p['privacy_right_limit'] ?? AppConfig::FREE_PRIVACY_RIGHT_LIMIT),
                     ],
                 ];
             }
@@ -431,7 +434,8 @@ class WalletController {
      * alınmış olsaydı bile kullanıcı hiçbir şey satın almamış olacaktı.
      *
      * Bunu tekrar açmak için gereken üç şeyin ÜÇÜ DE tamamlandı:
-     *   1. `chargeCard()` artık gerçek iyzico tahsilatı yapıyor (PAY-001),
+     *   1. gerçek tahsilat var — önce `chargeCard()` (iyzico, PAY-001),
+     *      Faz 7a'dan beri Hoppa Ortak Ödeme Sayfası + ProcessQuery,
      *   2. plan adı VE FİYATI sunucudaki `plans` kataloğundan okunuyor —
      *      istemci ne plan adı uyduruyor ne de tutar gönderiyor,
      *   3. `functions/plans.php` üzerinden `chatbot_limits.php` ve
@@ -525,101 +529,322 @@ class WalletController {
             JsonResponse::success(['message' => 'Üyelik paketiniz güncellendi.', 'plan_name' => $plan['name_tr']]);
         }
 
-        $card = is_array($data['card'] ?? null) ? $data['card'] : [];
-        if (!$card) {
-            JsonResponse::error('Ödeme için kart bilgisi gerekli.', 400, AppConfig::ERR_VALIDATION);
-        }
-
-        // order_id tahsilattan önce üretiliyor — checkout ile aynı gerekçe:
-        // mutabakat belirsiz kalan bir tahsilatı ancak bu kimlikle bulabilir.
-        $orderId  = 'PLN-' . strtoupper(InputSanitizer::randomToken(4));
-        $buyerRow = $db->selectSingle(
-            'id, ad_soyad, kullanici_adi, eposta, telefon FROM kullanicilar WHERE id = ?',
-            [$userId]
-        ) ?: ['id' => $userId];
-
-        $chargeResult = chargeCard($card, $price, [
-            'order_id'      => $orderId,
-            'user'          => $buyerRow,
-            'user_id'       => $userId,
-            'ip'            => clientIp(),
-            'payment_group' => 'SUBSCRIPTION',
-            'items'         => [[
-                'id'       => 'PLAN-' . $plan['id'],
-                'name'     => $plan['name_tr'] . ' Üyelik Paketi',
-                'category' => 'Üyelik',
-                'price'    => $price,
-            ]],
-        ]);
-
-        if (!$chargeResult['success']) {
-            JsonResponse::error($chargeResult['message'] ?? 'Ödeme başarısız.', 402, AppConfig::ERR_PAYMENT);
-        }
-
-        $gatewayPayment = (string) ($chargeResult['payment_id'] ?? '');
-
-        // Tahsilat alındı; buradan sonraki her hata "para çekildi ama paket
-        // verilmedi" demek — o yüzden telafi (aynı gün tam iptal) şart.
-        try {
-            $db->insert('param_marketplace_payments', [
-                'order_id'             => $orderId,
-                'user_id'              => $userId,
-                'amount'               => $price,
-                'product_amount'       => $price,
-                'status'               => 'paid',
-                'param_transaction_id' => $gatewayPayment !== '' ? $gatewayPayment : null,
-                'param_receipt_id'     => $orderId,
-                'param_net_amount'     => $chargeResult['net_amount'] ?? null,
-                'items_json'           => json_encode([[
-                    'plan_id'   => (int) $plan['id'],
-                    'plan_name' => $plan['name_tr'],
-                    'price'     => $price,
-                ]], JSON_UNESCAPED_UNICODE),
-                // Sıra önemli — bkz. MarketplaceController'daki aynı satır.
-                'param_response_json'  => json_encode(
-                    array_merge(
-                        $chargeResult['raw'] ?? [],
-                        ['itemTransactions' => $chargeResult['item_transactions'] ?? []]
-                    ),
-                    JSON_UNESCAPED_UNICODE
-                ),
-            ]);
-
-            // user_plan_selection'ın PK'sı user_id — upsert doğru davranış:
-            // kullanıcının tek bir etkin planı var.
-            //
-            // D-05 — paket 30 GÜNLÜK TEK SEFERLİK bir satış. Aylık fiyat bir
-            // kez tahsil edilip hak SÜRESİZ veriliyordu; tabloda süre
-            // sütunu yoktu ve `getUserPlan()` satırı koşulsuz okuyordu.
-            // Yinelenen tahsilat YOK: süre bitince kullanıcı varsayılan
-            // plana düşer ve dilerse elle yeniden satın alır.
-            //
-            // Bitiş tarihi MySQL'in saatinden türetiliyor (checkout'taki
-            // expiry hesabıyla aynı gerekçe: uygulama ve veritabanı
-            // sunucuları farklı saat diliminde olabiliyor).
-            $expiresAt = (string) $db->selectSingle(
-                'DATE_ADD(NOW(), INTERVAL ? DAY) AS bitis',
-                [AppConfig::SUBSCRIPTION_MONTHLY]
-            )['bitis'];
-
-            $db->insert('user_plan_selection', self::planSelectionRow($db, $userId, (string) $plan['name_tr'], $expiresAt), true);
-        } catch (Throwable $e) {
-            error_log('[upgradePlan] tahsilat sonrası kayıt başarısız: ' . $e->getMessage());
-            cancelCharge($gatewayPayment, clientIp(), $orderId);
+        // Faz 7a — ücretli paket Hoppa Ortak Ödeme Sayfası'ndan satılıyor.
+        // Kart verisi bu uca ARTIK HİÇ gelmiyor (N-17): kullanıcı Hoppa'nın
+        // sayfasına yönlendirilir, sonuç `hoppaReturn()` + ProcessQuery ile
+        // kesinleşir, paket ancak o anda tanımlanır. Eski `chargeCard`
+        // (iyzico, kartlı) yolu paket için kaldırıldı; pazaryeri hâlâ onu
+        // kullanıyor ve dokunulmadı.
+        $gateway = PaymentGatewayFactory::make();
+        if ($gateway === null) {
             JsonResponse::error(
-                'Ödemeniz alındı ancak paket tanımlanamadı; tutar iade edildi. Lütfen tekrar deneyin.',
-                500,
-                AppConfig::ERR_SERVER
+                'Ödeme altyapısı hazırlanıyor. Paket satın alma kısa süre içinde açılacak.',
+                503,
+                AppConfig::ERR_UNAVAILABLE
             );
         }
 
-        error_log(sprintf('[upgradePlan] paket satın alındı user_id=%d plan=%s order=%s', $userId, $plan['name_tr'], $orderId));
+        $start = self::startHostedPlanPayment($db, $gateway, $userId, $plan, (string) env_get('APP_PUBLIC_URL', ''));
+        if (!$start['success']) {
+            JsonResponse::error($start['message'], $start['http'], $start['code']);
+        }
 
         JsonResponse::success([
-            'message'   => 'Üyelik paketiniz güncellendi.',
-            'plan_name' => $plan['name_tr'],
-            'order_id'  => $orderId,
+            'redirect_url' => $start['redirect_url'],
+            'order_id'     => $start['order_id'],
         ]);
+    }
+
+    /**
+     * Hoppa satırlarının durumları — iyzico mutabakatının taradığı
+     * değerlerden (`pending`, `failed`, …) BİLİNÇLİ OLARAK ayrı; bkz.
+     * startHostedPlanPayment().
+     */
+    public const HOSTED_PENDING = 'hoppa_pending';
+    public const HOSTED_FAILED  = 'hoppa_failed';
+    /**
+     * Faz 7a-2: mutabakat işi 24 saati geçmiş ve Hoppa'da hâlâ ödenmemiş
+     * görünen siparişi bu duruma çeker (bkz. functions/hosted_plan_payments.php).
+     * Son değil: sonradan ödeme kesinleşirse (geç dönüş) paket yine tanımlanır.
+     */
+    public const HOSTED_EXPIRED = 'hoppa_expired';
+
+    /** Kesinleştirilebilir (henüz paid olmayan) Hoppa durumları. */
+    public const HOSTED_OPEN = [self::HOSTED_PENDING, self::HOSTED_FAILED, self::HOSTED_EXPIRED];
+
+    /** Sipariş referansı: Hoppa sınırı 24 karakter; tahmin edilemesin diye 16 hex. */
+    public const HOSTED_ORDER_PATTERN = '/^PLN-[A-F0-9]{16}$/';
+
+    /**
+     * Ödeme oturumunu açar: önce `hoppa_pending` satırı (D-04: kayıt
+     * sağlayıcıdan ÖNCE), sonra Hoppa'ya istek, sonra yönlendirme adresi.
+     * Uç nokta ile selftest aynı yolu kullanıyor.
+     *
+     * Neden `pending` değil `hoppa_pending`: `reconcilePayments()` (iyzico)
+     * `pending`/`failed` satırları iyzico'ya soruyor ve "bulunamadı"
+     * yanıtında `failed` yazıyor. Hoppa siparişi orada hiç yok, yani iyzico
+     * mutabakatı ödenmekte olan bir paketi `failed`'a çekerdi. iyzico koduna
+     * dokunmamak için Hoppa satırları ayrı durum değerleri kullanıyor.
+     *
+     * @return array{success: bool, redirect_url?: string, order_id?: string, message: string, http: int, code: string}
+     */
+    public static function startHostedPlanPayment(Database $db, PaymentGatewayInterface $gateway, int $userId, array $plan, string $publicUrl): array
+    {
+        $unavailable = [
+            'success' => false,
+            'message' => 'Ödeme altyapısı hazırlanıyor. Paket satın alma kısa süre içinde açılacak.',
+            'http'    => 503,
+            'code'    => AppConfig::ERR_UNAVAILABLE,
+        ];
+
+        $publicUrl = rtrim(trim($publicUrl), '/');
+        $scheme    = (string) parse_url($publicUrl, PHP_URL_SCHEME);
+        // BACK_URL istek başlığından (Host) türetilmiyor: başlık
+        // değiştirilerek ödeme sonucu başka bir adrese yollatılabilirdi.
+        if ($publicUrl === '' || !filter_var($publicUrl, FILTER_VALIDATE_URL)
+            || !in_array($scheme, ['http', 'https'], true)
+            || (!$gateway->isTest() && $scheme !== 'https')) {
+            error_log('[upgradePlan] APP_PUBLIC_URL tanımsız/geçersiz (canlıda https zorunlu) — ödeme başlatılmadı.');
+            return $unavailable;
+        }
+
+        $price   = round((float) $plan['monthly_price'], 2);
+        $orderId = 'PLN-' . strtoupper(InputSanitizer::randomToken(8));
+
+        $buyer = $db->selectSingle(
+            'id, ad_soyad, kullanici_adi, eposta, telefon FROM kullanicilar WHERE id = ?',
+            [$userId]
+        ) ?: [];
+        $fullName  = trim((string) ($buyer['ad_soyad'] ?? '')) ?: trim((string) ($buyer['kullanici_adi'] ?? ''));
+        $nameParts = preg_split('/\s+/u', $fullName, -1, PREG_SPLIT_NO_EMPTY) ?: [];
+        $lastName  = count($nameParts) > 1 ? (string) array_pop($nameParts) : '-';
+        $firstName = $nameParts !== [] ? implode(' ', $nameParts) : '-';
+
+        $db->insert('param_marketplace_payments', [
+            'order_id'            => $orderId,
+            'user_id'             => $userId,
+            'status'              => self::HOSTED_PENDING,
+            'amount'              => $price,
+            'product_amount'      => $price,
+            'param_receipt_id'    => $orderId,
+            'items_json'          => json_encode([[
+                'plan_id'   => (int) $plan['id'],
+                'plan_name' => $plan['name_tr'],
+                'price'     => $price,
+            ]], JSON_UNESCAPED_UNICODE),
+            'param_response_json' => json_encode(['provider' => 'hoppa', 'test' => $gateway->isTest()]),
+        ]);
+
+        $res = $gateway->startHostedPayment([
+            'order_ref' => $orderId,
+            'amount'    => $price,
+            'back_url'  => $publicUrl . '/api/wallet/hoppa_return.php',
+            // N-20: Hoppa il/ilçe/adres istiyor; kayıtta bu bilgiler yok.
+            // Hoppa'nın kendi örneğindeki gibi "-" gidiyor — müşteri ve
+            // Hoppa kararı bekliyor (AUDIT N-20).
+            'customer'  => [
+                'first_name' => $firstName,
+                'last_name'  => $lastName,
+                'email'      => (string) ($buyer['eposta'] ?? ''),
+                'phone'      => trim((string) ($buyer['telefon'] ?? '')) ?: '-',
+                'city'       => '-',
+                'state'      => '-',
+                'address'    => '-',
+            ],
+            'products'  => [[
+                'id'          => 'PLAN-' . $plan['id'],
+                'name'        => $plan['name_tr'] . ' Üyelik Paketi',
+                'category'    => 'Üyelik',
+                'description' => '30 günlük üyelik paketi',
+                'amount'      => $price,
+            ]],
+        ]);
+
+        $db->update('param_marketplace_payments', [
+            'status'               => $res['success'] ? self::HOSTED_PENDING : self::HOSTED_FAILED,
+            'param_transaction_id' => $res['provider_ref'] ?? null,
+            'redirect_url'         => $res['redirect_url'] ?? null,
+            'param_response_json'  => json_encode(
+                ['provider' => 'hoppa', 'test' => $gateway->isTest(), 'start' => $res['raw'] ?? []],
+                JSON_UNESCAPED_UNICODE
+            ),
+        ], 'order_id = ?', [$orderId]);
+
+        if (!$res['success']) {
+            error_log(sprintf('[upgradePlan] Hoppa ödeme başlatılamadı order=%s code=%s', $orderId, (string) ($res['error_code'] ?? '')));
+            return [
+                'success' => false,
+                'message' => 'Ödeme başlatılamadı. Lütfen biraz sonra tekrar deneyin.',
+                'http'    => 502,
+                'code'    => AppConfig::ERR_PAYMENT,
+            ];
+        }
+
+        error_log(sprintf('[upgradePlan] Hoppa ödeme başlatıldı user_id=%d plan=%s order=%s', $userId, $plan['name_tr'], $orderId));
+        return ['success' => true, 'redirect_url' => $res['redirect_url'], 'order_id' => $orderId, 'message' => '', 'http' => 200, 'code' => ''];
+    }
+
+    /**
+     * Ödemeyi sağlayıcıdan sorup kesinleştirir; ödendiyse paketi tanımlar.
+     *
+     * Tekrar çalıştırmaya dayanıklı: aynı sipariş geri dönüşte, yenilenen
+     * sayfada ya da eşzamanlı iki istekte birden işlenebilir. Paket yalnızca
+     * `hoppa_pending|hoppa_failed → paid` geçişini YAPAN (koşullu UPDATE'te
+     * etkilenen satır = 1) istek tarafından, aynı transaction içinde
+     * tanımlanır. Diğerleri satırı `paid` bulur ve hiçbir şey yazmaz.
+     *
+     * `hoppa_failed` ve `hoppa_expired` yeniden soruluyor: reddedilen ya da
+     * süresi dolmuş sayılan bir siparişte sonradan başarılı ödeme gelirse
+     * para çekilmiş ama paket verilmemiş olmasın.
+     *
+     * @return array{state: string, plan_name: ?string, message: string}
+     */
+    public static function finalizeHostedPlanPayment(Database $db, PaymentGatewayInterface $gateway, string $orderId): array
+    {
+        $out = static fn (string $state, ?string $plan = null, string $message = ''): array => [
+            'state' => $state, 'plan_name' => $plan, 'message' => $message,
+        ];
+
+        $row = $db->selectSingle(
+            'id, user_id, status, amount, items_json, param_response_json FROM param_marketplace_payments WHERE order_id = ?',
+            [$orderId]
+        );
+        $meta = $row ? json_decode((string) $row['param_response_json'], true) : null;
+        $item = $row ? (json_decode((string) $row['items_json'], true)[0] ?? null) : null;
+        if (!$row || ($meta['provider'] ?? '') !== 'hoppa' || !is_array($item) || empty($item['plan_name'])) {
+            return $out('not_found');
+        }
+        $planName = (string) $item['plan_name'];
+
+        if ($row['status'] === 'paid') {
+            return $out('paid', $planName);
+        }
+        if (!in_array($row['status'], self::HOSTED_OPEN, true)) {
+            return $out('unknown', $planName);
+        }
+
+        $q = $gateway->queryPayment($orderId);
+
+        if ($q['state'] === 'paid') {
+            if (!HoppaGateway::amountCovers((float) $row['amount'], $q['amount'], $q['commission'])) {
+                // Para çekilmiş ama tutar siparişle uyuşmuyor: paket vermiyoruz,
+                // satırı da kapatmıyoruz — elle inceleme gerekir.
+                error_log(sprintf(
+                    '[hoppaFinalize] TUTAR UYUŞMUYOR order=%s beklenen=%.2f çekilen=%s komisyon=%s',
+                    $orderId, (float) $row['amount'], var_export($q['amount'], true), var_export($q['commission'], true)
+                ));
+                return $out('unknown', $planName, 'amount_mismatch');
+            }
+
+            // Selftest bu fonksiyonu kendi transaction'ı içinde (ROLLBACK ile)
+            // çağırıyor; iç içe BEGIN PDO'da hata verir. Dışarıda transaction
+            // varsa ona katılıyoruz, yoksa kendimiz açıp kapatıyoruz.
+            $conn = $db->getConnection();
+            $ownTx = !$conn->inTransaction();
+            if ($ownTx) {
+                $conn->beginTransaction();
+            }
+            try {
+                $changed = $db->execute(
+                    'UPDATE param_marketplace_payments
+                        SET status = \'paid\', param_net_amount = ?, callback_json = ?
+                      WHERE id = ? AND status IN (?, ?, ?)',
+                    [
+                        $q['amount'] !== null && $q['commission'] !== null ? round($q['amount'] - $q['commission'], 2) : null,
+                        json_encode(['query' => $q['raw']], JSON_UNESCAPED_UNICODE),
+                        $row['id'], ...self::HOSTED_OPEN,
+                    ]
+                );
+
+                if ($changed === 1) {
+                    // D-05: 30 günlük tek seferlik satış; bitiş MySQL saatinden.
+                    // GK-27: otomatik yenileme yok, kullanıcı her dönem elle yeniler.
+                    $expiresAt = (string) $db->selectSingle(
+                        'DATE_ADD(NOW(), INTERVAL ? DAY) AS bitis',
+                        [AppConfig::SUBSCRIPTION_MONTHLY]
+                    )['bitis'];
+                    $db->insert('user_plan_selection', self::planSelectionRow($db, (int) $row['user_id'], $planName, $expiresAt), true);
+                }
+                if ($ownTx) {
+                    $conn->commit();
+                }
+            } catch (Throwable $e) {
+                if ($ownTx) {
+                    $conn->rollBack();
+                }
+                // Ödeme Hoppa'da kesin; satır `hoppa_pending` kaldı, sonraki
+                // sorgu (geri dönüşün yenilenmesi / mutabakat) yeniden dener.
+                error_log('[hoppaFinalize] ödeme alındı ama paket yazılamadı order=' . $orderId . ': ' . $e->getMessage());
+                return $out('unknown', $planName, 'activation_failed');
+            }
+
+            if ($changed === 1) {
+                error_log(sprintf('[hoppaFinalize] paket tanımlandı user_id=%d plan=%s order=%s', (int) $row['user_id'], $planName, $orderId));
+            }
+            return $out('paid', $planName);
+        }
+
+        if (in_array($q['state'], ['failed', 'cancelled'], true)) {
+            $db->execute(
+                'UPDATE param_marketplace_payments SET status = ?, callback_json = ? WHERE id = ? AND status = ?',
+                [self::HOSTED_FAILED, json_encode(['query' => $q['raw']], JSON_UNESCAPED_UNICODE), $row['id'], self::HOSTED_PENDING]
+            );
+            return $out('failed', $planName, (string) $q['message']);
+        }
+
+        // pending / unknown — satıra dokunma.
+        return $out(match ($row['status']) {
+            self::HOSTED_FAILED  => 'failed',
+            self::HOSTED_EXPIRED => 'expired',
+            default              => 'pending',
+        }, $planName);
+    }
+
+    /**
+     * POST /api/wallet/hoppa_return.php — Hoppa'nın BACK_URL'i.
+     *
+     * Kullanıcının tarayıcısı Hoppa'dan buraya form POST ile gelir. Bu
+     * çapraz-site bir POST olduğu için oturum çerezi (SameSite=Lax) GELMEZ;
+     * uç oturum istemiyor. POST alanlarına güvenilmez: yalnızca sipariş
+     * referansı okunur, sonuç sunucudan ProcessQuery ile alınır. Birinin
+     * rastgele referans göndermesi en fazla gerçekten ödenmiş bir siparişin
+     * kesinleşmesini tetikler (idempotent). Sonunda tarayıcı 303 ile paket
+     * sayfasına döner.
+     */
+    public static function hoppaReturn(): void
+    {
+        require_once __DIR__ . '/../../../functions/checkout_payments.php';
+        require_once __DIR__ . '/../../../functions/plans.php';
+
+        $back = static function (string $result): void {
+            header('Location: /dashboard/upgrade?odeme=' . rawurlencode($result), true, 303);
+            exit;
+        };
+
+        if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
+            $back('pending');
+        }
+
+        $db = Database::getInstance();
+        checkRateLimit($db, 'hoppareturn:' . clientIp(), 30, 60);
+
+        $orderId = strtoupper(trim((string) ($_POST['ORDER_REF_NUMBER'] ?? '')));
+        if (!preg_match(self::HOSTED_ORDER_PATTERN, $orderId)) {
+            $back('failed');
+        }
+
+        $gateway = PaymentGatewayFactory::make();
+        if ($gateway === null) {
+            error_log('[hoppaReturn] sağlayıcı yapılandırılmamış — sonuç kesinleştirilemedi order=' . $orderId);
+            $back('pending');
+        }
+
+        $result = self::finalizeHostedPlanPayment($db, $gateway, $orderId);
+        $back(match ($result['state']) {
+            'paid'                => 'paid',
+            'failed', 'not_found' => 'failed',
+            default               => 'pending',
+        });
     }
 
     public static function getSubscription(): void {

@@ -3,10 +3,9 @@ import dynamic from 'next/dynamic';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/shared/ui/dialog';
 import { useRouter } from 'next/navigation';
 import {
-    Bell, BellOff, ThumbsUp, ThumbsDown, Share2, MessageCircle, ListPlus,
+    ThumbsUp, ThumbsDown, Share2, MessageCircle, ListPlus,
     ShoppingCart, EyeOff, Flag, ArrowRight, ChevronRight, Check,
 } from 'lucide-react';
-import { formatCurrency } from '@/shared/lib/format';
 import CategoryBadge from '@/shared/ui/category-badge';
 import { cn } from '@/lib/utils';
 import { toast } from '@/shared/hooks/use-toast';
@@ -20,9 +19,8 @@ import { useAbortableEffect, isAbortError } from '@/shared/hooks/useAbortableEff
 const ShareModal = dynamic(() => import('@/features/sharing/ShareModal'), { ssr: false });
 const ReportModal = dynamic(() => import('@/features/moderation/ReportModal'), { ssr: false });
 const AddToListModal = dynamic(() => import('@/features/lists/AddToListModal'), { ssr: false });
-const BlockModal = dynamic(() => import('@/features/moderation/BlockModal'), { ssr: false });
 const CommentModal = dynamic(() => import('@/features/comments/CommentModal'), { ssr: false });
-const BuyModal = dynamic(() => import('@/features/purchasing/BuyModal'), { ssr: false });
+import { postBotComment } from '@/features/comments/api';
 const DeleteConfirmModal = dynamic(() => import('@/shared/ui/DeleteConfirmModal'), { ssr: false });
 
 function formatCompact(n) {
@@ -47,7 +45,7 @@ function formatCompact(n) {
  * Sayaçlar (beğeni/yorum sayısı) yazı DEĞİL veri olduğu için duruyor.
  *
  * `showLabel` yalnızca yazının kendisi bilgi taşıdığı yerlerde açılıyor —
- * bugün tek örneği fiyatı gösteren "Satın Al" düğmesi.
+ * bugün kullanan yer yok (fiyatlı "Satın Al" hapı GK-14 ile kaldırıldı).
  */
 function ActionPill({ icon: Icon, label, count, active, activeTone = 'fuchsia', tone = 'default', disabled, onClick, className, showLabel = false }) {
     const hasCount = typeof count === 'number';
@@ -87,9 +85,7 @@ function ActionPill({ icon: Icon, label, count, active, activeTone = 'fuchsia', 
 
 export default function ProfileCard({bot, comments}) {
     const [isFollowing, setIsFollowing] = useState(false);
-    const [notificationsEnabled, setNotificationsEnabled] = useState(true); // opsiyonel, isterseniz mantık da ekleyebiliriz
     const [shareOpen, setShareOpen] = useState(false);
-    const [blockOpen, setBlockOpen] = useState(false);
     const [reportOpen, setReportOpen] = useState(false);
     const [modalVisible, setModalVisible] = useState(false);
     const [commentOpen, setCommentOpen] = useState(false);
@@ -104,9 +100,7 @@ export default function ProfileCard({bot, comments}) {
     const [userLists, setUserLists] = useState([]);
     const [commentCount, setCommentCount] = useState(comments.length);
     const [pastConversations, setPastConversations] = useState([]);
-    const [isBuyModalOpen, setIsBuyModalOpen] = useState(false);
     const [notInterestedConfirmOpen, setNotInterestedConfirmOpen] = useState(false);
-    const [cartDurationWeeks, setCartDurationWeeks] = useState(null);
     const [infoOpen, setInfoOpen] = useState(false);
     const [profile, setProfile] = useState({
         id: null,
@@ -182,7 +176,6 @@ export default function ProfileCard({bot, comments}) {
                     const existing = data.cart.find(item => Number(item.chatbot_id) === Number(profile.id));
                     if (existing) {
                         setIsInCart(true);
-                        setCartDurationWeeks(existing.order_weeks ? parseInt(existing.order_weeks, 10) : 4);
                     }
                 }
             } catch (error) {
@@ -306,28 +299,6 @@ export default function ProfileCard({bot, comments}) {
     }
 };
 
-    useEffect(() => {
-        if (typeof window !== "undefined") {
-            const cartString = localStorage.getItem('cart');
-            if (cartString) {
-                try {
-                    const cart = JSON.parse(cartString);
-                    const found = cart.some(item => item.id === `${profile.id}-${profile.title}-${profile.author}`);
-                    setIsInCart(found);
-                } catch (e) {
-                    setIsInCart(false);
-                }
-            }
-        }
-    }, [profile?.id, profile?.title, profile?.author, cartAdded]);
-
-    // Satın al fonksiyonu
-    const handleBuy = (e) => {
-        e?.stopPropagation && e.stopPropagation();
-        if (!requireLogin(userId, router)) return;
-        setIsBuyModalOpen(true); // Modalı aç
-    };
-
     const handleNotInterested = () => {
         if (!requireLogin(userId, router)) return;
         setNotInterestedConfirmOpen(true);
@@ -370,82 +341,79 @@ export default function ProfileCard({bot, comments}) {
     };
 
     const avatarSrc = profile.image || resolveAvatarSrc(null);
-    const isPaidAndUnowned = Number(bot.ucret_haftalik) > 0 && !isInCart;
+    // Faz 4 / GK-2 — ücretsiz herkese açık bot: herkes sohbet eder, satın
+    // alınmaz (sunucu addToCart'ta da reddediyor). Rozet gösterilir,
+    // "Sepete Ekle" gizlenir.
+    const isFreePublic =
+        Number(bot.is_independent) === 0 &&
+        !(Number(bot.ucret_haftalik) > 0) &&
+        !(Number(bot.ucret_aylik) > 0);
+    // N-24 — "Sepete Ekle" yalnızca başkasının herkese açık, FİYATLI botunda.
+    // Sahibin kendi botu ve özel (bağımsız) bot satın alınamaz; sunucu da
+    // addToCart'ta reddediyordu ama düğme görünüp 422 hatası veriyordu.
+    const canAddToCart =
+        !bot.is_owner && Number(bot.is_independent) === 0 && !isFreePublic;
 
-    const followToggle = async () => {
-        if (!requireLogin(userId, router)) return;
+    // N-40 — takip/beğeni/beğenmeme isteği. Ekran yalnızca sunucu `success`
+    // dönünce değişir; eskiden başarısızlıkta hiçbir şey olmuyor, kullanıcı
+    // düğmeye bastığını sanıp hata görmüyordu. Başarısızlıkta null döner.
+    const postRelation = async (endpoint, failTitle) => {
         try {
-            const res = await fetch("/api/social/followchatbot.php", {
+            const res = await fetch(endpoint, {
                 method: "POST",
                 headers: { "Content-Type": "application/x-www-form-urlencoded" },
                 body: new URLSearchParams({
                     data: JSON.stringify({ user_id: userId, chatbot_id: profile.id }),
                 }),
             });
-            const result = await res.json();
-            if (result.success) {
-                if (result.action === "follow") {
-                    setIsFollowing(true);
-                    setProfile((prev) => ({ ...prev, follows: prev.follows + 1 }));
-                } else if (result.action === "unfollowed") {
-                    setIsFollowing(false);
-                    setProfile((prev) => ({ ...prev, follows: prev.follows - 1 }));
-                }
-            }
+            const result = await res.json().catch(() => null);
+            if (res.ok && result?.success) return result;
+            toast({ variant: "destructive", title: failTitle, description: result?.message || `Sunucu hatası (HTTP ${res.status}).` });
         } catch (err) {
-            console.error("Follow API error:", err);
+            console.error("Social API error:", err);
+            toast({ variant: "destructive", title: failTitle, description: "Sunucuyla bağlantı kurulamadı." });
+        }
+        return null;
+    };
+
+    const followToggle = async () => {
+        if (!requireLogin(userId, router)) return;
+        const result = await postRelation("/api/social/followchatbot.php", "Takip güncellenemedi");
+        if (!result) return;
+        if (result.action === "follow") {
+            setIsFollowing(true);
+            setProfile((prev) => ({ ...prev, follows: prev.follows + 1 }));
+        } else if (result.action === "unfollowed") {
+            setIsFollowing(false);
+            setProfile((prev) => ({ ...prev, follows: prev.follows - 1 }));
         }
     };
 
     const toggleLike = async () => {
         if (!requireLogin(userId, router)) return;
-        try {
-            const res = await fetch("/api/social/likechatbot.php", {
-                method: "POST",
-                headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                body: new URLSearchParams({
-                    data: JSON.stringify({ user_id: userId, chatbot_id: profile.id }),
-                }),
-            });
-            const result = await res.json();
-            if (result.success) {
-                if (result.action === "liked") {
-                    setLiked(true);
-                    setLikeCount((prev) => prev + 1);
-                    if (disliked) { setDisliked(false); setDislikeCount((prev) => prev - 1); }
-                } else if (result.action === "unliked") {
-                    setLiked(false);
-                    setLikeCount((prev) => prev - 1);
-                }
-            }
-        } catch (err) {
-            console.error("Like API error:", err);
+        const result = await postRelation("/api/social/likechatbot.php", "Beğeni güncellenemedi");
+        if (!result) return;
+        if (result.action === "liked") {
+            setLiked(true);
+            setLikeCount((prev) => prev + 1);
+            if (disliked) { setDisliked(false); setDislikeCount((prev) => prev - 1); }
+        } else if (result.action === "unliked") {
+            setLiked(false);
+            setLikeCount((prev) => prev - 1);
         }
     };
 
     const toggleDislike = async () => {
         if (!requireLogin(userId, router)) return;
-        try {
-            const res = await fetch("/api/social/dislikechatbot.php", {
-                method: "POST",
-                headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                body: new URLSearchParams({
-                    data: JSON.stringify({ user_id: userId, chatbot_id: profile.id }),
-                }),
-            });
-            const result = await res.json();
-            if (result.success) {
-                if (result.action === "disliked") {
-                    setDisliked(true);
-                    setDislikeCount((prev) => prev + 1);
-                    if (liked) { setLiked(false); setLikeCount((prev) => prev - 1); }
-                } else if (result.action === "undisliked") {
-                    setDisliked(false);
-                    setDislikeCount((prev) => prev - 1);
-                }
-            }
-        } catch (err) {
-            console.error("Dislike API error:", err);
+        const result = await postRelation("/api/social/dislikechatbot.php", "Beğenmeme güncellenemedi");
+        if (!result) return;
+        if (result.action === "disliked") {
+            setDisliked(true);
+            setDislikeCount((prev) => prev + 1);
+            if (liked) { setLiked(false); setLikeCount((prev) => prev - 1); }
+        } else if (result.action === "undisliked") {
+            setDisliked(false);
+            setDislikeCount((prev) => prev - 1);
         }
     };
 
@@ -470,6 +438,11 @@ export default function ProfileCard({bot, comments}) {
                         <div className="min-w-0">
                             <p className="flex items-center gap-1 truncate font-display text-body font-bold text-white">
                                 {profile.title || bot.isim || "Chatbot"}
+                                {isFreePublic && (
+                                    <span className="ml-1 shrink-0 rounded-full border border-violet-400/30 bg-violet-500/10 px-2 py-0.5 text-[10px] font-semibold text-violet-300">
+                                        Ücretsiz
+                                    </span>
+                                )}
                                 <ChevronRight className="h-3.5 w-3.5 shrink-0 text-white/30 transition-transform group-hover:translate-x-0.5" />
                             </p>
                             <p className="flex items-center gap-2 truncate text-label text-white/45">
@@ -482,15 +455,6 @@ export default function ProfileCard({bot, comments}) {
                     </button>
 
                     <div className="flex shrink-0 items-center gap-2">
-                        {isPaidAndUnowned && (
-                            <button
-                                className="hidden h-9 shrink-0 items-center justify-center rounded-full bg-gradient-btn px-4 font-display text-label font-semibold text-white shadow-glow transition-all duration-200 hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:flex"
-                                onClick={handleBuy}
-                            >
-                                Satın Al · {formatCurrency(bot.ucret_haftalik)}
-                            </button>
-                        )}
-
                         <button
                             onClick={followToggle}
                             className={cn(
@@ -508,38 +472,20 @@ export default function ProfileCard({bot, comments}) {
 
                 {/* Eskiden "…" menüsünün içindekilerin tamamı */}
                 <div className="scrollbar-none flex items-center gap-1.5 overflow-x-auto px-4 pb-2.5 pt-2.5 md:px-16">
-                    {isPaidAndUnowned && (
-                        <ActionPill
-                            icon={ShoppingCart}
-                            label={`Satın Al · ${formatCurrency(bot.ucret_haftalik)}`}
-                            // Tek istisna: buradaki yazı FİYATI taşıyor, ikonun
-                            // anlatamayacağı bir bilgi. Üstelik bu düğme
-                            // `sm:hidden` — yani mobilde fiyatın göründüğü tek
-                            // yer burası, gizlemek onu tamamen kaybettirirdi.
-                            showLabel
-                            onClick={handleBuy}
-                            className="border-fuchsia-400/40 bg-fuchsia-500/[0.12] text-fuchsia-200 sm:hidden"
-                        />
-                    )}
                     <ActionPill icon={ThumbsUp} label="Beğen" count={likeCount} active={liked} onClick={toggleLike} />
                     <ActionPill icon={ThumbsDown} label="Beğenme" count={dislikeCount} active={disliked} activeTone="rose" onClick={toggleDislike} />
                     <ActionPill icon={MessageCircle} label="Yorumlar" count={commentCount} onClick={() => setCommentOpen(true)} />
                     <ActionPill icon={Share2} label="Paylaş" onClick={() => setShareOpen(true)} />
                     <ActionPill icon={ListPlus} label="Listeye Ekle" onClick={() => setModalVisible(true)} />
-                    <ActionPill
-                        icon={ShoppingCart}
-                        label={isInCart ? "Sepette" : "Sepete Ekle"}
-                        active={isInCart}
-                        disabled={isInCart}
-                        onClick={handleAddToCart}
-                    />
-                    <ActionPill
-                        icon={notificationsEnabled ? Bell : BellOff}
-                        label={notificationsEnabled ? "Bildirimler Açık" : "Bildirimler Kapalı"}
-                        active={notificationsEnabled}
-                        onClick={() => setNotificationsEnabled(!notificationsEnabled)}
-                    />
-
+                    {canAddToCart && (
+                        <ActionPill
+                            icon={ShoppingCart}
+                            label={isInCart ? "Sepette" : "Sepete Ekle"}
+                            active={isInCart}
+                            disabled={isInCart}
+                            onClick={handleAddToCart}
+                        />
+                    )}
                     <span className="mx-1 h-5 w-px shrink-0 bg-white/10" />
 
                     <ActionPill icon={EyeOff} label="İlgilenmiyorum" tone="muted" onClick={handleNotInterested} />
@@ -588,14 +534,6 @@ export default function ProfileCard({bot, comments}) {
                         </div>
                     )}
 
-                    {isPaidAndUnowned && (
-                        <button
-                            className="flex h-11 w-full items-center justify-center rounded-xl bg-gradient-btn font-display text-body-sm font-semibold text-white shadow-glow transition-all duration-200 hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                            onClick={() => { setInfoOpen(false); handleBuy(); }}
-                        >
-                            Satın Al · {formatCurrency(bot.ucret_haftalik)}
-                        </button>
-                    )}
                 </DialogContent>
             </Dialog>
 
@@ -604,44 +542,19 @@ export default function ProfileCard({bot, comments}) {
                 onClose={() => setCommentOpen(false)}
                 comments={comments}
                 onSend={async (commentText) => {
-                    if (!requireLogin(userId, router)) return;
-                    const payload = {
-                    user_id: userId,      // giriş yapan kullanıcı id'si
-                    chatbot_id: profile.id,   // yorum yapılan chatbot id'si
-                    comment: commentText
-                    };
-
-                    try {
-                    const formData = new FormData();
-                    formData.append("data", JSON.stringify(payload));
-
-                    const res = await fetch("/api/social/addcomment.php", {
-                        method: "POST",
-                        body: formData
-                    });
-                    const resultText = await res.text();
-                    const result = JSON.parse(resultText);
-                    if (result.success) {
-                        // yorum listesini güncelle
+                    if (!requireLogin(userId, router)) return { ok: false, message: "Yorum için giriş yapın." };
+                    // N-34: kimlik gönderilmez (sunucu oturumdan alır); sonuç
+                    // CommentModal'a döner, satırı o kesinleştirir ya da geri alır.
+                    const result = await postBotComment(profile.id, commentText);
+                    if (result.ok) {
                         setCommentCount(prev => prev + 1);
                     } else {
                         toast({ variant: "destructive", title: "Yorum eklenemedi", description: result.message });
                     }
-                    } catch (err) {
-                    toast({ variant: "destructive", title: "Yorum eklenemedi", description: err.message });
-                    }
+                    return result;
                 }}
                 />
 
-            <BuyModal
-                isOpen={isBuyModalOpen}
-                onClose={() => setIsBuyModalOpen(false)}
-                botData={bot} // Bot verisi modalda fiyat hesaplama için kullanılıyor
-                userId={userId}
-                initialDurationWeeks={cartDurationWeeks}
-            />
-
-            <BlockModal isOpen={blockOpen} onClose={() => setBlockOpen(false)} />
             <ShareModal isOpen={shareOpen} onClose={() => setShareOpen(false)} />
             <ReportModal isOpen={reportOpen} onClose={() => setReportOpen(false)} />
             <AddToListModal userId={userId} botId={profile.id}

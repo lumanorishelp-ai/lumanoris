@@ -3,6 +3,7 @@ import { ModalPortal } from "@/shared/ui/modal-portal";
 
 import React, { useEffect, useState, useMemo, useRef, useContext } from "react";
 import { UserContext } from "@/shared/contexts/UserContext";
+import { toast } from "@/shared/hooks/use-toast";
 
 import {
   Search,
@@ -211,40 +212,16 @@ export function History() {
   // State Management (All business logic preserved intact)
   const [editingId, setEditingId] = useState(null);
   const [editingTitle, setEditingTitle] = useState("");
-  const [historyItems, setHistoryItems] = useState([
-    // Mock fallbacks for preview if API is not present
-    {
-      id: "1",
-      chatbot_id: "bot_1",
-      conversation_name: "Yapay Zeka Mimari Analiz",
-      latest_message:
-        "Projenin mikroservis mimarisini inceledim. API Gateway katmanında Redis önbellekleme öneriyorum.",
-      latest_sent_time: new Date().toISOString(),
-      profil_fotografi: "default",
-    },
-    {
-      id: "2",
-      chatbot_id: "bot_2",
-      conversation_name: "Stripe Entegrasyon Kılavuzu",
-      latest_message:
-        "Webhook dinleyicileri başarıyla yapılandırıldı. Webhook secret anahtarınızı doğrulayın.",
-      latest_sent_time: new Date(Date.now() - 86400000).toISOString(),
-      profil_fotografi: "default",
-    },
-    {
-      id: "3",
-      chatbot_id: "bot_3",
-      conversation_name: "Next.js App Router Yeniden Yapılandırma",
-      latest_message:
-        "Server Components kullanımını yaygınlaştırarak Bundle boyutunu %35 oranında düşürdük.",
-      latest_sent_time: new Date(Date.now() - 86400000 * 3).toISOString(),
-      profil_fotografi: "default",
-    },
-  ]);
+  /* N-37 — burada üç uydurma sohbet ("Yapay Zeka Mimari Analiz", "Stripe
+     Entegrasyon Kılavuzu", "Next.js App Router…") ilk durum olarak duruyordu:
+     istek başarısızsa kullanıcının geçmişi gibi gösteriliyor, başarılıysa da
+     yüklenene kadar görünüyordu. Liste artık yalnızca sunucudan gelir. */
+  const [historyItems, setHistoryItems] = useState([]);
+  const [loadError, setLoadError] = useState(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [activeMenuId, setActiveMenuId] = useState(null);
   const [deleteTargetId, setDeleteTargetId] = useState(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [isDeleting, setIsDeleting] = useState(false);
 
   const searchInputRef = useRef(null);
@@ -282,24 +259,21 @@ export function History() {
         body: formData,
       });
 
-      const result = await res.json();
+      const result = await res.json().catch(() => null);
 
-      if (result.success) {
-        setHistoryItems((prev) =>
-          prev.filter((item) => item.id !== deleteTargetId),
-        );
-      } else {
-        // Fallback UI deletion for preview resilience
-        setHistoryItems((prev) =>
-          prev.filter((item) => item.id !== deleteTargetId),
-        );
-      }
+        /* N-37 — eskiden başarısızlıkta da ("preview resilience") satır
+           ekrandan siliniyordu; yenileyince geri geliyordu. */
+        if (res.ok && result?.success) {
+          setHistoryItems((prev) =>
+            prev.filter((item) => item.id !== deleteTargetId),
+          );
+          toast.success("Sohbet silindi.");
+        } else {
+          toast.error(result?.message || "Sohbet silinemedi.");
+        }
     } catch (err) {
       console.error("Silme işlemi hatası:", err);
-      // Fallback UI deletion
-      setHistoryItems((prev) =>
-        prev.filter((item) => item.id !== deleteTargetId),
-      );
+      toast.error("Sunucuya ulaşılamadı. Sohbet silinemedi.");
     } finally {
       setIsDeleting(false);
       setDeleteTargetId(null);
@@ -314,32 +288,46 @@ export function History() {
       return;
     }
 
-    // 1. Instant optimistic UI update
-    setHistoryItems((prev) =>
-      prev.map((i) =>
-        i.id === id ? { ...i, conversation_name: newTitle } : i,
-      ),
-    );
-    setEditingId(null);
-
-    // 2. Server API request
-    try {
-      const formData = new FormData();
-      formData.append(
-        "data",
-        JSON.stringify({
-          id: id,
-          conversation_name: newTitle,
-        }),
+      /* N-37 — eskiden yanıt hiç okunmuyordu: sunucu reddetse de yeni başlık
+         ekranda kalıyordu. Ekran hemen güncellenir, sunucu başarı dönmezse eski
+         başlığa geri alınır ve hata gösterilir. */
+      const previous = historyItems.find((i) => i.id === id)?.conversation_name ?? "";
+      setHistoryItems((prev) =>
+        prev.map((i) =>
+          i.id === id ? { ...i, conversation_name: newTitle } : i,
+        ),
       );
+      setEditingId(null);
 
-      await fetch("/api/chat/updateconversation.php", {
-        method: "POST",
-        body: formData,
-      });
-    } catch (err) {
-      console.error("API update error:", err);
-    }
+      const revert = (message) => {
+        setHistoryItems((prev) =>
+          prev.map((i) => (i.id === id ? { ...i, conversation_name: previous } : i)),
+        );
+        toast.error(message);
+      };
+
+      try {
+        const formData = new FormData();
+        formData.append(
+          "data",
+          JSON.stringify({
+            id: id,
+            conversation_name: newTitle,
+          }),
+        );
+
+        const res = await fetch("/api/chat/updateconversation.php", {
+          method: "POST",
+          body: formData,
+        });
+        const result = await res.json().catch(() => null);
+        if (!res.ok || !result?.success) {
+          revert(result?.message || "Başlık kaydedilemedi.");
+        }
+      } catch (err) {
+        console.error("API update error:", err);
+        revert("Sunucuya ulaşılamadı. Başlık kaydedilemedi.");
+      }
   };
 
   useEffect(() => {
@@ -353,12 +341,15 @@ export function History() {
         return response.json();
       })
       .then((data) => {
-        if (data.results && Array.isArray(data.results)) {
-          setHistoryItems(data.results);
+        if (!data?.success || !Array.isArray(data.results)) {
+          throw new Error(data?.message || "Geçmiş alınamadı.");
         }
+        setLoadError(null);
+        setHistoryItems(data.results);
       })
       .catch((error) => {
         console.error("Veri çekilirken sorun oluştu:", error);
+        setLoadError("Sohbet geçmişiniz yüklenemedi. Sayfayı yenileyip tekrar deneyin.");
       })
       .finally(() => {
         setLoading(false);
@@ -487,6 +478,10 @@ export function History() {
         {/* Dynamic Content Area */}
         {loading ? (
           <HistorySkeleton />
+        ) : loadError ? (
+          <p role="alert" className="rounded-2xl border border-rose-500/20 bg-rose-500/10 px-5 py-4 text-sm text-rose-300">
+            {loadError}
+          </p>
         ) : filteredItems.length === 0 ? (
           <EmptyHistoryState
             hasFilter={!!searchQuery}

@@ -4,6 +4,8 @@ import React, { useEffect, useState, useMemo, useContext } from "react";
 import dynamic from "next/dynamic";
 import { UserContext } from "@/shared/contexts/UserContext";
 import CategoryFilter from "@/widgets/CategoryFilter";
+import { copyText } from "@/shared/lib/clipboard";
+import { toast } from "@/shared/hooks/use-toast";
 import {
   Dialog,
   DialogContentBare,
@@ -125,21 +127,33 @@ function DialogueModal({ isOpen, onClose, selectedHistory, onShare }) {
         </div>
 
         <div className="flex flex-col gap-3 border-t border-white/10 bg-white/[0.02] px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
-          {/* Profil, diyalogu PAYLASAN kullaniciya gidiyor (udb.user_id) —
-              yukaridaki alt basliktaki bot sahibine degil. Kullanici adi
-              gelmediginde (silinmis hesap) dugme hic cizilmiyor: bos bir
-              profile goturen olu bir baglanti birakmiyoruz. */}
+          {/* N-05 (M0-4) — bu düğme diyalogu PAYLASAN kullanicinin
+              profiline gidiyordu; musteri beklentisi diyalogun ait oldugu
+              botun SOHBET sayfasi. `chatbot_isim` LEFT JOIN'den geliyor:
+              bot silinmisse null, o zaman olu bir sohbete goturmemek icin
+              dugme cizilmiyor. Paylasanin profili ikincil bir metin
+              baglantisi olarak korunuyor — kalip kalmayacagi musteriye
+              soruldu (Faz 0 karar kaydi K-1). */}
           <div className="flex flex-wrap items-center gap-2">
-            {selectedHistory.user_id ? (
+            {selectedHistory.chatbot_id && selectedHistory.chatbot_isim ? (
               <a
-                href={userProfileUrl(selectedHistory.user_id)}
+                href={`/dashboard/chat?botId=${selectedHistory.chatbot_id}`}
                 className="inline-flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-3.5 py-2.5 text-xs font-medium text-white/80 transition-colors hover:bg-white/10 hover:text-white"
               >
-                <UserRound className="h-4 w-4 text-fuchsia-400" />
+                <MessageSquare className="h-4 w-4 text-fuchsia-400" />
                 <span className="max-w-[12rem] truncate">
-                  {selectedHistory.sharer_kullanici_adi
-                    ? `@${selectedHistory.sharer_kullanici_adi}`
-                    : "Profil"}
+                  {selectedHistory.chatbot_isim} ile sohbet et
+                </span>
+              </a>
+            ) : null}
+            {selectedHistory.user_id && selectedHistory.sharer_kullanici_adi ? (
+              <a
+                href={userProfileUrl(selectedHistory.user_id)}
+                className="inline-flex items-center gap-1.5 px-1.5 py-2.5 text-xs text-white/45 transition-colors hover:text-white/80"
+              >
+                <UserRound className="h-3.5 w-3.5" />
+                <span className="max-w-[10rem] truncate">
+                  @{selectedHistory.sharer_kullanici_adi}
                 </span>
               </a>
             ) : null}
@@ -168,12 +182,16 @@ function DialogueModal({ isOpen, onClose, selectedHistory, onShare }) {
 
 function ShareModal({ isOpen, dialogId, onClose }) {
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
   if (!isOpen) return null;
 
   const shareUrl = dialogueShareUrl(dialogId);
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(shareUrl);
+  // N-41: "Kopyalandı" yalnızca pano yazması gerçekten tamamlanınca.
+  const handleCopy = async () => {
+    const ok = await copyText(shareUrl);
+    setCopyFailed(!ok);
+    if (!ok) return;
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -208,6 +226,11 @@ function ShareModal({ isOpen, dialogId, onClose }) {
             {copied ? "Kopyalandı!" : "Kopyala"}
           </button>
         </div>
+        {copyFailed && (
+          <p role="alert" className="-mt-2 text-xs text-rose-300">
+            Bağlantı kopyalanamadı. Bağlantıyı seçip elle kopyalayın.
+          </p>
+        )}
         </div>
       </DialogContentBare>
     </Dialog>
@@ -409,18 +432,23 @@ export default function DialoguePage() {
         method: "POST",
         body: formData,
       });
-      const result = JSON.parse(await response.text());
+      const result = await response.json().catch(() => null);
 
-      if (result.success) {
+      // N-42: kart yalnızca sunucu gizlemeyi onaylarsa kalkar; eskiden
+      // başarısızlıkta hiçbir şey olmuyor, kullanıcı hata görmüyordu.
+      if (response.ok && result?.success) {
         setHiddenBotIds((prev) => [...prev, targetChatbotId]);
         setHistories((prev) =>
           prev.filter((h) => h.conversation_chatbot_id !== targetChatbotId),
         );
         setShowFeedbackBadge(true);
         setTimeout(() => setShowFeedbackBadge(false), 2000);
+      } else {
+        toast.error(result?.message || `Bot gizlenemedi (HTTP ${response.status}). Lütfen tekrar deneyin.`);
       }
     } catch (error) {
       console.error("Hata:", error);
+      toast.error("Sunucuya ulaşılamadı. Bot gizlenemedi.");
     }
   };
 

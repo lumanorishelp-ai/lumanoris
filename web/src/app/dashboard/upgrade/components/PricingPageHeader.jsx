@@ -20,7 +20,10 @@ export default function PricingPageHeader({ eyebrow, title }) {
       </h1>
       <p className="text-zinc-400 text-base sm:text-lg leading-relaxed">
         Yapay zeka asistanlarınızı ve iş akışlarınızı ölçeklendirmek için en uygun
-        planı seçin. İstediğiniz zaman yükseltin veya iptal edin.
+        planı seçin. Paketler 30 gün geçerlidir ve otomatik yenilenmez.
+        {/* N-28 — eskiden "İstediğiniz zaman yükseltin veya iptal edin" yazıyordu;
+            iptal akışı yok, paket zaten otomatik yenilenmiyor (ödeme adımındaki
+            metinle aynı). */}
       </p>
     </div>
   );

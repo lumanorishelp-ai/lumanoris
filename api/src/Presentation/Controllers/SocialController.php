@@ -12,21 +12,29 @@ class SocialController {
 
         $db = Database::getInstance();
 
-        // C-02 — "önce SELECT, sonra INSERT" iki eşzamanlı istekte UNIQUE
-        // (user_id, chatbot_id) ihlali (ham PDO hatası, 500) üretiyordu.
-        // Sıra tersine çevrildi: DELETE'in etkilenen satır sayısı atomik bir
-        // "var mıydı?" cevabı; yoksa INSERT ... ON DUPLICATE KEY UPDATE.
-        if ($db->delete('chatbot_likes', 'user_id = ? AND chatbot_id = ?', [$userId, $chatbotId]) > 0) {
-            JsonResponse::success(['action' => 'unliked', 'deleted' => 1, 'message' => 'Like kaldırıldı.']);
+        // C-02 deseni (önce DELETE, sonra INSERT … ON DUPLICATE) artık
+        // chatbotRelationSet()'te. N-35: isteğe bağlı `action` ("like" /
+        // "unlike") idempotent; verilmezse eski toggle. Yanıt adları değişmedi.
+        $result = self::relationResult($db, 'chatbot_likes', 'liked_at', $userId, $chatbotId, $data['action'] ?? null);
+        if ($result['action'] === 'liked') {
+            $db->delete('chatbot_dislikes', 'user_id = ? AND chatbot_id = ?', [$userId, $chatbotId]);
+            JsonResponse::success(['action' => 'liked', 'liked' => true, 'inserted_id' => $result['id'] ?? null, 'message' => 'Like eklendi.']);
         }
+        if ($result['action'] === 'unliked') {
+            JsonResponse::success(['action' => 'unliked', 'liked' => false, 'deleted' => 1, 'message' => 'Like kaldırıldı.']);
+        }
+        JsonResponse::success(['action' => 'unchanged', 'liked' => ($data['action'] ?? '') === 'like', 'message' => 'Değişiklik yok.']);
+    }
 
-        $id = $db->insert(
-            'chatbot_likes',
-            ['user_id' => $userId, 'chatbot_id' => $chatbotId, 'liked_at' => date('Y-m-d H:i:s')],
-            true
-        );
-        $db->delete('chatbot_dislikes', 'user_id = ? AND chatbot_id = ?', [$userId, $chatbotId]);
-        JsonResponse::success(['action' => 'liked', 'inserted_id' => $id, 'message' => 'Like eklendi.']);
+    /** N-35 — ortak giriş: eylem doğrulaması ve fonksiyon dosyasının yüklenmesi. */
+    private static function relationResult(Database $db, string $table, string $tsColumn, int $userId, int $chatbotId, $action): array {
+        require_once __DIR__ . '/../../../functions/social_relations.php';
+        $action = $action === null ? null : (string) $action;
+        try {
+            return chatbotRelationSet($db, $table, $tsColumn, $userId, $chatbotId, $action);
+        } catch (AppException $e) {
+            JsonResponse::fromException($e);
+        }
     }
 
     public static function dislikeChatbot(): void {
@@ -101,17 +109,18 @@ class SocialController {
 
         $db = Database::getInstance();
 
-        // C-02 — bkz. likeChatbot(); aynı yarış, aynı çözüm.
-        if ($db->delete('chatbot_follows', 'user_id = ? AND chatbot_id = ?', [$userId, $chatbotId]) > 0) {
-            JsonResponse::success(['action' => 'unfollowed', 'deleted' => 1, 'message' => 'Follow kaldırıldı.']);
+        // N-35 — isteğe bağlı `action` ("follow" / "unfollow") idempotent;
+        // Takip Edilenler sayfası "unfollow" gönderir, bayat sayfa botu yeniden
+        // takip edemez. Eylem yoksa eski toggle (sohbet sayfası). Yanıt adları
+        // değişmedi ("follow" / "unfollowed"); `following` bayrağı eklendi.
+        $result = self::relationResult($db, 'chatbot_follows', 'followed_at', $userId, $chatbotId, $data['action'] ?? null);
+        if ($result['action'] === 'followed') {
+            JsonResponse::success(['action' => 'follow', 'following' => true, 'inserted_id' => $result['id'] ?? null, 'message' => 'Follow eklendi.']);
         }
-
-        $id = $db->insert(
-            'chatbot_follows',
-            ['user_id' => $userId, 'chatbot_id' => $chatbotId, 'followed_at' => date('Y-m-d H:i:s')],
-            true
-        );
-        JsonResponse::success(['action' => 'follow', 'inserted_id' => $id, 'message' => 'Follow eklendi.']);
+        if ($result['action'] === 'unfollowed') {
+            JsonResponse::success(['action' => 'unfollowed', 'following' => false, 'deleted' => 1, 'message' => 'Follow kaldırıldı.']);
+        }
+        JsonResponse::success(['action' => 'unchanged', 'following' => ($data['action'] ?? '') === 'follow', 'message' => 'Değişiklik yok.']);
     }
 
     public static function didUserFollow(): void {
@@ -336,9 +345,12 @@ class SocialController {
              COUNT(DISTINCT cc.id) AS toplam_chats
              FROM chatbot_in_list cil
              JOIN chatbotlar c ON c.id = cil.chatbot_id
-             INNER JOIN param_marketplace_sellers pms ON pms.user_id = c.author_user_id AND pms.status = 'active'
+             LEFT JOIN param_marketplace_sellers pms ON pms.user_id = c.author_user_id AND pms.status = 'active'
              LEFT JOIN chatbot_chats cc ON cc.chatbot_id = c.id
-             WHERE cil.list_id = ? AND c.is_independent = 0
+             -- Faz 4 / N-09: vitrinle aynı görünürlük (ChatbotRepository::PUBLIC_VISIBLE_SQL)
+             WHERE cil.list_id = ?
+               AND c.is_independent = 0
+               AND (COALESCE(c.ucret_haftalik, 0) = 0 AND COALESCE(c.ucret_aylik, 0) = 0 OR pms.user_id IS NOT NULL)
              GROUP BY c.id",
             [$listId]
         );
@@ -376,6 +388,13 @@ class SocialController {
                AND NOT EXISTS (SELECT 1 FROM chatbot_follows WHERE chatbot_id = c.id AND user_id = ?)",
             [$userId, $userId]
         );
+
+        // N-27 — seçicinin kilidi sohbet kapısıyla aynı kuraldan (eklemeli alan).
+        $canChat = array_flip((new ChatbotRepository())->chatAccessibleIds(array_column($bots, 'id'), $userId));
+        foreach ($bots as &$bot) {
+            $bot['can_chat'] = isset($canChat[(int) $bot['id']]);
+        }
+        unset($bot);
 
         JsonResponse::success(['bots' => $bots]);
     }

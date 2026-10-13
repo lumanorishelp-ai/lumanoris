@@ -7,7 +7,6 @@ export default function PricingCard({
   plan,
   isSelected,
   isUpgrading,
-  billingCycle,
   onChoose,
 }) {
   const isFeatured = !!plan.badge;
@@ -56,7 +55,7 @@ export default function PricingCard({
           </span>
           {plan.monthly_price !== "₺0" && (
             <span className="text-xs text-zinc-400 font-medium">
-              /{billingCycle === "annual" ? "Yıllık (Aylık)" : "Aylık"}
+              /Aylık
             </span>
           )}
         </div>

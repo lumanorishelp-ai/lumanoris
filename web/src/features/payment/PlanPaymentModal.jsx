@@ -1,137 +1,82 @@
 "use client";
-import React, { useState } from "react";
-import dynamic from "next/dynamic";
+import React from "react";
 import { Dialog, DialogContent, DialogTitle } from "@/shared/ui/dialog";
-import { ShieldCheck, Lock } from "lucide-react";
-import CardFields from "./CardFields";
-import { validateCard, EMPTY_CARD } from "@/shared/lib/card";
-
-// Checkout ile aynı desen: hukuki metinler ancak açıldıklarında yükleniyor.
-const MesafeliSatisPopup = dynamic(() => import("@/widgets/info/MesafeliSatisPopup"), { ssr: false });
-const TeslimatIadePopup = dynamic(() => import("@/widgets/info/TeslimatIadePopup"), { ssr: false });
+import { Clock, Loader2, Lock } from "lucide-react";
 
 /**
- * Üyelik paketi ödeme penceresi.
+ * Üyelik paketi ödeme penceresi — Faz 7a (Hoppa Ortak Ödeme Sayfası).
  *
- * `upgradePlan()` artık gerçek bir tahsilat yapıyor (iyzico) ve kart
- * bilgisi olmadan 400 dönüyor — bu pencere olmadan yükseltme ekranı
- * çalışmaz hale gelirdi. Daha önce buton doğrudan endpoint'i çağırıyordu,
- * çünkü ödeme yoktu.
+ * Bu pencere KART BİLGİSİ TOPLAMAZ (N-17). "Ödemeye geç" sunucudan bir
+ * ödeme oturumu ister ve kullanıcı Hoppa'nın güvenli ödeme sayfasına
+ * yönlendirilir; kart orada girilir ve Lumanoris'e hiç ulaşmaz. Sonuç
+ * Hoppa'dan sunucuya döner ve sunucu ödemeyi Hoppa'ya sorarak kesinleştirir.
  *
- * Tutar BİLİNÇLİ olarak yalnızca gösterim amaçlı: sunucu fiyatı `plans`
- * tablosundan kendisi okuyor, istemciden tutar kabul etmiyor. Buradaki
- * `priceLabel` kullanıcıya ne ödeyeceğini söylüyor, ne ödeneceğini
- * belirlemiyor.
+ * Ödeme altyapısı kapalıysa (PAYMENT_PROVIDER=none → 503) `unavailable`
+ * ile "Ödeme altyapısı hazırlanıyor" gösterilir.
  */
 export default function PlanPaymentModal({
   open,
   planTitle,
   priceLabel,
-  submitting = false,
   onClose,
-  onSubmit,
+  onPay,
+  starting = false,
+  unavailable = false,
 }) {
-  const [card, setCard] = useState(EMPTY_CARD);
-  const [errors, setErrors] = useState({});
-  const [legalAccepted, setLegalAccepted] = useState(false);
-  const [legalPopup, setLegalPopup] = useState(null);
-
-  const close = () => {
-    // Kart verisi pencere kapanır kapanmaz bellekten düşmeli; açık kalan
-    // bir state sonraki paket denemesinde kartı geri getirirdi.
-    setCard(EMPTY_CARD);
-    setErrors({});
-    setLegalAccepted(false);
-    onClose();
-  };
-
-  const handleSubmit = () => {
-    const found = validateCard(card);
-    if (Object.keys(found).length > 0) {
-      setErrors(found);
-      return;
-    }
-    setErrors({});
-    onSubmit(card);
-  };
-
   return (
-    <>
-      <Dialog open={open} onOpenChange={(o) => !o && !submitting && close()}>
-        <DialogContent className="max-w-[460px] bg-luma-card border-zinc-800 p-6">
-          <DialogTitle className="text-base font-semibold text-white">
-            {planTitle} paketine geç
-          </DialogTitle>
+    <Dialog open={open} onOpenChange={(o) => !o && !starting && onClose()}>
+      <DialogContent className="max-w-[460px] bg-luma-card border-zinc-800 p-6">
+        <DialogTitle className="text-base font-semibold text-white">
+          {planTitle} paketi
+        </DialogTitle>
 
-          <div className="mt-1 flex items-baseline justify-between border-b border-zinc-800/80 pb-4">
-            <span className="text-caption text-zinc-400">Aylık tutar</span>
-            <span className="text-xl font-bold tracking-tight text-white">{priceLabel}</span>
-          </div>
+        <div className="mt-1 flex items-baseline justify-between border-b border-zinc-800/80 pb-4">
+          <span className="text-caption text-zinc-400">30 günlük tutar</span>
+          <span className="text-xl font-bold tracking-tight text-white">{priceLabel}</span>
+        </div>
 
-          <div className="mt-5">
-            <CardFields
-              card={card}
-              errors={errors}
-              onChange={(next) => {
-                setCard(next);
-                setErrors({});
-              }}
-              disabled={submitting}
-            />
-          </div>
-
-          {/* Mesafeli satış mevzuatı ödemeden ÖNCE onay istiyor — checkout
-              ile aynı iki metin, aynı akış. */}
-          <label className="mt-5 flex cursor-pointer items-start gap-3">
-            <input
-              type="checkbox"
-              checked={legalAccepted}
-              disabled={submitting}
-              onChange={(e) => setLegalAccepted(e.target.checked)}
-              className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer accent-fuchsia-500"
-            />
-            <span className="text-caption leading-relaxed text-zinc-400">
-              <button
-                type="button"
-                onClick={(e) => { e.preventDefault(); setLegalPopup("sale"); }}
-                className="text-fuchsia-300 underline underline-offset-2 hover:text-fuchsia-200"
-              >
-                Mesafeli Satış Sözleşmesi
-              </button>
-              {" ve "}
-              <button
-                type="button"
-                onClick={(e) => { e.preventDefault(); setLegalPopup("delivery"); }}
-                className="text-fuchsia-300 underline underline-offset-2 hover:text-fuchsia-200"
-              >
-                Teslimat ve İade Koşulları
-              </button>
-              {"'nı okudum ve kabul ediyorum."}
-            </span>
-          </label>
-
-          <button
-            onClick={handleSubmit}
-            disabled={submitting || !legalAccepted}
-            className="mt-5 flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-gradient-btn py-3.5 text-xs font-semibold text-white shadow-glow transition-all duration-200 hover:-translate-y-0.5 hover:brightness-110 active:translate-y-0 disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <ShieldCheck className="h-4 w-4" />
-            <span>{submitting ? "İşleniyor..." : `Ödemeyi Onayla (${priceLabel})`}</span>
-          </button>
-
-          <p className="mt-3 flex items-center justify-center gap-1.5 text-caption text-zinc-500">
-            <Lock className="h-3 w-3" />
-            {/* COMP-001: sağlayıcı adı kullanıcıya gösterilen metinden
-                çıkarıldı — geçerli üye iş yeri sözleşmesi olmadan sağlayıcı
-                markasını kullanmıyoruz (BLOCKERS B3). */}
-            Ödeme, lisanslı ödeme altyapımız üzerinden alınır. Kart bilgileriniz
-            sunucularımızda saklanmaz.
-          </p>
-        </DialogContent>
-      </Dialog>
-
-      {legalPopup === "sale" && <MesafeliSatisPopup onClose={() => setLegalPopup(null)} />}
-      {legalPopup === "delivery" && <TeslimatIadePopup onClose={() => setLegalPopup(null)} />}
-    </>
+        {unavailable ? (
+          <>
+            <div className="mt-5 flex items-start gap-3 rounded-2xl border border-amber-500/20 bg-amber-500/[0.06] p-4">
+              <Clock className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+              <div className="text-sm leading-relaxed text-amber-100/85">
+                <p className="font-semibold text-white">Ödeme altyapısı hazırlanıyor</p>
+                <p className="mt-1">
+                  Paket satın alma, ödeme altyapımız devreye girdiğinde açılacak.
+                  Şu an ödeme alınmıyor.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="mt-5 w-full rounded-xl border border-white/10 bg-white/[0.04] py-3 text-xs font-semibold text-white transition-colors hover:bg-white/[0.08]"
+            >
+              Tamam
+            </button>
+          </>
+        ) : (
+          <>
+            <div className="mt-5 flex items-start gap-3 rounded-2xl border border-zinc-800/80 bg-zinc-950/50 p-4">
+              <Lock className="mt-0.5 h-4 w-4 shrink-0 text-emerald-400" />
+              <p className="text-sm leading-relaxed text-zinc-300">
+                Kart bilgilerinizi hoppa&apos;nın güvenli ödeme sayfasında gireceksiniz;
+                bu bilgiler Lumanoris&apos;e ulaşmaz. Paket 30 gün geçerlidir ve otomatik
+                yenilenmez.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onPay}
+              disabled={starting}
+              className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-white py-3 text-xs font-semibold text-black transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {starting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              {starting ? "Ödeme sayfası açılıyor…" : "Ödemeye geç"}
+            </button>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }

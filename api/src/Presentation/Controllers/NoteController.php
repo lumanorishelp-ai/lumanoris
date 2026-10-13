@@ -3,28 +3,39 @@ class NoteController {
     public static function addDialogBook(): void {
         require_method('POST');
         $userId = AuthMiddleware::requireAuth();
+        require_once __DIR__ . '/../../../functions/dialog_book.php';
         $data   = json_decode($_POST['data'] ?? '', true) ?? null;
-        if (!$data) JsonResponse::error('Veri bulunamadı!', 400, AppConfig::ERR_VALIDATION);
+        if (!is_array($data)) JsonResponse::error('Veri bulunamadı!', 400, AppConfig::ERR_VALIDATION);
 
-        // B-02 — istemcinin JSON'u olduğu gibi insert()'e gidiyordu: tablo dışı
-        // bir anahtar ham SQL hatası, tablo içi bir anahtar (created_at) sahte
-        // veri demekti. Beyaz liste + uzunluk kırpma (ChatController deseni).
-        $chatbotId = InputSanitizer::positiveInt($data['chatbot_id'] ?? 0);
-        $name      = InputSanitizer::string($data['name'] ?? '', 255);
-        $input     = InputSanitizer::text($data['input_message'] ?? '', 20000);
-        $output    = InputSanitizer::text($data['output_message'] ?? '', 20000);
+        // N-30 — istemci artık soru/cevap METNİ göndermiyor: yalnızca kendi
+        // geçmişindeki bir bot mesajının kimliği + başlık. Metin alanları açıkça
+        // reddediliyor (sessizce yok saymak eski istemciyi "çalışıyor" sanırdı).
+        // user_id eski istemcilerden gelebiliyor; oturumdan alındığı için düşürülür.
+        unset($data['user_id']);
+        $extra = array_diff(array_keys($data), ['message_id', 'name']);
+        if ($extra !== []) {
+            JsonResponse::error('Bu alanlar gönderilemez: ' . implode(', ', $extra), 400, AppConfig::ERR_VALIDATION);
+        }
+        $messageId = InputSanitizer::positiveInt($data['message_id'] ?? 0);
+        if (!$messageId) JsonResponse::error('message_id gereklidir.', 400, AppConfig::ERR_VALIDATION);
 
-        if (!$chatbotId)      JsonResponse::error('chatbot_id gereklidir.', 400, AppConfig::ERR_VALIDATION);
-        if (trim($name) === '') JsonResponse::error('Başlık boş olamaz.', 400, AppConfig::ERR_VALIDATION);
+        try {
+            $id = dialogBookCreateFromMessage(
+                Database::getInstance(), new ChatbotRepository(), $userId, $messageId,
+                InputSanitizer::string($data['name'] ?? '', 255)
+            );
+        } catch (AppException $e) {
+            JsonResponse::fromException($e);
+        }
+        JsonResponse::success(['message' => 'Diyalog Defterine eklendi.', 'id' => $id]);
+    }
 
-        $id = Database::getInstance()->insert('user_dialog_books', [
-            'user_id'        => $userId,
-            'chatbot_id'     => $chatbotId,
-            'name'           => $name,
-            'input_message'  => $input,
-            'output_message' => $output,
-        ]);
-        JsonResponse::success(['message' => 'Yeni sohbet başarıyla başlatıldı!', 'id' => $id]);
+    /** N-30 — kimlikle erişilen defter uçlarının ortak kapısı (akışla aynı kural). */
+    private static function requireVisibleDialog(int $dialogId, int $viewerId): void {
+        require_once __DIR__ . '/../../../functions/dialog_book.php';
+        if (!dialogBookIsVisible(Database::getInstance(), $dialogId, $viewerId)) {
+            JsonResponse::error('Diyalog bulunamadı.', 404, AppConfig::ERR_NOT_FOUND);
+        }
     }
 
     /**
@@ -57,46 +68,25 @@ class NoteController {
         // outside the app entirely. The feed is only ever rendered inside the
         // authenticated dashboard, so requiring a session costs the product
         // nothing and takes it off the open internet.
-        AuthMiddleware::requireAuth();
+        $userId = AuthMiddleware::requireAuth();
+        require_once __DIR__ . '/../../../functions/dialog_book.php';
 
-        // user_dialog_books.chatbot_id is already the real chatbot id (see
-        // addDialogBook / DialogNotebookModal.jsx) — the previous query
-        // joined it against chatbot_conversations.id as if it were a
-        // conversation id, so every chatbot_isim/photo/category/owner field
-        // always came back null.
-        $results = Database::getInstance()->selectMulti(
-            // `owner_kullanici_adi` BOTUN sahibi, diyaloğu paylaşan değil —
-            // ikisi karıştırılmasın. Paylaşan `udb.user_id`; arayüzde
-            // "Profil" düğmesi ona gittiği için adı da buradan geliyor.
-            // `avatar` bilerek ÇEKİLMİYOR: longtext ve base64 gömülü
-            // olabiliyor, 100 satırda yanıtı şişirirdi. Profil sayfası onu
-            // kendi tekil isteğinde alıyor.
-            // B-05: `udb.*` yerine açık sütun listesi. Aşağıdakiler
-            // `notes/page.jsx`in gerçekten okuduğu alanlar.
-            "udb.id, udb.user_id, udb.chatbot_id, udb.name,
-             udb.input_message, udb.output_message, udb.created_at,
-             udb.chatbot_id AS conversation_chatbot_id,
-             c.owner_user_id, c.isim AS chatbot_isim, c.kategori_id AS chatbot_kategori_id,
-             c.profil_fotografi AS chatbot_profil_fotografi,
-             k.kullanici_adi AS owner_kullanici_adi,
-             sharer.kullanici_adi AS sharer_kullanici_adi
-             FROM user_dialog_books udb
-             LEFT JOIN chatbotlar c ON udb.chatbot_id = c.id
-             LEFT JOIN kullanicilar k ON c.owner_user_id = k.id
-             LEFT JOIN kullanicilar sharer ON udb.user_id = sharer.id
-             ORDER BY RAND() LIMIT 100",
-            []
-        );
+        // N-30 — akışta yalnızca vitrinde görünebilen (herkese açık) botların
+        // kayıtları; özel/bağımsız botun kaydı yalnızca paylaşana. Böylece özel
+        // botun adı ve sahibi başkasına sızmıyor. Sütun listesi ve "BOTUN sahibi
+        // / paylaşan" ayrımı dialogBookFeed()'da (B-05 notu orada da geçerli).
+        $results = dialogBookFeed(Database::getInstance(), $userId, 100);
         JsonResponse::success(['dialogues' => $results]);
     }
 
     public static function getDialogInteracts(): void {
         // Same feed as getDialogues, same reasoning: it returns other users'
         // comments and usernames, and is only rendered inside the dashboard.
-        AuthMiddleware::requireAuth();
+        $viewerId = AuthMiddleware::requireAuth();
 
         $id = InputSanitizer::positiveInt($_GET['id'] ?? 0);
         if (!$id) JsonResponse::error('ID gereklidir.', 400, AppConfig::ERR_VALIDATION);
+        self::requireVisibleDialog($id, $viewerId);
 
         $db = Database::getInstance();
         $likeDislike = $db->selectSingle(
@@ -135,9 +125,7 @@ class NoteController {
         if (trim($comment) === '') JsonResponse::error('Yorum boş olamaz.', 400, AppConfig::ERR_VALIDATION);
 
         $db = Database::getInstance();
-        if (!$db->selectSingle('id FROM user_dialog_books WHERE id = ?', [$dialogId])) {
-            JsonResponse::error('Diyalog bulunamadı.', 404, AppConfig::ERR_NOT_FOUND);
-        }
+        self::requireVisibleDialog($dialogId, $userId);
 
         $id = $db->insert('dialog_comments', [
             'user_id'   => $userId,
@@ -153,6 +141,7 @@ class NoteController {
         $data     = json_decode($_POST['data'] ?? '', true) ?? null;
         $dialogId = InputSanitizer::positiveInt($data['dialog_id'] ?? 0);
         if (!$data || !$dialogId) JsonResponse::error('Eksik veri!', 400, AppConfig::ERR_VALIDATION);
+        self::requireVisibleDialog($dialogId, $userId);
 
         $db = Database::getInstance();
 
@@ -173,6 +162,7 @@ class NoteController {
         $data     = json_decode($_POST['data'] ?? '', true) ?? null;
         $dialogId = InputSanitizer::positiveInt($data['dialog_id'] ?? 0);
         if (!$data || !$dialogId) JsonResponse::error('Eksik veri!', 400, AppConfig::ERR_VALIDATION);
+        self::requireVisibleDialog($dialogId, $userId);
 
         $db = Database::getInstance();
 
@@ -190,6 +180,7 @@ class NoteController {
         $userId   = AuthMiddleware::optionalAuth();
         $dialogId = InputSanitizer::positiveInt($_GET['dialog_id'] ?? 0);
         if (!$dialogId) JsonResponse::error('Eksik parametre.', 400, AppConfig::ERR_VALIDATION);
+        self::requireVisibleDialog($dialogId, $userId);
 
         $row = Database::getInstance()->selectSingle('id FROM dialog_likes WHERE user_id = ? AND dialog_id = ?', [$userId, $dialogId]);
         JsonResponse::success(['didLike' => (bool) $row]);
@@ -199,6 +190,7 @@ class NoteController {
         $userId   = AuthMiddleware::optionalAuth();
         $dialogId = InputSanitizer::positiveInt($_GET['dialog_id'] ?? 0);
         if (!$dialogId) JsonResponse::error('Eksik parametre.', 400, AppConfig::ERR_VALIDATION);
+        self::requireVisibleDialog($dialogId, $userId);
 
         $row = Database::getInstance()->selectSingle('id FROM dialog_dislikes WHERE user_id = ? AND dialog_id = ?', [$userId, $dialogId]);
         JsonResponse::success(['didDisLike' => (bool) $row]);

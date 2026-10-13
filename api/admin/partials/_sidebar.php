@@ -114,6 +114,8 @@
                              tek yönetim noktası. Bu link olmadan sayfaya
                              ulaşmanın yolu adresi elle yazmaktı. -->
                         <li><a href="/admin/parcekme" class="d-block p-2 mb-1 rounded <?= $currentPath === '/admin/parcekme' ? $current_theme['active_color'] . ' hover:' . $current_theme['active_color'] : 'hover:' . $current_theme['hover_color'] . ' active:' . $current_theme['active_color'] ?> <?= $current_theme['text_color'] ?> sidebar-button transition duration-250 ease-in-out">Para Çekme Talepleri</a></li>
+                        <li><a href="/admin/basvurular" class="d-block p-2 mb-1 rounded <?= $currentPath === '/admin/basvurular' ? $current_theme['active_color'] . ' hover:' . $current_theme['active_color'] : 'hover:' . $current_theme['hover_color'] . ' active:' . $current_theme['active_color'] ?> <?= $current_theme['text_color'] ?> sidebar-button transition duration-250 ease-in-out">Pazaryeri Başvuruları</a></li>
+                        <li><a href="/admin/odemeler" class="d-block p-2 mb-1 rounded <?= $currentPath === '/admin/odemeler' ? $current_theme['active_color'] . ' hover:' . $current_theme['active_color'] : 'hover:' . $current_theme['hover_color'] . ' active:' . $current_theme['active_color'] ?> <?= $current_theme['text_color'] ?> sidebar-button transition duration-250 ease-in-out">Paket Ödemeleri</a></li>
                       </ul>
                     </li>
                     <li>

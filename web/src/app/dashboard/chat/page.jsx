@@ -9,8 +9,6 @@ import { useSearchParams } from "next/navigation";
 
 // Only loaded when the user actually opens one of these modals, instead of
 // shipping their code with every chat page load.
-const WithdrawalModal = dynamic(() => import("@/features/wallet/WithdrawalModal"), { ssr: false });
-const BuyModal = dynamic(() => import("@/features/purchasing/BuyModal"), { ssr: false });
 const DialogNotebookModal = dynamic(() => import("@/features/notes/DialogNotebookModal"), { ssr: false });
 import ReactMarkdown from "react-markdown";
 import { useRouter } from "next/navigation";
@@ -39,7 +37,6 @@ export default function Chat() {
   // Sohbet Luma Coini: mesaj hakkı tükendiğinde mesaj kutusunun yerini alan
   // "Sınır Aşıldı" bandı.
   const [limitReached, setLimitReached] = useState(false);
-  const [showLimitBuyModal, setShowLimitBuyModal] = useState(false);
   const [coinsRemaining, setCoinsRemaining] = useState(null);
   const [retryAt, setRetryAt] = useState(null);
 
@@ -154,7 +151,9 @@ export default function Chat() {
 
     setActiveDialog({
       input: lastUserMsg,
-      output: currentBotMsg
+      output: currentBotMsg,
+      // N-30: sunucu soru/cevabı bu kimlikten DB'den kopyalıyor.
+      messageId: messages[index]?.messageId,
     });
     setIsDialogModalOpen(true);
   };
@@ -319,10 +318,24 @@ export default function Chat() {
     if (!conversation || !userId || !bot) return;
     
 
-    // Eğer zaten mesaj varsa ve bu var olan bir sohbetse tekrar yükleme
-    if (messages.length > 0 && conversationIdRef.current > 0) {
-        return; 
+    // Eğer zaten mesaj varsa ve bu var olan bir sohbetse tekrar yükleme.
+    //
+    // N-23 — bu kontrol `conversationIdRef.current` ile yapılıyordu. Ref, AŞAĞIDAKİ
+    // bir effect'te güncellendiği için yeni sohbet oluşturan ilk mesajdan sonra
+    // (handleSendMessage sonunda setConversationId + setConversation) bu effect
+    // çalışırken ref hâlâ -1'di: kontrol kaçıyor, geçmiş DB'den yeniden
+    // yükleniyor ve DB'ye yazılmayan hata balonu ("…ulaşılamıyor", "Tekrar Dene")
+    // siliniyordu. Aynı render'ın `conversationId` state'i zaten güncel.
+    if (messages.length > 0 && conversationId > 0) {
+        return;
     }
+
+    // N-32 — bu yükleme bitmeden sohbet değişirse (ana sayfadan ?prompt= ile
+    // gelindiğinde: önce id=0 sohbeti, hemen ardından yeni sohbet + ilk mesaj)
+    // geç dönen eski sonuç, o arada eklenen mesajı ve cevabı ekrandan
+    // siliyordu — kullanıcının bu botla geçmişi varsa yalnızca karşılama
+    // mesajı kalıyordu. Effect yeniden çalışınca eski yükleme yok sayılır.
+    let cancelled = false;
 
     const loadHistory = async () => {
       try {
@@ -336,6 +349,7 @@ export default function Chat() {
         const historyResult = await (
           await fetch(`/api/chat/getchat.php?chatbot_id=${bot.id}&user_id=${userId}`)
         ).json();
+        if (cancelled) return; // N-32: sohbet bu arada değişti
         const historyData = Array.isArray(historyResult?.messages) ? historyResult.messages : [];
         const hasHistory = historyData.length > 0;
         const shouldRestoreHistory = conversationId >= 1;
@@ -347,6 +361,8 @@ export default function Chat() {
             historyData.map((m) => ({
               type: m.sent_by === "user" ? "sent" : "received",
               text: m.message,
+              // N-30: defter kaydı bot mesajının kimliğiyle yapılıyor.
+              messageId: m.sent_by === "user" ? undefined : Number(m.id),
             })),
           );
         } else if (hasHistory) {
@@ -388,6 +404,9 @@ export default function Chat() {
     };
 
     loadHistory();
+    return () => {
+      cancelled = true;
+    };
   }, [conversation, bot]); // bot'u da bağımlılığa ekledik
 
   useEffect(() => {
@@ -710,6 +729,19 @@ const generateReply = async (userText, filePayloads = []) => {
             // was lost on both sides.
             if (gData.error) {
               upstreamError = gData.error;
+              // N-33 — ilk `meta` karesi çipi tüketim SONRASI değere (ör. 9)
+              // çekmişti; sunucu hatada hakkı iade ediyor. Tahmin etmek yerine
+              // gerçek değeri sunucudan yeniden oku.
+              if (gData.error.refunded) checkMessageAllowance(userId, botId);
+              continue;
+            }
+            // N-30 — sunucu cevabı kendisi kaydedip kimliğini son karede
+            // gönderiyor; "Diyalog Defterine Ekle" bu kimliği kullanır.
+            if (gData.saved) {
+              const savedId = Number(gData.saved.message_id);
+              setMessages((prev) =>
+                prev.map((msg) => (msg.id === placeholderId ? { ...msg, messageId: savedId } : msg))
+              );
               continue;
             }
             // Sunucunun ilk SSE karesi (event: meta) kalan mesaj hakkını
@@ -733,19 +765,9 @@ const generateReply = async (userText, filePayloads = []) => {
     clearTimeout(timeoutId);
 
     if (fullText) {
-      // Akış bittikten sonra BOT cevabını DB'ye kaydet
-      await fetch("/api/chat/addchat.php", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({
-          data: JSON.stringify({
-            chatbot_id: botId,
-            user_id: userId,
-            sent_by: "bot",
-            message: fullText,
-          }),
-        }),
-      });
+      // N-30 — bot cevabını artık SUNUCU kaydediyor (generateReply sonunda
+      // `event: saved`). Buradaki addchat(sent_by:"bot") istemcinin yazdığı
+      // metni bot cevabı gibi kaydediyordu; sunucu bunu artık reddediyor.
       return;
     }
 
@@ -865,7 +887,10 @@ const handleRetryReply = (retryText) => {
                             <RotateCcw className="h-3 w-3" strokeWidth={2} />
                             <span className="text-caption font-medium">Tekrar Dene</span>
                           </button>
-                        ) : (
+                        ) : msg.messageId ? (
+                          /* N-30: yalnızca sunucunun kaydettiği cevapta (kimliği
+                             olan); karşılama mesajı ve kaydedilmemiş cevap deftere
+                             eklenemez. */
                           <button
                             className="mt-1.5 flex w-max items-center justify-center gap-1.5 rounded-md bg-luma-input px-2.5 py-1 text-white/55 transition-all duration-200 hover:-translate-y-px hover:bg-white/10 hover:text-white/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                             onClick={() => openDialogModal(index)}
@@ -873,7 +898,7 @@ const handleRetryReply = (retryText) => {
                             <NotebookPen className="h-3 w-3" strokeWidth={2} />
                             <span className="text-caption font-medium">Diyalog Defterine Ekle</span>
                           </button>
-                        )}
+                        ) : null}
                       </div>
                     </>
                   ) : (
@@ -927,7 +952,7 @@ const handleRetryReply = (retryText) => {
               <p className="text-body-sm leading-snug text-white/80">
                 Günlük mesajlaşma limitine ulaştınız.
                 <br className="hidden sm:block" />
-                Chatbotu satın alarak daha fazla mesaj limitine erişebilirsiniz.
+                Paketinizi yükselterek daha fazla günlük mesaj hakkı alabilirsiniz.
                 {retryCountdownLabel && (
                   <>
                     <br className="hidden sm:block" />
@@ -939,11 +964,13 @@ const handleRetryReply = (retryText) => {
                 )}
               </p>
             </div>
+            {/* GK-14 — sohbet sayfasındaki dört "Satın Al" kaldırıldı;
+                limit bandındaki eylem artık paket yükseltme. */}
             <Button
-              onClick={() => setShowLimitBuyModal(true)}
+              onClick={() => router.push("/dashboard/upgrade")}
               className="h-auto shrink-0 px-5 py-2.5 text-body-sm"
             >
-              Satın Al
+              Paketini yükselt
             </Button>
           </div>
         ) : (
@@ -966,21 +993,19 @@ const handleRetryReply = (retryText) => {
 
       <DialogNotebookModal
         userId={userId}
-        botId={conversationId}
+        // N-06 (M0-4) — burada `conversationId` geçiliyordu; modal onu
+        // `user_dialog_books.chatbot_id` olarak yazıyor, sunucu da
+        // (NoteController::getDialogues) o sütunu gerçek bot id'si sayıyor.
+        botId={botId}
         inputMessage={activeDialog.input}
         outputMessage={activeDialog.output}
+        messageId={activeDialog.messageId}
         isOpen={isDialogModalOpen}
         onClose={() => setIsDialogModalOpen(false)}
         onPublish={(title) => {
         }}
       />
 
-      <BuyModal
-        isOpen={showLimitBuyModal}
-        onClose={() => setShowLimitBuyModal(false)}
-        botData={bot}
-        userId={userId}
-      />
     </div>
   );
 }

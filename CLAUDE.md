@@ -9,7 +9,7 @@ Monorepo: `web/` (Next.js 15 App Router, React 19, Tailwind 3) + `api/` (PHP 8.1
 ## Bu repoda bilmen gereken tuzaklar
 
 - `.history/`, `node_modules/`, `vendor/`, `web/src/.next-verify/`: okuma, yazma, arama sonuçlarından çıkar.
-- **Sabitler üç yerde kopyalanmış, elle senkronize ediliyor:** `api/src/Shared/Constants/AppConfig.php`, `api/functions/coin_engine.php`, `web/src/shared/lib/pricing.js`. Senkron tutan hiçbir mekanizma yok; uyuşmazlık doğrudan para kaybı.
+- **Sabitler üç yerde kopyalanmış, elle senkronize ediliyor:** `api/src/Shared/Constants/AppConfig.php`, `api/functions/coin_engine.php`, `web/src/shared/lib/pricing.js`. Senkron tutan hiçbir mekanizma yok; uyuşmazlık doğrudan para kaybı. Ayrıca eğitim metni tavanı `AppConfig::MAX_TRAINING_CHARS` web'de `KB_MAX_CHARS` (`app/dashboard/chatbots/create/page.jsx`) olarak kopyalı; bu eşitliği `access_selftest` kilitliyor.
 - **Denylist üç yerde:** `api/.htaccess`, `api/admin/.htaccess`, `api/router.php`. Üçü üç farklı deployment şeklini kapsar; birine eklenip diğerine eklenmeyen kural sessizce hiçbir şey yapmaz.
 - **Bir endpoint'in `web/src`'te çağıranı olmaması, kullanılmadığı anlamına GELMEZ.** Admin paneli (`api/admin/`) kendi endpoint'lerini çağırır. Çağıran araması üç yerde birden yapılır: `web/src`, `api/admin`, `api/router.php`.
 - DB ve payload alan adları Türkçe (`kullanicilar`, `chatbotlar`, `eposta`, `sifre`, `ucret_haftalik`). Yeniden adlandırma. `AppConfig`'in `TABLE_*` sabitleri haritadır.
@@ -31,6 +31,21 @@ Monorepo: `web/` (Next.js 15 App Router, React 19, Tailwind 3) + `api/` (PHP 8.1
 
 ## Otonomi sözleşmesi
 
+### Faz içi çalışma akışı (kalıcı kural)
+
+Bir faz başladıktan sonra adımları sormadan, sırayla yap: kod değişikliği → yerel doğrulama → madde başına commit → `revize/pazaryeri`'ye push → yerel veritabanında `migrate.php --apply` (aşağıdaki Migration kurallarıyla). Her fazın sonunda **tek bir özet** ver; ara onay isteme.
+
+Yalnızca şu durumlarda dur ve sor:
+
+- Canlı/uzak veritabanına veya sunucuya dokunacak bir işlem
+- Git geçmişini yeniden yazma, `main`'e push/merge
+- Veri silen ya da mevcut veriyi güncelleyen migration (`UPDATE`/`DELETE`)
+- Ödeme yolu (Hoppa: `upgradeplan`, `hoppa_return`, iade; iyzico; checkout)
+- `AUDIT.md`'de "müşteri onayı BEKLİYOR" olan bir karara bağlı iş
+- Bir madde 3 denemede kapanmıyorsa
+
+Bu liste aşağıdaki "Authorization — kademeli" ve "Önce raporla, onay bekle" kurallarını kaldırmaz; o maddeler (şema tasarımı, kırıcı API contract değişikliği, birden fazla endpoint'i etkileyen yetki yaması, belirsiz iş kuralı) için diff önerip beklemeye devam et.
+
 ### Sormadan yap
 
 syntax/lint hatası · eksik error handling · eksik input validation · frontend loading/error/empty state · bozuk `fetch` hata yolu · eksik rate limit (mevcut `checkRateLimit()` desenini kullanarak) · dokümantasyon · test yazımı · geri alınabilir izole refactor · kanıtlanmış ölü kod (aşağıdaki 3'lü çağıran araması yapılmışsa)
@@ -47,13 +62,35 @@ Eksik ownership/auth kontrolü bulduğunda sırayla:
 
 ### Önce raporla, onay bekle
 
-- Ödeme yolları: `IyzicoClient.php`, `checkout_payments.php`, `api/marketplace/createsubscription.php` — canlı anahtarla gerçek para hareket ediyor.
+- Ödeme yolları — canlı anahtarla gerçek para hareket ediyor:
+  - Hoppa (bugünkü sağlayıcı, paket ödemesi): `HoppaGateway.php`, `functions/hosted_plan_payments.php`, `WalletController` (`upgradePlan`, `hoppaReturn`), `api/wallet/upgradeplan.php`, `api/wallet/hoppa_return.php`, `api/cron/plan_payments.php`, `admin/ajax/odemeler.php` (iade).
+  - iyzico (kapalı, anahtarsız; yalnızca eski kayıtlar): `IyzicoClient.php`, `checkout_payments.php`, `api/marketplace/createsubscription.php`.
 - Veritabanı şeması · API contract'ında kırıcı değişiklik · bilinmeyen dış sağlayıcı entegrasyonu · iş kuralı belirsizse doğru davranışa kendin karar verme
+- Veri düzeltme migration'ları (mevcut satırı değiştiren `UPDATE`/`DELETE` içerenler, ör. N-06 onarımı) — **yerelde de** uygulamadan önce onay.
+
+### Git
+
+- Commit edebilirsin, yalnızca `revize/pazaryeri` branch'inde. `main` üzerindeysen önce o branch'e geç; `main`'e commit atma.
+- Her madde/AUDIT ID'si için ayrı commit; mesaj ID ile başlar (ör. `N-02: …`).
+- Commit'ten önce **tek doğrulama betiği** geçmiş olmalı: `bash scripts/verify.sh` (lint + verify build + `php -l` + tüm selftest'ler). Çıkışı 0 ve son satırı `DOĞRULAMA: GEÇTİ` değilse commit yok.
+- Commit **ayrı bir komutla** atılır, betik geçtikten sonra. Dosya kırpma, test, `cp`/`sed`/`node -e` gibi adımları commit ile aynı komut zincirine koyma; bir adım başarısız olursa zincir commit'e ulaşmamalı.
+- Dosyaları adıyla ekle (`git add -A` / `git add .` değil); senin değiştirmediğin, çalışma ağacında bekleyen dosyalar commit'e girmez.
+- Push yalnızca `git push origin revize/pazaryeri`. `main`'e push, merge ve force push **asla**.
+
+### Migration
+
+- `migrate.php --apply` yalnızca **YEREL** veritabanında. Çalıştırmadan önce `api/.env`'deki `DB_HOST`'un yerel olduğunu doğrula (değeri basmadan).
+- Sıra: `--status` çıktısını göster → uygulanacak dosyaları listele → `--apply` → tekrar `--status` göster.
+- `--apply` bekleyen tüm yıkıcı olmayan dosyaları birlikte uygular, tek dosya seçilemez. `migrate.php`'nin yıkıcılık kontrolü `UPDATE`'i yakalamaz. Bu yüzden `migrations/` altında onay bekleyen bir veri düzeltme dosyası varken `--apply` çalıştırma; o dosyayı onaya kadar `migrations/` dışında tut.
+- Bu izin yalnızca var olan migration'ı **uygulamayı** kapsar; yeni şema tasarımı hâlâ "önce raporla" kapsamında.
+- **Canlıda migration yalnızca `scripts/deploy-backend.sh` ile** (cPanel Git Version Control → `.cpanel.yml`, ya da README → "Backend deploy (cPanel)"daki tek seferlik Cron komutu) ve yalnızca **yıkıcı olmayan, ertelenmemiş** dosyalar (`migrate.php --apply --auto`; kilit + yedek + log betikte). Yıkıcı ve ertelenmiş dosyalar (001/002/002b/003/005/006 ve ileride `MIGRATION_DEFERRED`'a eklenenler) yalnızca **kullanıcının açık onayıyla**, tek tek: `deploy-backend.sh --approve DOSYA [--allow-destructive]`. Deploy'u ve onaylı çalıştırmayı kullanıcı tetikler; Claude canlıya bağlanmaz, betiği canlıda çalıştırmaz.
+- **Sonuç:** `main`'e giren `migrations/` içindeki yıkıcı olmayan her dosya — `UPDATE` içerenler dahil — bir sonraki canlı deploy'da onaysız uygulanır. Onay bekleyen dosya `pending/`'de kalır (hiçbir mod okumaz); canlıda onaysız çalışmaması gereken yeni bir dosya `migration_lib.php` → `MIGRATION_DEFERRED`'a eklenir. `migrate_selftest` D bölümü, başlangıç kaydından sonra `--auto`'nun 004/010 ve 001–006'ya dokunmadığını, `pending/`'i okumadığını ve bekleyenlerin hiçbirinin yıkıcı olmadığını kilitler.
+- Canlı için yeni bir migration yazarken: uygulama sırasını ve her dosya için geri alma notunu yaz (DDL örtük commit yapar; geri alma ayrı bir ters migration demektir).
 
 ### Asla yapma
 
-`migrate.php --apply` · `--allow-destructive` · `db_backup.php mode=restore` · `mysqldump` restore · `DROP`/`TRUNCATE`/`DELETE FROM` · gerçek ödeme çağrısı · production deploy · secret rotasyonu · git geçmişi yeniden yazma
-Migration dosyası **yazabilirsin**, **uygulayamazsın**.
+Canlı/uzak veritabanına bağlanmak ya da orada `migrate.php --apply` · `--allow-destructive` (yerelde de) · `db_backup.php mode=restore` · `mysqldump` restore · elle `DROP`/`TRUNCATE`/`DELETE FROM` · gerçek ödeme çağrısı · production deploy · secret rotasyonu · git geçmişi yeniden yazma (`commit --amend`, rebase, reset) · `main`'e commit/push/merge · force push
+Migration dosyası **yazabilirsin**; yalnızca yerelde ve yukarıdaki Migration kurallarıyla **uygulayabilirsin**.
 
 ## BLOCKERS.md
 
@@ -65,14 +102,23 @@ Repo kökünde `BLOCKERS.md` var: senin kod yazarak çözemeyeceğin, dışarıd
 
 ## Doğrulama komutları
 
+Hepsini sırayla çalıştıran tek kapı: `bash scripts/verify.sh` (kayıtlar `storage/logs/verify/`). Tek tek:
+
 ```bash
 cd web && NEXT_DIST_DIR=.next-verify npm run build
 cd web && npm run lint
 find api -name "*.php" -not -path "*/vendor/*" -print0 | xargs -0 -n1 php -l
 php api/database/iyzico_selftest.php     # A bölümü anahtarsız da geçmeli
+php api/database/plan_limits_selftest.php --strict  # plan/kota (013 uygulanmış kurulumda tamamen yeşil)
+php api/database/access_selftest.php      # erişim/listeleme matrisi (Faz 4)
+php api/database/application_selftest.php # pazaryeri başvurusu (Faz 5)
+php api/database/hoppa_selftest.php       # Hoppa paket ödemesi (Faz 7a); --e2e: test ortamında gerçek ödeme (dosya başlığına bakın)
+php api/database/migrate_selftest.php     # migration checksum satır sonundan bağımsız (N-25), salt okunur
 ```
 
 Bir değişiklik bunlardan birini bozuyorsa geri al ve nedenini raporla.
+
+**Çıkış kodu kuralı:** Doğrulama çıktısını `tail`/`head`/`grep` ile kısaltıyorsan zincirin başına `set -o pipefail` koy ya da komutun çıkış kodunu ayrıca kontrol et (`cmd > log; echo $?`). Aksi hâlde borunun sonundaki komut başarısızlığı yutar ve zincir "geçti" gibi devam eder. Doğrulamalardan biri başarısızsa (çıkış kodu ≠ 0 ya da çıktıda `FAIL`/`error`) **commit atılmaz**.
 
 ## Her turun sonunda
 

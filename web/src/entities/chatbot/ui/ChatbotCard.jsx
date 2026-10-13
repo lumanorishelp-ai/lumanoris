@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import ShareModal from "@/features/sharing/ShareModal";
 import { useEffect, useState } from "react";
 import CommentModal from "@/features/comments/CommentModal";
+import { postBotComment } from "@/features/comments/api";
 import AddToSaleListModal from "@/features/chatbot-mgmt/AddToSaleListModal";
 import DeleteConfirmModal from "@/shared/ui/DeleteConfirmModal";
 import PublishModal from "@/features/chatbot-mgmt/PublishModal";
@@ -277,15 +278,11 @@ export default function ChatbotCard({ id, userId, authorUserId, ownerUserId, isI
                 onClose={() => setCommentOpen(false)}
                 comments={commentList}
                 onSend={async (commentText) => {
-                    const payload = { user_id: userId, chatbot_id: id, comment: commentText };
-                    try {
-                        const formData = new FormData();
-                        formData.append("data", JSON.stringify(payload));
-                        const res = await fetch("/api/social/addcomment.php", { method: "POST", body: formData });
-                        const result = JSON.parse(await res.text());
-                        if (result.success) setCommentCount(p => p + 1);
-                        else toast({ variant: "destructive", title: result.message });
-                    } catch (err) { toast({ variant: "destructive", title: "Yorum eklenemedi", description: err.message }); }
+                    // N-34: ortak yardımcı; kimlik gönderilmez, sonuç CommentModal'a döner.
+                    const result = await postBotComment(id, commentText);
+                    if (result.ok) setCommentCount(p => p + 1);
+                    else toast({ variant: "destructive", title: "Yorum eklenemedi", description: result.message });
+                    return result;
                 }}
             />
             <AddToSaleListModal isOpen={addOpen} onClose={() => setAddOpen(false)} botId={id} weeklyPrice={weeklyPrice} monthlyPrice={monthlyPrice} />

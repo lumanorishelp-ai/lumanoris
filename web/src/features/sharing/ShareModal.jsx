@@ -3,29 +3,41 @@ import { useEffect, useState } from 'react';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/shared/ui/dialog';
 import { Share2, Link2, Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { copyText } from '@/shared/lib/clipboard';
 
 export default function ShareModal({ isOpen, urlId, onClose, }) {
     const [copied, setCopied] = useState(false);
+    const [copyFailed, setCopyFailed] = useState(false);
     const [shareUrl, setShareUrl] = useState('');
 
     useEffect(() => {
         if (typeof window !== 'undefined') {
             const hasId = urlId !== null && urlId !== undefined && urlId !== '';
             const url = hasId
-                ? `${window.location.origin}/dashboard/chat/?botid=${urlId}`
+                // N-41: sohbet sayfası `botId` okur; `botid` bağlantısı botu açmıyordu.
+                ? `${window.location.origin}/dashboard/chat/?botId=${urlId}`
                 : window.location.href;
             setShareUrl(url);
         }
     }, [urlId]);
 
-    const handleCopy = () => {
-        navigator.clipboard.writeText(shareUrl);
+    // N-41: "Kopyalandı" yalnızca pano yazması gerçekten tamamlanınca;
+    // başarısızlıkta kullanıcıya elle kopyalaması söylenir.
+    const showCopyResult = (ok) => {
+        setCopyFailed(!ok);
+        if (!ok) return;
         setCopied(true);
         setTimeout(() => setCopied(false), 2000); // 2 saniye sonra badge gizlenir
     };
 
+    const handleCopy = async () => {
+        showCopyResult(await copyText(shareUrl));
+    };
+
     const handleInstagramShare = () => {
-        navigator.clipboard.writeText(shareUrl);
+        // Yazma beklenmeden başlatılıyor: aşağıdaki yönlendirme/pencere açma
+        // kullanıcı tıklamasıyla aynı anda olmalı, yoksa açılır pencere engellenir.
+        const copying = copyText(shareUrl);
 
         const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
 
@@ -42,8 +54,7 @@ export default function ShareModal({ isOpen, urlId, onClose, }) {
             window.open("https://www.instagram.com/direct/inbox/", "_blank");
         }
 
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
+        copying.then(showCopyResult);
     };
 
     // Marka SVG'leri korundu ama hepsi ayni olcekte, ayni kareye oturuyor:
@@ -147,6 +158,11 @@ export default function ShareModal({ isOpen, urlId, onClose, }) {
                                 {copied ? 'Kopyalandı' : 'Kopyala'}
                             </button>
                         </div>
+                        {copyFailed && (
+                            <p role="alert" className="mt-2 text-xs text-rose-300">
+                                Bağlantı kopyalanamadı. Bağlantıyı seçip elle kopyalayın.
+                            </p>
+                        )}
                     </div>
 
                     <div>

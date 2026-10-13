@@ -1,5 +1,12 @@
 <?php
 $abonelikler = $database->selectMulti("* FROM plans");
+// Madde 11 — `privacy_right_limit` migration 012 ile geliyor. Kolon yoksa alan
+// hiç çizilmiyor: aksi hâlde form onu gönderir ve genel update.php "Unknown
+// column" ile kaydı tamamen reddederdi.
+$hasPrivacyColumn = (int) ($database->selectSingle(
+    "COUNT(*) AS cnt FROM information_schema.COLUMNS
+     WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'plans' AND COLUMN_NAME = 'privacy_right_limit'"
+)['cnt'] ?? 0) === 1;
 // plan_icerikler'i okumak için şimdilik bir şey çekmiyoruz, JS'de okuyacağız.
 ?>
 <main class="bg-gray-50 p-6 min-h-screen">
@@ -66,21 +73,29 @@ $abonelikler = $database->selectMulti("* FROM plans");
                     <div class="border-t pt-4 mt-4">
                         <h4 class="text-md font-bold text-indigo-700 mb-2">Plan Kotaları</h4>
                         <p class="text-xs text-gray-500 mb-3">
-                            Bu üç değer doğrudan kullanıcının bot ve mesaj hakkına dönüşür
-                            (<code>functions/plans.php</code>). Boş bırakılırsa ücretsiz plan
-                            varsayılanları uygulanır.
+                            Bu değerler doğrudan kullanıcının bot, mesaj ve özel yapma hakkına
+                            dönüşür (<code>functions/plans.php</code>, <code>chatbot_limits.php</code>).
+                            Bot kotalarında <strong>boş bırakmak = sınırsız</strong> (migration 012
+                            gerektirir). Özel yapma hakkı toplamdır, aylık yenilenmez.
                         </p>
-                        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div class="grid grid-cols-1 md:grid-cols-<?= $hasPrivacyColumn ? '4' : '3' ?> gap-4">
                             <div>
                                 <label for="independent_bot_limit" class="block font-semibold text-sm text-gray-700 mb-2">Bağımsız bot</label>
-                                <input type="number" id="independent_bot_limit" name="independent_bot_limit" min="0" step="1" value="1"
+                                <input type="number" id="independent_bot_limit" name="independent_bot_limit" min="0" step="1" value="1" placeholder="Sınırsız"
                                        class="w-full border border-gray-300 rounded-lg px-4 py-2.5 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition shadow-sm">
                             </div>
                             <div>
                                 <label for="public_bot_limit" class="block font-semibold text-sm text-gray-700 mb-2">Herkese açık bot</label>
-                                <input type="number" id="public_bot_limit" name="public_bot_limit" min="0" step="1" value="2"
+                                <input type="number" id="public_bot_limit" name="public_bot_limit" min="0" step="1" value="2" placeholder="Sınırsız"
                                        class="w-full border border-gray-300 rounded-lg px-4 py-2.5 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition shadow-sm">
                             </div>
+                            <?php if ($hasPrivacyColumn): ?>
+                            <div>
+                                <label for="privacy_right_limit" class="block font-semibold text-sm text-gray-700 mb-2">Özel yapma hakkı (toplam)</label>
+                                <input type="number" id="privacy_right_limit" name="privacy_right_limit" min="0" step="1" value="1" required
+                                       class="w-full border border-gray-300 rounded-lg px-4 py-2.5 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition shadow-sm">
+                            </div>
+                            <?php endif; ?>
                             <div>
                                 <label for="daily_message_limit" class="block font-semibold text-sm text-gray-700 mb-2">Günlük mesaj</label>
                                 <input type="number" id="daily_message_limit" name="daily_message_limit" min="0" step="1" value="10"
@@ -241,10 +256,12 @@ $abonelikler = $database->selectMulti("* FROM plans");
             const formData = new FormData();
             formData.append("table", "plans");
 
+            // Madde 11 / migration 012 — bot kotası boşsa NULL (= sınırsız).
+            const UNLIMITABLE = ["independent_bot_limit", "public_bot_limit"];
             const data = {};
             Array.from(dataForm.elements).forEach(el => {
                 if (!el.name || el.type === "button" || el.type === "submit" || el.name === "id") return;
-                data[el.name] = el.value;
+                data[el.name] = (UNLIMITABLE.includes(el.name) && el.value.trim() === "") ? null : el.value;
             });
 
             formData.append("data", JSON.stringify(data));

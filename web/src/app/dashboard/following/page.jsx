@@ -228,8 +228,9 @@ function BotQuickDetailModal({ bot, isOpen, onClose, router }) {
               Hakkında
             </h4>
             <p className="text-xs text-zinc-300 leading-relaxed bg-zinc-950/60 p-3.5 rounded-xl border border-white/5">
-              {bot.aciklama ||
-                "Bu yapay zeka asistanı, özel veri kaynakları ve gelişmiş RAG altyapısı ile donatılmıştır."}
+              {/* Açıklaması olmayan botta eskiden "özel veri kaynakları ve
+                  gelişmiş RAG altyapısı" iddiası çıkıyordu; ürün RAG yapmıyor. */}
+              {bot.aciklama || "Bu asistan için açıklama eklenmemiş."}
             </p>
           </div>
   
@@ -237,22 +238,26 @@ function BotQuickDetailModal({ bot, isOpen, onClose, router }) {
           {/* Üçüncü kutu "Model: GPT-4o Omnimodal" yazıyordu; kaldırıldı.
               Izgara 3 sütundan 2'ye indi, aksi hâlde kalan iki kutu yarım
               satırda asılı kalırdı. */}
-          <div className="grid grid-cols-2 gap-3">
-            <div className="p-3 rounded-xl bg-zinc-950/60 border border-white/5 text-center">
-              <p className="text-caption text-zinc-500 uppercase font-mono">
-                Puan
-              </p>
-              <p className="text-sm font-bold text-amber-400 flex items-center justify-center gap-1 mt-0.5">
-                <Star className="w-3.5 h-3.5 fill-amber-400" />{" "}
-                {bot.puan || "4.9"}
-              </p>
-            </div>
+          {/* N-15 — puanı olmayan botta sabit "4.9", takipçisi olmayanda
+              "1.2k" yazıyordu (uydurma veri). Puan kutusu yalnızca puan varsa. */}
+          <div className={bot.puan != null ? "grid grid-cols-2 gap-3" : "grid grid-cols-1 gap-3"}>
+            {bot.puan != null && (
+              <div className="p-3 rounded-xl bg-zinc-950/60 border border-white/5 text-center">
+                <p className="text-caption text-zinc-500 uppercase font-mono">
+                  Puan
+                </p>
+                <p className="text-sm font-bold text-amber-400 flex items-center justify-center gap-1 mt-0.5">
+                  <Star className="w-3.5 h-3.5 fill-amber-400" />{" "}
+                  {bot.puan}
+                </p>
+              </div>
+            )}
             <div className="p-3 rounded-xl bg-zinc-950/60 border border-white/5 text-center">
               <p className="text-caption text-zinc-500 uppercase font-mono">
                 Takipçi
               </p>
               <p className="text-sm font-bold text-white mt-0.5">
-                {bot.takipci_sayisi || "1.2k"}
+                {Number(bot.takipci_sayisi) || 0}
               </p>
             </div>
           </div>
@@ -369,9 +374,31 @@ export default function Following() {
     },
   });
 
-  const handleUnfollow = (botId) => {
-    setFollowedBots((prev) => prev.filter((b) => b.id !== botId));
-    toast.success("Bot takip edilenler listenizden çıkarıldı.");
+  /* N-35 — eskiden bu işlev sunucuya HİÇ istek atmıyordu: kart yalnızca
+     ekrandan siliniyor ve "çıkarıldı" deniyordu, sayfa yenilenince bot geri
+     geliyordu. Şimdi açık "unfollow" eylemi gönderiliyor (toggle değil: bayat
+     bir sayfa botu yeniden takip edemez) ve kart yalnızca sunucu başarı
+     dönünce kalkıyor; hata olursa kart yerinde kalır, mesaj gösterilir. */
+  const handleUnfollow = async (botId) => {
+    try {
+      const res = await fetch("/api/social/followchatbot.php", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          data: JSON.stringify({ chatbot_id: botId, action: "unfollow" }),
+        }),
+        credentials: "include",
+      });
+      const result = await res.json().catch(() => null);
+      if (!res.ok || !result?.success || result.following !== false) {
+        toast.error(result?.message || `Takip bırakılamadı (HTTP ${res.status}).`);
+        return;
+      }
+      setFollowedBots((prev) => prev.filter((b) => b.id !== botId));
+      toast.success("Bot takip edilenler listenizden çıkarıldı.");
+    } catch {
+      toast.error("Sunucuya ulaşılamadı. Takip bırakılamadı.");
+    }
   };
 
   const filteredBots = useMemo(() => {
@@ -449,7 +476,7 @@ export default function Following() {
             className="group inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-btn px-5 py-3 text-xs font-semibold text-white shadow-glow hover:brightness-110 hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 cursor-pointer shrink-0"
           >
             <Sparkles className="w-4 h-4" />
-            <span>Pazaryerinde Keşfet</span>
+            <span>Keşfet</span>
             <ArrowUpRight className="w-4 h-4 opacity-70 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
           </button>
         </div>
@@ -612,7 +639,7 @@ export default function Following() {
                 onClick={() => router.push("/dashboard/explore")}
                 className="px-6 py-3 rounded-xl bg-gradient-btn text-xs font-bold text-white shadow-glow hover:brightness-110 hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 cursor-pointer"
               >
-                Pazaryerine Git
+                Keşfet
               </button>
             )}
           </div>
@@ -668,10 +695,12 @@ export default function Following() {
                         <Zap className="w-3 h-3" />#
                         {bot.kategori_adi || "AI Bot"}
                       </span>
-                      <span className="flex items-center gap-1 text-amber-400">
-                        <Star className="w-3 h-3 fill-amber-400" />
-                        {bot.puan || "4.9"}
-                      </span>
+                      {bot.puan != null && (
+                        <span className="flex items-center gap-1 text-amber-400">
+                          <Star className="w-3 h-3 fill-amber-400" />
+                          {bot.puan}
+                        </span>
+                      )}
                     </div>
 
                     <h3
@@ -694,7 +723,7 @@ export default function Following() {
                 <div className="p-4 pt-2 border-t border-white/[0.06] mt-2 flex items-center justify-between">
                   <span className="text-caption font-mono text-zinc-500 flex items-center gap-1">
                     <Users className="w-3 h-3 text-zinc-600" />
-                    {bot.takipci_sayisi || "1.2k"} Takipçi
+                    {Number(bot.takipci_sayisi) || 0} Takipçi
                   </span>
 
                   <button

@@ -304,7 +304,28 @@
       "Bash(curl -s -i \"https://lumanoris-coral.vercel.app/api/auth/sessioncheck.php\" --max-time 15)",
       "Bash(curl -s -i \"https://lumanoris-coral.vercel.app/api/auth/register.php\" -X POST --max-time 15)",
       "Bash(php -l \"c:\\\\PROJECTS\\\\lumanoris-dashboard\\\\api\\\\functions\\\\db.php\")",
-      "Bash(DB_HOST=localhost:3306 DB_USER=root DB_PASS=Ceycey.123 DB_NAME=lumanoris php -r ' *)"
+      "Bash(git add *)",
+      "Bash(git push origin revize/pazaryeri)",
+      "Bash(php api/database/migrate.php)",
+      "Bash(php api/database/migrate.php --status)",
+      "Bash(php api/database/migrate.php --apply)"
+    ],
+    "deny": [
+      "Bash(git push *main*)",
+      "Bash(git push --force*)",
+      "Bash(git push * --force*)",
+      "Bash(git push -f*)",
+      "Bash(git push * -f*)",
+      "Bash(git push *+*)",
+      "Bash(git commit --amend*)",
+      "Bash(git commit * --amend*)",
+      "Bash(php api/database/migrate.php *--allow-destructive*)",
+      "Bash(mysql -h*)",
+      "Bash(mysql * -h*)",
+      "Bash(mysql --host*)",
+      "Bash(mysql * --host*)",
+      "Bash(mysqldump *)",
+      "Bash(ssh *)"
     ],
     "additionalDirectories": [
       "\\tmp",

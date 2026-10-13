@@ -2,6 +2,32 @@
 class ChatbotRepository extends BaseRepository implements ChatbotRepositoryInterface {
     private const T = AppConfig::TABLE_CHATBOTS;
 
+    /**
+     * Faz 4 / GK-2 — "ücretsiz herkese açık" = yayında ve iki fiyat da boş/0.
+     * Fiyat yalnızca publishChatbot/updateChatbotPrice ile ve en az
+     * MIN_WEEKLY_PRICE olarak yazılabildiği için fiyatlı bir bot bu koşula
+     * giremez.
+     */
+    private const FREE_PUBLIC_SQL =
+        '(c.is_independent = 0 AND COALESCE(c.ucret_haftalik, 0) = 0 AND COALESCE(c.ucret_aylik, 0) = 0)';
+
+    /**
+     * Vitrinde görünür: ücretsiz herkese açık (her yazar) YA DA fiyatlı +
+     * satıcısı aktif (`pms` = aktif satıcıya LEFT JOIN, B1). Özel
+     * (is_independent = 1) bot hiçbir dalda yok.
+     */
+    private const PUBLIC_VISIBLE_SQL =
+        '(c.is_independent = 0 AND (COALESCE(c.ucret_haftalik, 0) = 0 AND COALESCE(c.ucret_aylik, 0) = 0 OR pms.user_id IS NOT NULL))';
+
+    /**
+     * N-30 — vitrin kuralı başka sorgularda (Diyalog Defteri akışı) AYNI
+     * kaynaktan kullanılsın diye. Takma adlar: `c` = chatbotlar, `pms` = aktif
+     * satıcıya LEFT JOIN (ON pms.user_id = c.author_user_id AND pms.status = 'active').
+     */
+    public static function publicVisibleSql(): string {
+        return self::PUBLIC_VISIBLE_SQL;
+    }
+
     public function findById(int $id): ?array {
         return self::one('SELECT * FROM `' . self::T . '` WHERE id = ?', [$id]);
     }
@@ -117,15 +143,22 @@ class ChatbotRepository extends BaseRepository implements ChatbotRepositoryInter
                     (SELECT COUNT(*) FROM chatbot_in_list   WHERE chatbot_id = c.id) AS toplam_lists,
                     (SELECT COUNT(*) FROM chatbot_likes     WHERE chatbot_id = c.id) AS toplam_likes,
                     (SELECT COUNT(*) FROM chatbot_dislikes  WHERE chatbot_id = c.id) AS toplam_dislikes,
-                    (SELECT COUNT(*) FROM chatbot_comments  WHERE chatbot_id = c.id) AS toplam_comments
+                    (SELECT COUNT(*) FROM chatbot_comments  WHERE chatbot_id = c.id) AS toplam_comments,
+                    -- N-26: `durum` sabit 1 (geriye dönük uyum için duruyor); \"Daha Önce
+                    -- Satıldı\" rozeti yalnızca bu bayrağa bakar. Satış kaydı =
+                    -- deleteChatbot'un saydığı iki tablo (süresi dolmuş abonelik dahil).
+                    (EXISTS (SELECT 1 FROM user_subscriptions       WHERE chatbot_id = c.id)
+                     OR EXISTS (SELECT 1 FROM chatbot_purchase_credits WHERE chatbot_id = c.id)) AS has_sales,
+                    -- N-35: kartlardaki kalp başlangıç durumunu sunucudan alsın (oturumsuz → 0).
+                    (? > 0 AND EXISTS (SELECT 1 FROM chatbot_likes cl WHERE cl.chatbot_id = c.id AND cl.user_id = ?)) AS liked_by_me
              FROM `" . self::T . "` c
-             INNER JOIN param_marketplace_sellers pms
+             LEFT JOIN param_marketplace_sellers pms
                      ON pms.user_id = c.author_user_id AND pms.status = 'active'
              LEFT JOIN kullanicilar u ON u.id = c.owner_user_id
              $where
              ORDER BY c.id DESC
              LIMIT $limit OFFSET $offset",
-            $params
+            array_merge([$userId, $userId], $params)
         );
     }
 
@@ -136,7 +169,7 @@ class ChatbotRepository extends BaseRepository implements ChatbotRepositoryInter
         $row = self::one(
             "SELECT COUNT(*) AS total
              FROM `" . self::T . "` c
-             INNER JOIN param_marketplace_sellers pms
+             LEFT JOIN param_marketplace_sellers pms
                      ON pms.user_id = c.author_user_id AND pms.status = 'active'
              $where",
             $params
@@ -152,7 +185,10 @@ class ChatbotRepository extends BaseRepository implements ChatbotRepositoryInter
      */
     private static function publishedWhere(array $filters, int $userId): array {
         $params = [];
-        $where  = ' WHERE c.id > 0 AND c.is_independent = 0';
+        // Faz 4 / GK-2 — vitrinde: ücretsiz herkese açık botlar (her yazar)
+        // + fiyatlı botlar yalnızca satıcısı aktifse (B1). Sorgular `pms`
+        // takma adıyla aktif satıcıya LEFT JOIN yapıyor.
+        $where  = ' WHERE c.id > 0 AND ' . self::PUBLIC_VISIBLE_SQL;
 
         if (!empty($filters['exclude_uninterested']) && $userId > 0) {
             // DB-005: chatbot_uninterested(user_id) indekssiz; alt sorgu
@@ -176,6 +212,26 @@ class ChatbotRepository extends BaseRepository implements ChatbotRepositoryInter
     public function getPublishedV2(int $userId, array $filters = []): array {
         return $this->getPublished($filters + ['exclude_uninterested' => true], $userId);
     }
+    /**
+     * N-27 — verilen botlardan kullanıcının SOHBET edebildikleri; karar
+     * generateReply'ın kapısıyla aynı: userHasAccess($id, $userId, 'chat')
+     * (sahip / aktif abone / ücretsiz herkese açık). Ana sayfa bot seçicisi
+     * kilidi buradan alır; eskiden getMenuItems (yalnızca sahip + abone)
+     * kullanıldığı için takip edilen ücretsiz bot kilitli görünüyordu.
+     *
+     * @param int[] $ids
+     * @return int[]
+     */
+    public function chatAccessibleIds(array $ids, int $userId): array {
+        $out = [];
+        foreach (array_unique(array_map('intval', $ids)) as $id) {
+            if ($id > 0 && $this->userHasAccess($id, $userId, 'chat')) {
+                $out[] = $id;
+            }
+        }
+        return $out;
+    }
+
     /** Returns bots the user owns or has active subscriptions for. */
     public function getMenuItems(int $userId): array {
         return self::all(
@@ -214,11 +270,11 @@ class ChatbotRepository extends BaseRepository implements ChatbotRepositoryInter
                        c.owner_user_id, u.kullanici_adi AS owner_name, c.ucret_haftalik,
                        COUNT(cc.id) AS toplam_chats
                 FROM `" . self::T . "` c
-                INNER JOIN param_marketplace_sellers pms ON pms.user_id = c.author_user_id AND pms.status = 'active'
+                LEFT JOIN param_marketplace_sellers pms ON pms.user_id = c.author_user_id AND pms.status = 'active'
                 LEFT JOIN kullanicilar u ON u.id = c.owner_user_id
                 LEFT JOIN chatbot_chats cc ON cc.chatbot_id = c.id
                 WHERE c.kategori_id IN ({$catIn['placeholders']})
-                  AND c.is_independent = 0";
+                  AND " . self::PUBLIC_VISIBLE_SQL;
 
         $params = $catIn['params'];
 
@@ -278,8 +334,22 @@ class ChatbotRepository extends BaseRepository implements ChatbotRepositoryInter
                  WHERE c.id = ?
                    AND (
                         $ownerOrSubscriber
-                     OR (c.is_independent = 0 AND pms.user_id IS NOT NULL)
+                     OR " . self::PUBLIC_VISIBLE_SQL . "
                    )",
+                [$chatbotId, $userId, $userId, $userId]
+            );
+            return $row !== null;
+        }
+
+        // Faz 4 / GK-2 — 'chat': ücretsiz herkese açık bot giriş yapmış herkesle
+        // sohbet eder (mesaj kullanıcının günlük coin'inden düşer). 'full'
+        // DEĞİŞMEDİ: persona ve eğitim metni yalnızca sahip/abone içindir.
+        if ($purpose === 'chat') {
+            $row = self::one(
+                "SELECT 1
+                 FROM `" . self::T . "` c
+                 WHERE c.id = ?
+                   AND ($ownerOrSubscriber OR " . self::FREE_PUBLIC_SQL . ")",
                 [$chatbotId, $userId, $userId, $userId]
             );
             return $row !== null;
@@ -306,8 +376,11 @@ class ChatbotRepository extends BaseRepository implements ChatbotRepositoryInter
      */
     public function getDetail(int $id, int $userId): ?array {
         $hasFull = $this->userHasAccess($id, $userId, 'full');
+        // Faz 4 — sohbet edebilme (ücretsiz herkese açık dahil) persona
+        // görmekten AYRI: ücretsiz botun personası yine yalnızca sahip/aboneye.
+        $canChat = $hasFull || $this->userHasAccess($id, $userId, 'chat');
 
-        if (!$hasFull && !$this->userHasAccess($id, $userId, 'preview')) {
+        if (!$canChat && !$this->userHasAccess($id, $userId, 'preview')) {
             return null;
         }
 
@@ -331,11 +404,21 @@ class ChatbotRepository extends BaseRepository implements ChatbotRepositoryInter
             return null;
         }
 
-        $row['has_access'] = $hasFull;
-        if (!$hasFull) {
-            // Persona ücretli içerik — önizlemede gönderilmiyor.
+        $row['has_access'] = $canChat;
+        // Faz 4 / kontrol B — persona (`style_prompt`) yalnızca botun SAHİBİNE
+        // döner. Sohbet onu kullanmıyor (talimatı generateReply sunucuda
+        // kuruyor); tek okuyan oluştur/düzenle sayfası. Eskiden 'full' ile
+        // abonelere de gidiyordu; ücretsiz herkese açık botta da kimseye
+        // gitmemeli.
+        $isOwner = $userId > 0 && self::one(
+            'SELECT 1 FROM `' . self::T . '` WHERE id = ? AND (author_user_id = ? OR owner_user_id = ?)',
+            [$id, $userId, $userId]
+        ) !== null;
+        if (!$isOwner) {
             unset($row['style_prompt']);
         }
+        // N-24 — istemci satın alma düğmesini sahibe göstermemek için okur.
+        $row['is_owner'] = $isOwner;
 
         return $row;
     }

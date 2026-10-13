@@ -9,7 +9,10 @@
 
 header('Content-Type: application/json');
 
-if (session_status() === PHP_SESSION_NONE) {
+// N-31 — oturum kullanmayan, çapraz-site çağrılan uçlar (Hoppa BACK_URL)
+// LUMANORIS_STATELESS_ENDPOINT tanımlar: orada session_start() yeni bir
+// PHPSESSID set edip kullanıcının gerçek oturum çerezinin üstüne yazıyordu.
+if (!defined('LUMANORIS_STATELESS_ENDPOINT') && session_status() === PHP_SESSION_NONE) {
     // Lax (not Strict) because top-level GET navigations into the app must
     // still carry the cookie.
     //

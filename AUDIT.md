@@ -846,3 +846,1146 @@ Bir önceki turda "karar gerekiyor" diye açık bırakılan maddeler için kulla
 | `011_user_plan_expiry.sql` | `user_plan_selection.expires_at` + index | **Uygulanmalı.** Uygulanana kadar üyelik paketi süresiz yazılmaya devam eder (fail-safe, log'a düşüyor). |
 
 İkisi de yazıldı, **uygulanmadı** (CLAUDE.md `--apply` yasağı; deploy sırasında elle çalıştırılacak).
+
+---
+
+# Pazaryeri revizyonu (2026-10-05) — `docs/prompts/11-pazaryeri-revizyon.md`
+
+Kaynak: müşteri revizesi (`PAZARYERİ SİSTEM DÜZENLEMESİ.pdf`). Faz 0 (salt okuma) tamamlandı; bu bölüm Faz 0 kararlarını, Faz 0'da bulunan yeni maddeleri (N serisi) ve Faz 1 sonuçlarını tutar.
+
+## Faz 0 karar kaydı
+
+| # | Konu | Durum |
+|---|---|---|
+| K-1 | S1–S11 ve devamı (paket limitleri, Elmas fiyatı, Satın Aldıklarım, takip edilen bot seçimi, "Satın Al" butonları, defter profil butonu, belge türleri/sınırı) | Müşteriye soruldu (2026-10-05), cevap gelmedi. **Geliştirici kararıyla kapatıldı (müşteri onayı yok, 2026-10-05)** — bkz. GK-1…GK-16. |
+| K-2 | Yayınlanan bağımsız bot **herkese açık bot hakkından** sayılır, bağımsız hakkı boşalır; herkese açık hakkı doluysa yayınlanamaz. | Bugünkü kod davranışı (`ChatbotRepository::countByOwner` anlık duruma göre sayıyor, `publishChatbot` public limitini kontrol ediyor). **Geliştirici kararı (müşteri onayı yok, 2026-10-05)** — GK-1. |
+| K-3 | Yayınlanmış bir botu geri özele çekmek **bağımsız bot limitine takılmaz**, yalnızca "özel yapma hakkı"ndan düşer. Yayınlanmamış bağımsız bot hak kullanmadan sahibine özel kalır. | **Geliştirici kararı (müşteri onayı yok, 2026-10-05)** — GK-3. Artık bu kurala bağlı kod yazılabilir (N-07, Faz 3). |
+| K-4 | Faz 1 (Madde 0: M0-2 → M0-1 → M0-3 → M0-4) başlatıldı. | Kullanıcı onayı (2026-10-05). |
+
+## Faz 0'da bulunan, bu turda düzeltilmeyen maddeler
+
+| ID | Sev | Dosya | Problem | Durum |
+|---|---|---|---|---|
+| **N-07** | P2 | `ChatbotController::unpublishChatbot`, `ChatbotRepository::unpublish` | Yayından kaldırma botu `is_independent=1` yapıyor ve bağımsız bot limitini hiç kontrol etmiyor: ücretsiz plandaki kullanıcı 1 bağımsız + 2 yayından kaldırılmış = 3 bağımsız bota ulaşabilir. | Açık — doğru davranış K-3'e (müşteri onayı) bağlı. |
+| **N-08** | P1 | `ChatbotController::updateChatbotPrice` | Satıcı durumu kontrolü yok; aktif satıcı olmayan kullanıcı kendi botuna fiyat yazabiliyor. Bugün `publishChatbot` B1 yüzünden kapalı olduğu için fiyatlı bot pazaryerine çıkamıyor, ama kontrol tek savunma hattına bağlı. | Açık — Faz 4 kapsamında (ortak yayın akışı). |
+| **N-09** | P2 | `SocialController::getBotsOfList` | `param_marketplace_sellers.status='active'` INNER JOIN'i: B1 açıkken listeye eklenen hiçbir bot listede görünmüyor. | **B1 bekliyor** — Faz 4 diff önerisine dahil edilecek. |
+| **N-10** | P1 | `web/src/app/components/landing/PricingSection.jsx` | Paket fiyatları ve limitleri sabit kodlu dördüncü kopya: Gümüş 0 ₺ / Altın 750 ₺ / Elmas 1.850 ₺; `plans` seed'i 149/299/599, müşteri 149/299/849. Ana sayfa ile yükseltme sayfası farklı fiyat gösteriyor. | Açık — Faz 3 (paket değerleri müşteriden bekleniyor). |
+| **N-11** | P3 | `features/chatbot-mgmt/ChatbotForm.jsx`, `features/notes/DialogueModal.jsx`, `features/wallet/BankInfo.jsx`, `entities/chatbot/ui/{ChatbotCard,BotCard,MarketplaceListCard,SuggestedCard}.jsx`, `app/dashboard/chat/page.jsx:12` (`WithdrawalModal` importu) | `web/src` içinde importu olmayan dosyalar / kullanılmayan import (JSX olduğu için `api/admin` ve `router.php` aramaları uygulanamaz). | Ölü kod adayı — silinmedi. |
+| **N-12** | P3 | `ChatController::generateReply` (API anahtarı yok dalı) | Anahtar yoksa yalnızca mesajın hakkı iade ediliyor (`refundMessage($allowanceSource)`); aynı istekte belgeler için düşülen ek haklar (`$fileAllowanceSources`) iade edilmiyor. Belgeli mesajda kullanıcı cevap almadan coin kaybediyor. | Açık — Faz 1 sırasında görüldü, kapsam dışı (06 kuralı: yeni problem → yeni ID, düzeltme yok). |
+
+## Faz 1 — Madde 0 (önceki toplantı eksikleri)
+
+Tüm değişiklikler frontend'de. **Davranış testi yazılamadı:** `web/` altında test çalıştırıcısı yok (package.json'da `test` betiği / jest / vitest yok); bunu kurmak yeni bağımlılık kararıdır. Bu yüzden "önce kırmızı test" adımı uygulanamadı. Doğrulama: kök neden kod okumayla kanıtlandı, değişiklikler `npm run lint` + `NEXT_DIST_DIR=.next-verify npm run build` ile doğrulandı. **Tarayıcıda uçtan uca denenmedi.**
+
+| ID | Madde | Kök neden (kanıt) | Değişiklik | Durum |
+|---|---|---|---|---|
+| **N-01** | M0-2 | `chatbots/components/ChatbotCard.jsx`'te kartın hiçbir alanı sohbete bağlı değildi; tek bağlantı "Yönet" (`/dashboard/chatbots/create?id=`). Bilinçli bir kapatma izi yok. Sohbet tarafı engel değil: kartı listeleyen `getMenuItems()` yalnızca sahibi olunan ya da aktif aboneliği olan botları döndürüyor, ve `userHasAccess('full')` sahibi koşulsuz kabul ediyor — yayınlanmamış bağımsız bot dahil. | Kapak ve başlık/avatar satırı `/dashboard/chat?botId=<id>` bağlantısı (diğer sayfalardaki desen). Alt düğmeler (Sil / Yayınla / Fiyat / Yönet) değişmedi. | **Kapandı (kod).** Eğitimin modele gittiği kod yoluyla izlendi: `ChatController::generateReply` `LEFT(training_prompt, 60000)` okuyup `[BİLGİ KAYNAĞI]` olarak system instruction'ın ilk parçasına koyuyor. **Çalışma zamanı kanıtı YOK** — aşağıya bakın. |
+| **N-02** | M0-1 | Bilgi Bankası sekmesinde "önce botu kaydedin" kapısı zaten VARDI ama `!botId` ile kontrol ediliyordu; yeni botta `botId = -1` (truthy) olduğu için kapı hiç kapanmıyordu. Yükleme `update_training_chunk.php`'ye `id:-1` gönderiyor, `positiveInt(-1) = 0`, `findByIdAndOwner(0)` null → **"Bu chatbot üzerinde yetkiniz yok."** (ekran görüntüsündeki mesaj). **İlk hipotez kısmen yanlıştı:** URL yolu metni yerel state'te tutmuyor, aynı `appendToCorpus()` → aynı çağrıyı yapıyor; kaydedilmemiş botta URL de aynı hatayı verir. Müşterinin "URL çalışıyor" gözlemi büyük olasılıkla kayıtlı bir bot üzerindeydi. | Kapı `isSavedBot` ile (dosyada zaten tanımlı, önizleme aynı kontrolü kullanıyor); `refreshCorpus` da `-1` için istek atmıyor. Yeni botta sekme artık "önce botu kaydedin" diyor. | **Kapandı (kod)** — yanıltıcı yetki mesajı yolu kapandı. **Açık kalanlar (müşteri sorusu, K-1):** (1) Kayıttan sonra kullanıcı `/dashboard/chatbots`'a yönleniyor, bilgi bankası için "Yönet" ile geri dönmesi gerekiyor — sihirbaz içinde yükleme isteniyorsa metni kayda kadar yerel state'te tutmak gerekir (daha büyük değişiklik). (2) Yalnızca PDF destekleniyor; görsel/OCR canlı sihirbazda yok (`tesseract.js` yalnızca kullanılmayan `ChatbotForm.jsx`'te). (3) UI "maks. 15 MB" diyor, fiili sınır `post_max_size`'a bağlı (8M'de ~6 MB, bkz. L-01). Sınırlar: parça 8.000 karakter (istemci), toplam 60.000 karakter (`MAX_TRAINING_CHARS`), taranmış PDF metin vermez ve kullanıcı ayrıştırma hatası görür. |
+| **N-03** | M0-3 (a) | **Kök neden kanıtlanamadı** — yerel `user_lists` tablosunda `color`/`description` var ve `getUserLists` sorgusu yerelde hatasız çalışıyor (ölçüldü). Daraltma: hiç listesi olmayan kullanıcıda frontend yalnızca `getuserlists.php`'yi çağırıyor (`getbotsoflist.php` liste başına çağrılıyor), o da tek bir `SELECT id, name, color, description FROM user_lists`. Bu sorgunun 500 vermesinin kodla uyumlu tek açıklaması şema farkı: **K-01** (migration 009 uygulanmamış → 1054) ya da tablo yok. | Yok. | **Canlı veri bekliyor.** Gerekli: canlıda `php api/database/migrate.php --status` çıktısı ya da Liste açıldığı andaki `storage/logs/php-error.log` satırı. 009 eksikse çözüm operasyonel (`--apply` — Claude için yasak). |
+| **N-04** | M0-3 (b) | `dashboard/list/page.jsx`'te yükleme durumu yoktu ve hata dalı `setListData([])` yapıyordu: hata bandının ALTINDA "Koleksiyon Bulunamadı / İlk Listenizi Oluşturun" ve "Toplam Koleksiyon: 0" çiziliyordu (ekran görüntüsündeki birliktelik). | Ayrı yükleme / hata / boş durumları; hata durumunda boş durum ve sayaç ("—") gösterilmiyor, "Tekrar dene" düğmesi var; her denemede önceki hata temizleniyor. | **Kapandı (kod).** |
+| **N-05** | M0-4 | Canlı popup `dashboard/notes/page.jsx` içindeki yerel `DialogueModal` (ayrı `features/notes/DialogueModal.jsx` kullanılmıyor, N-11). Düğme **bilinçli olarak** diyalogu paylaşanın profiline (`/dashboard/user/?id=<udb.user_id>`) gidiyordu ve etiketi paylaşanın kullanıcı adıydı. | Ana düğme `/dashboard/chat?botId=<udb.chatbot_id>` ("<bot adı> ile sohbet et"); bot silinmişse çizilmiyor. Paylaşanın profili ikincil metin bağlantısı olarak kaldı (müşteriye soruldu). | **Kapandı (kod)** — N-06 ile birlikte geçerli. Not: ücretli/başkasının bağımsız botuna giden kullanıcı sohbet edemez (`userHasAccess`), bu bugünkü erişim kuralı. |
+| **N-06** | M0-4 | `chat/page.jsx` `DialogNotebookModal`'a `botId={conversationId}` geçiyordu; modal bunu `user_dialog_books.chatbot_id` olarak yazıyor, `NoteController::getDialogues` ise sütunu gerçek bot id'si sayıp `chatbotlar`'a JOIN'liyor. Sonuç: yeni kayıtlar yanlış bota (ya da hiçbir bota) bağlanıyor; N-05 düzeltmesi tek başına yanlış botun sohbetini açardı. Ayrıca konuşma henüz oluşmamışken (`conversationId = -1`) kayıt `chatbot_id gereklidir` ile reddediliyordu. | `botId={botId}`. | **Kapandı (kod, yeni kayıtlar için).** **Mevcut kayıtlar onarılmadı:** yerel veritabanında 3 satır var; 6 ve 7 numaralı satırların değeri BAŞKA bir kullanıcının konuşma id'siyle çakışıyor, yani "değer bir konuşma id'siyse düzelt" diyen kör bir backfill doğru satırları bozardı. Güvenli ayırt edici `cc.id = udb.chatbot_id AND cc.user_id = udb.user_id` (konuşma diyalogu kaydedenin olmalı) — yerelde 0 satır eşleşiyor. Canlıda bu SELECT ile sayılmadan migration yazılmayacak. |
+
+### Faz 1'de yapılamayan: eğitimin çalışma zamanı kanıtı
+
+Yerel veritabanında bilgi bankası kaynağı (`### Kaynak:` başlığı) taşıyan **hiç bot yok** (ölçüldü). Kanıt için iki test botu oluşturmak (URL ile ve PDF ile), `update_training_chunk.php` ile yazmak ve `generatereply.php`'yi çağırmak gerekiyor. Bu (a) yerel veritabanına kalıcı satır yazar — `DELETE FROM` yasağı nedeniyle temizlik yalnızca uygulamanın kendi silme uç noktasıyla yapılabilir, (b) yerelde Gemini anahtarı tanımlı olduğu için gerçek bir dış API çağrısı yapar. İkisi de kullanıcı onayı bekliyor. Alternatif: B4 dalı (anahtarsız) payload'ı oluşturmadan çıkıyor, yani "payload'ı logla" ancak geçici bir log satırı eklenerek yapılabilir.
+
+## Faz 1 — kullanıcı kararları ve ek değişiklikler (2026-10-05)
+
+| # | Karar | Uygulama |
+|---|---|---|
+| F1-1 | Eğitimin çalışma zamanı kanıtı: kullanıcı tarayıcıda elle test edecek. Gerekirse geçici log (eğitim metni loglanmadan) aynı oturumda kaldırılacak. | Gerekmedi; **log satırı eklenmedi.** Yukarıdaki "yapılamayan" bölümü bu kararla kapandı. |
+| F1-2 | İlk kayıttan sonra sihirbaz yeni id ile aynı sayfada kalsın, URL `?id=N` olsun, Bilgi Bankası hemen açılsın. | **Uygulandı (N-02 devamı).** `ChatbotForm` sunucunun döndürdüğü id'yi kendi state'inde tutuyor (`createdBotId`); bileşen yeniden mount edilmiyor (form durumu korunuyor), `history.replaceState` ile URL `?id=N`, sekme `knowledge`. Sonraki kayıtlar `updatechatbot.php`'ye gidiyor ve `is_independent` göndermiyor; yüklenen görsel dosyaları ikinci kez gönderilmesin diye temizleniyor. Düzenleme yolu (mevcut bot) değişmedi: kaydedince listeye dönüyor. |
+| F1-3 | Bilgi bankası PDF sınırı 5 MB (S21). | **Uygulandı.** `TrainingController::MAX_PDF_BYTES` 15 MB → 5 MB (hata mesajı sabitten türüyor); arayüzde `KB_MAX_PDF_BYTES` / "maks. 5 MB". 5 MB ≈ 6,7 MB base64 gövde, `post_max_size=8M` altında. Görsel/OCR desteği yok (müşteri sorusu açık). |
+| F1-4 | N-06 bozuk kayıtları için canlıda çalıştırılacak salt okunur SELECT; migration yazılmayacak. | **Yazıldı** (aşağıda). Yerelde çalıştırıldı: 3 kaydın 3'ü `DOGRU_GORUNUYOR`, üçünde de diyalog mesajı saklanan botun sohbet geçmişinde bulundu. |
+| F1-5 | N-03 canlıdan `migrate.php --status` gelene kadar açık. | Açık. |
+| F1-6 | N-12 Faz 3'e kadar açık. | Açık. |
+
+### N-06 teşhis sorguları (salt okunur)
+
+Sınıflar:
+
+- `DOGRU_GORUNUYOR` — saklanan değer var olan bir bot ve kaydedenin aynı id'li bir konuşması yok. Dokunulmaz.
+- `ZATEN_AYNI` — saklanan değer kaydedenin bir konuşmasının id'si, ama o konuşmanın botu da aynı id. Değişiklik gerekmez.
+- `GUVENLI_ESLENIR` — saklanan değer kaydedenin kendi konuşmasının id'si ve (a) bu id'de hiç bot yok, ya da (b) diyalogun `input_message`'ı konuşmanın botuyla olan sohbet geçmişinde var, saklanan botla olanda yok. Önerilen hedef `konusmanin_botu`.
+- `BELIRSIZ` — kaydedenin konuşma id'si AYNI ZAMANDA var olan bir bot id'si ve mesaj kanıtı karar vermiyor. Elle bakılmalı.
+- `YETIM` — saklanan değer ne bot ne kaydedenin konuşması, ya da konuşmanın botu silinmiş. Eşlenemez.
+
+Mesaj karşılaştırması birebir eşitlik (`utf8mb4_general_ci`); sohbet geçmişi silinmiş kayıtlar kanıt üretmez ve `BELIRSIZ`e düşer — yani sınıflama ihtiyatlı tarafta hata yapar.
+
+Detay:
+
+```sql
+-- N-06 — user_dialog_books.chatbot_id teşhisi. SALT OKUNUR: yalnızca SELECT.
+SELECT t.*,
+  CASE
+    WHEN t.konusma_id IS NULL AND t.saklanan_bot_var = 1 THEN 'DOGRU_GORUNUYOR'
+    WHEN t.konusma_id IS NULL                            THEN 'YETIM'
+    WHEN t.konusmanin_botu = t.saklanan_id               THEN 'ZATEN_AYNI'
+    WHEN t.konusmanin_bot_var = 0                        THEN 'YETIM'
+    WHEN t.saklanan_bot_var = 0                          THEN 'GUVENLI_ESLENIR'
+    WHEN t.mesaj_konusma_botunda = 1 AND t.mesaj_saklanan_botta = 0 THEN 'GUVENLI_ESLENIR'
+    ELSE 'BELIRSIZ'
+  END AS sinif
+FROM (
+  SELECT
+    udb.id                     AS kayit_id,
+    udb.user_id,
+    udb.created_at,
+    udb.chatbot_id             AS saklanan_id,
+    (c_s.id IS NOT NULL)       AS saklanan_bot_var,
+    c_s.isim                   AS saklanan_bot_adi,
+    cc.id                      AS konusma_id,
+    cc.chatbot_id              AS konusmanin_botu,
+    (c_t.id IS NOT NULL)       AS konusmanin_bot_var,
+    c_t.isim                   AS konusmanin_bot_adi,
+    EXISTS (SELECT 1 FROM chatbot_chats ch
+            WHERE ch.chatbot_id = cc.chatbot_id AND ch.user_id = udb.user_id
+              AND ch.message COLLATE utf8mb4_general_ci = udb.input_message COLLATE utf8mb4_general_ci
+           ) AS mesaj_konusma_botunda,
+    EXISTS (SELECT 1 FROM chatbot_chats ch
+            WHERE ch.chatbot_id = udb.chatbot_id AND ch.user_id = udb.user_id
+              AND ch.message COLLATE utf8mb4_general_ci = udb.input_message COLLATE utf8mb4_general_ci
+           ) AS mesaj_saklanan_botta
+  FROM user_dialog_books udb
+  LEFT JOIN chatbotlar c_s            ON c_s.id = udb.chatbot_id
+  LEFT JOIN chatbot_conversations cc  ON cc.id = udb.chatbot_id AND cc.user_id = udb.user_id
+  LEFT JOIN chatbotlar c_t            ON c_t.id = cc.chatbot_id
+) t
+ORDER BY sinif, t.kayit_id;
+```
+
+Özet (sınıf başına kayıt sayısı):
+
+```sql
+-- N-06 özet. SALT OKUNUR.
+SELECT x.sinif, COUNT(*) AS kayit FROM (
+SELECT t.*,
+  CASE
+    WHEN t.konusma_id IS NULL AND t.saklanan_bot_var = 1 THEN 'DOGRU_GORUNUYOR'
+    WHEN t.konusma_id IS NULL                            THEN 'YETIM'
+    WHEN t.konusmanin_botu = t.saklanan_id               THEN 'ZATEN_AYNI'
+    WHEN t.konusmanin_bot_var = 0                        THEN 'YETIM'
+    WHEN t.saklanan_bot_var = 0                          THEN 'GUVENLI_ESLENIR'
+    WHEN t.mesaj_konusma_botunda = 1 AND t.mesaj_saklanan_botta = 0 THEN 'GUVENLI_ESLENIR'
+    ELSE 'BELIRSIZ'
+  END AS sinif
+FROM (
+  SELECT
+    udb.id                     AS kayit_id,
+    udb.user_id,
+    udb.created_at,
+    udb.chatbot_id             AS saklanan_id,
+    (c_s.id IS NOT NULL)       AS saklanan_bot_var,
+    c_s.isim                   AS saklanan_bot_adi,
+    cc.id                      AS konusma_id,
+    cc.chatbot_id              AS konusmanin_botu,
+    (c_t.id IS NOT NULL)       AS konusmanin_bot_var,
+    c_t.isim                   AS konusmanin_bot_adi,
+    EXISTS (SELECT 1 FROM chatbot_chats ch
+            WHERE ch.chatbot_id = cc.chatbot_id AND ch.user_id = udb.user_id
+              AND ch.message COLLATE utf8mb4_general_ci = udb.input_message COLLATE utf8mb4_general_ci
+           ) AS mesaj_konusma_botunda,
+    EXISTS (SELECT 1 FROM chatbot_chats ch
+            WHERE ch.chatbot_id = udb.chatbot_id AND ch.user_id = udb.user_id
+              AND ch.message COLLATE utf8mb4_general_ci = udb.input_message COLLATE utf8mb4_general_ci
+           ) AS mesaj_saklanan_botta
+  FROM user_dialog_books udb
+  LEFT JOIN chatbotlar c_s            ON c_s.id = udb.chatbot_id
+  LEFT JOIN chatbot_conversations cc  ON cc.id = udb.chatbot_id AND cc.user_id = udb.user_id
+  LEFT JOIN chatbotlar c_t            ON c_t.id = cc.chatbot_id
+) t
+) x GROUP BY x.sinif ORDER BY x.sinif;
+```
+
+## Geliştirici kararları (müşteri onayı yok, 2026-10-05)
+
+Müşteriye gönderilen sorulara cevap gelmedi; aşağıdaki kararları geliştirici verdi. **Müşteri farklı cevap verirse** "Etkilenen iş" sütunundaki maddeler yeniden açılmalı. Bu kararlara dayanan her commit mesajında ilgili GK numarası geçer.
+
+| # | Karar | Etkilenen iş |
+|---|---|---|
+| GK-1 | Bağımsız bot "Yayınla" ile herkese açılır; yayınlanınca herkese açık bot sayılır (bugünkü sayım davranışı). | Madde 10 (Faz 4), K-2 |
+| GK-2 | Herkese açık botlar ücretsiz kullanılır; mesajlar kullanıcının günlük coin'inden düşer; ana sayfa/Keşfet'te "Ücretsiz" rozetiyle görünür. | Madde 10 (Faz 4: `userHasAccess`, `getPublished`), madde 6 seçicisinin erişim tanımı |
+| GK-3 | Özel bot yalnızca sahibine görünür, link ile açılmaz (aboneler süreleri bitene kadar erişir). Ücretsiz plandaki 1 özel yapma hakkı toplamda bir kez. Yayınlanmamış bot hak kullanmadan özel kalır; hak yalnızca yayınlanmış botu geri özele çekerken düşer. Özele çekme bağımsız bot limitine takılmaz (K-3). | Madde 11 (Faz 3), N-07 |
+| GK-4 | Paketlerdeki "yayından kaldırma hakkı" = özel yapma hakkı; "yayına alma hakkı" = herkese açık bot limiti. | Paketler (Faz 3) |
+| GK-5 | Başvuru yapmış olmak Bakiyem'i açar; sınırsız hak yalnızca onaylanmış (`active`) satıcıya. | Madde 4 (Faz 2), madde 2 (Faz 3), Faz 5 helper'ı |
+| GK-6 | Sınırsız hak yalnızca herkese açık botlar için. | Madde 2 (Faz 3) |
+| GK-7 | Başvuru alanları: unvan, vergi no, vergi dairesi, MERSİS no, yetkili ad/soyad/doğum tarihi, IBAN, il/ilçe/adres. Belge yükleme bu turda YOK. | Madde 3 (Faz 2 iskelet, Faz 5 backend) |
+| GK-8 | Şahıs şirketleri başvurabilir; vergi kaydı olmayan bireyler başvuramaz. | Madde 1, madde 3 |
+| GK-9 | Onay admin panelde "Başvurular" sayfasından; onay "incelendi" yazar, `active` yazmaz. | Faz 5 |
+| GK-10 | Eski bireysel satıcı kayıtlarına dokunulmaz; yeni bireysel başvuru yapılamaz. | Madde 1 (Faz 2), Faz 5 |
+| GK-11 | Paketi biten kullanıcının mevcut botları korunur, yalnızca yenisi açılamaz. | Paketler (Faz 3) |
+| GK-12 | Satın Aldıklarım yalnızca en az bir aboneliği (süresi dolmuşlar dahil) olana görünür. | Madde 5 (Faz 2) |
+| GK-13 | Ana sayfa seçici: takip edilen ve erişimi olan botlar seçilebilir; erişimsizler kilitli ve "Profili gör" ile; hiç takip yoksa varsayılan Lumanoris AI + boş durum + Keşfet linki. | Madde 6 (Faz 2) |
+| GK-14 | Sohbet sayfasındaki dört "Satın Al" da kaldırılır; limit bandında yerine "Paketini yükselt". | Madde 9 (Faz 2) |
+| GK-15 | Defter popup'ında paylaşan kişi linki kalır. | N-05 (değişiklik gerekmiyor) |
+| GK-16 | Belge eğitimi: yalnızca PDF, OCR yok, sınır 5 MB. | N-02 / F1-3 (değişiklik gerekmiyor) |
+
+---
+
+# Faz 2 — Düşük riskli arayüz değişiklikleri (2026-10-05)
+
+Dayanak: GK-1…GK-16 (geliştirici kararı, müşteri onayı yok). Her madde ayrı commit, `revize/pazaryeri`'ye push edildi. Doğrulama her maddede: `npm run lint` + `NEXT_DIST_DIR=.next-verify npm run build`. Faz 2'de migration yazılmadı, `migrate --apply` gerekmedi. **Tarayıcıda uçtan uca denenmedi.**
+
+| Madde | Commit | Ne yapıldı | Durum |
+|---|---|---|---|
+| 3 (iskelet) | `b8199c2` | `/dashboard/pazaryeri-basvurusu`: şahıs/kurumsal hesap türü, bireysel "Yakında" (seçilemez), GK-7 alanları. Gönder düğmesi devre dışı ve nedenini söylüyor; sahte başarı yok, veri saklanmıyor. | Tamam (iskelet). Backend Faz 5. |
+| 1 | — | Başvuru sayfasında bireysel seçenek "Yakında" (yukarıdaki commit). **Eski kayıt sihirbazındaki (`features/seller/SellerOnboardingWizard.jsx`) "Bireysel" seçeneği DEĞİŞTİRİLMEDİ:** dosyanın hesap türü/doğrulama kısmını okuyan komut, oturumun otomatik izin sınıflandırıcısı tarafından reddedildi; dosya okunmadan düzenlenmedi. Eski kayıt ekranının route'u yok (sihirbaz bir modal; `create/page.jsx` ve `PublishModal.jsx` içinden açılıyor), yani `notFound()`/yönlendirme seçeneği uygulanamaz. | **Açık — kullanıcı izni bekliyor.** |
+| 7 | `e87ca55` | Ayarlar → "Ödeme Bilgileri" sekmesi başvuru sayfasına gidiyor; `?tab=security` derin bağlantısı da yönlendiriliyor. Kullanılmayan yerel IBAN/vergi no formu kaldırıldı; para çekme modallarının "Ayarlar > Banka Bilgileri" metni güncellendi. | Tamam. **Yan etki:** Faz 5'e kadar yeni IBAN yalnızca eski satıcı sihirbazından kaydedilebilir (`save_bank_info.php`); mevcut kayıtlı IBAN'lar duruyor ve çekim onları kullanıyor. |
+| 9 | `b39d267` | Sohbet sayfasındaki dört "Satın Al" kaldırıldı (`ProfileCard`: masaüstü düğme, mobil hap, Bot Hakkında dialogu; sohbet limit bandı). Limit bandı "Paketini yükselt" → `/dashboard/upgrade`. "Sepete Ekle" duruyor. `chat/page.jsx`'teki kullanılmayan `WithdrawalModal` importu kaldırıldı (N-11). | Tamam. `BuyModal`'ın tek importeri artık kullanılmayan `entities/chatbot/ui/ChatbotCard.jsx` → ölü kod adayı (N-11'e eklendi), silinmedi. |
+| 5 | `d8cd024` | Kenar çubuğunda "Satın Aldıklarım" yalnızca `getmysubscriptions.php` en az bir satır (süresi dolmuşlar dahil) döndürürse görünüyor; bilinmezken gizli, istek başarısızsa görünüyor. Yeni uç nokta yok. | Tamam. B1+B3 yüzünden bugün satın alma yapılamadığı için pratikte menü kimsede görünmez. |
+| 4 | `b3e8e70` | `useMarketplaceRegistration` hook'u (tek kaynak). Kaydı olmayan Bakiyem'de yalnızca "Bakiyenize erişebilmek için pazaryeri kaydı gerekmektedir." + başvuru bağlantısı görüyor; kenar çubuğu ve başlıktaki bakiye tutarı da gizli. **Sunucu yetkisi değişmedi** (wallet uç noktaları yalnızca `requireAuth`). | Tamam. **Varsayım (GK-5 uygulaması):** başvuru tablosu Faz 5'e kadar yok; bugün "başvuru yapmış" = `param_marketplace_sellers.status ∈ {pending, active, suspended, rejected}` (eski akışta başvuru denemesi yapılmış). `not_started`/`kyc_filled` sayılmaz. Müşteri "yalnızca onaylı" derse liste daraltılır. |
+| 6 | `9212cbf` | Ana sayfa seçicisi takip edilen botlardan (`getfollowedbots.php`); erişim kümesi `getchatbotsmenu.php` (sahip + aktif abonelik = `userHasAccess('full')`). Erişimsiz takip kilitli + "Profili gör"; platform botu dışında takip yoksa boş durum + Keşfet; yükleniyor/hata durumları. Pazaryeri listesi boşken (B1) varsayılan bot takip listesindeki Lumanoris AI. | Tamam. GK-2 (ücretsiz herkese açık) Faz 4'te erişim kümesini sunucudan genişletecek. |
+| 8 | — | Kod değişikliği yok. Kanıt: `AppConfig::DAILY_FREE_MESSAGES = 10`; `plans` tablosunda Ücretsiz plan `daily_message_limit = 10` (varsayılan plan, yerelde ölçüldü); `fallbackPlan()` 10; planı olmayan bir kullanıcı için `getDailyMessageLimit()` = 10 (yerelde ölçüldü, `user_plan_selection` 0 satır). `coin_engine.php` ve `pricing.js` bu değerin KOPYASINI tutmuyor (motor plandan okuyor) — CLAUDE.md'deki "üç kopya" uyarısı bu sabit için geçerli değil. | Doğrulandı, değişmedi. |
+
+## Faz 2'de bulunan yeni maddeler
+
+| ID | Sev | Dosya | Problem | Durum |
+|---|---|---|---|---|
+| **N-13** | P2 | `app/dashboard/wallet/page.jsx` | `payments` state'i iki UYDURMA siparişle başlıyordu ("Aura Architect Prime" 450 ₺, "Verba SEO & Content Titan" 280 ₺); yükleme sırasında gerçek kayıt gibi listeleniyor, istek başarısız olunca ekranda kalıyor ve "toplam harcama"ya ekleniyordu. | **Kapandı** (`c021e5f`) — boş başlangıç, yükleme ve hata durumu. |
+| **N-14** | Şüphe | `ChatbotRepository::userHasAccess`, platform botu | Ana sayfa ve takip listesi Lumanoris AI'yı herkese varsayılan bot olarak sunuyor (sunucu onu örtük takip olarak ekliyor), ama `userHasAccess('full')` yalnızca sahip/abone kabul ediyor; platform botu `SYSTEM` kullanıcısına ait. Kullanıcıların bu bota erişimi başka bir yoldan (ör. kayıtta abonelik satırı) verilmiyorsa sohbet 403 döner. **Kanıtlanamadı:** yerelde `SYSTEM` sahipli "Lumanoris AI" yok, kayıt akışında abonelik yazan kod görülmedi. | Açık — canlı veriyle doğrulanmalı; Faz 4'te GK-2 ile birlikte ele alınabilir. |
+
+---
+
+# Faz 3 — Limitler, gizlilik hakkı ve paketler (2026-10-06)
+
+## Paket tablosu (müşteri PDF'i, teyitli — Elmas 849 ₺ dahil)
+
+| Paket | Fiyat | Günlük coin | Bağımsız | Herkese açık | Yayından kaldırma (özel yapma) hakkı | Yalnızca metin |
+|---|---|---|---|---|---|---|
+| Ücretsiz | 0 | 10 | 1 | 2 | 1 (toplam) | – |
+| Gümüş | 149 ₺/ay | 50 | 3 | 5 | 3 | Diğer tüm özelliklerde sınırsız deneyim |
+| Altın | 299 ₺/ay | 100 | 5 | 10 | 5 | Öncelikli destek, tüm Lumanoris deneyimlerine erişim |
+| Elmas | 849 ₺/ay | 200 | sınırsız | sınırsız | 20 | 7/24 VIP destek, yeni özelliklere erken erişim |
+
+Bugünkü `plans` seed'iyle (007) farklar: Altın 10/15/200 → 5/10/100, Elmas 599 ₺ 50/50/1000 → 849 ₺ sınırsız/sınırsız/200. Ücretsiz ve Gümüş fiyat/limitleri aynı (Gümüş coin 50, 3/5 — değişmiyor). "Yayından kaldırma hakkı" kolonu bugün yok.
+
+| # | Karar | Etkilenen iş |
+|---|---|---|
+| GK-17 | **Geliştirici kararı (müşteri onayı yok, 2026-10-06):** paketlerdeki yayından kaldırma (özel yapma) hakları da ücretsizdeki gibi **toplam** sayılır, aylık yenilenmez. | Madde 11 sayaç tasarımı, paket metinleri |
+
+## Faz 3 — yapılanlar ve onay bekleyenler
+
+Doğrulama: her PHP değişikliğinde `php -l`, PHP değişikliğinde iyzico öz-testi, her web değişikliğinde lint + verify build; yeni `api/database/plan_limits_selftest.php` (salt okunur). **Tarayıcıda denenmedi.**
+
+| İş | Commit | Durum |
+|---|---|---|
+| Ücretsiz plan regresyon testi + müşteri paket tablosu testi | `a1a76b3` (+ `e59b502`) | A (regresyon) ve A2 (madde 2) yeşil; B (paket tablosu) **5 kırmızı** — 013 uygulanana kadar beklenen. |
+| N-12 — anahtar yokken belge haklarının iadesi | `64d1409` | **Kapandı.** Otomatik test yok: dal yalnızca anahtar yokken çalışıyor, `googleGeminiApiKey()` `admin/.env`'ye düştüğü için CLI'da tetiklenemiyor. |
+| Madde 2 — onaylı satıcıya sınırsız herkese açık hak (GK-5/GK-6) | `e59b502` | **Sunucu tarafı tamam.** `getPublicBotLimit()` `active` satıcıya `BOT_LIMIT_UNLIMITED`; `getchatbotlimits.php`'ye eklemeli `*_unlimited` alanları; oluştur sayfasındaki sabit "1/2 Kullanıldı"/"0/5 Kullanıldı" metinleri gerçek değerle değişti. **"Herkese Açık Chatbot Oluştur" kartı EKLENMEDİ:** herkese açık bot oluşturmak bugün aktif satıcı istiyor (`saveChatbot`), ücretsiz herkese açık bot (GK-2) için bu şartın kalkması Faz 4'teki yayın/satış ayrıştırmasının parçası (birden fazla uç nokta + `userHasAccess` + listeleme → diff önerisi). Kart Faz 4 onayıyla birlikte eklenecek; aksi hâlde her tıklama `SELLER_NOT_ACTIVE` ile biten bir akış olurdu. |
+| N-10 — ana sayfa fiyatları | `f0e168f` | **Kapandı.** `getpricing.php`'den okuyor; satılmayan yıllık %20 indirim kaldırıldı. |
+| Yerel `migrate --apply` | — | `010_notification_message_columns.sql` ve `011_user_plan_expiry.sql` yerelde uygulandı (öncesi/sonrası `--status` alındı; ikisi de koşullu ALTER, veri ifadesi yok; DB_HOST yerel doğrulandı). |
+| 012 — şema: sınırsız = NULL, `plans.privacy_right_limit`, `user_privacy_right_usage` | `api/database/pending/012_…` | **Yazıldı, ONAY BEKLİYOR** (şema tasarımı). migrate.php yıkıcı saymıyor. |
+| 013 — paket verisi (UPDATE + `plan_icerikler` DELETE/INSERT) | `api/database/pending/013_…` | **Yazıldı, ONAY BEKLİYOR** (veri güncelleyen/silen). migrate.php yıkıcı sayıyor → `--allow-destructive` gerekir; Claude çalıştıramaz, kullanıcı uygular. Alternatif: değerler admin panelinden girilebilir (yalnızca NULL ve hak kolonu 012 ister). |
+| Madde 11 + Elmas sınırsız kodu | — | **012 onayına bağlı, yazılmadı.** Plan: `AppConfig::FREE_PRIVACY_RIGHT_LIMIT = 1` (fallback); `getIndependentBotLimit`/`getPublicBotLimit` NULL → `BOT_LIMIT_UNLIMITED`; `getPrivacyRightLimit()` + kullanım sayımı; `unpublishChatbot` yayınlanmış botu özele çekerken hakkı tüketir (aynı kilit altında `user_privacy_right_usage` satırı), bağımsız limitine takılmaz (GK-3 → N-07'yi kapatır); `getchatbotlimits`/`getPricing` hak ve sınırsız bilgisi; admin Abonelik formuna hak alanı ve "sınırsız" seçeneği; oluştur/chatbotlar ekranında kalan hak. **Uygulama sırası:** NULL'a dayanıklı kod → 012 → 013. |
+| Oluştur sayfasındaki 750 ₺ "Üretici Limitinizi Yükseltin" kartı (B2) | — | **Soru:** paket tablosuyla çelişen ayrı bir teklif (5 herkese açık + 2 bağımsız). Satışı zaten kapalı (`buyProducerAccount` fail-closed). Kaldırılsın mı / yükseltme sayfasına mı yönlensin? B2 iş kararı olduğu için dokunulmadı. |
+
+### Canlı için uygulama sırası (kullanıcı çalıştırır) — ESKİ, aşağıdaki "Faz 3 — canlı uygulama sırası (güncel)" bölümü geçerli
+
+1. Faz 3 kodunu (NULL'a dayanıklı sürüm, onaydan sonra) deploy et.
+2. `010_notification_message_columns.sql`, `011_user_plan_expiry.sql` (canlıda bekliyorsa) — `--apply`.
+3. 012'yi `migrations/`'a taşı → `--apply`. Geri alma: dosya başlığındaki ters ifadeler.
+4. 013'ü `migrations/`'a taşı → `--apply --allow-destructive` (ya da değerleri admin panelinden gir). Geri alma: 007'deki değerler ve özellik satırları.
+5. `php api/database/plan_limits_selftest.php` → B bölümü yeşil olmalı.
+
+## Faz 3 — kararlar sonrası yapılanlar (2026-10-06)
+
+| İş | Commit | Not |
+|---|---|---|
+| Doğrulama çıkış kodu kuralı (`pipefail`) CLAUDE.md'ye eklendi; plan testinin B bölümü çıkış kodunu bozmuyor (`--strict` ile dahil) | `ef88145` | |
+| S14 — 750 ₺ Üretici kartı, modalı, iki uç nokta, `producer_plan.php`, `PRODUCER_*` kaldırıldı | `f4e0560` | Üç yerde çağıran araması yapıldı; README ve BLOCKERS B2 (bulgu, kapatılmadı) güncellendi |
+| Madde 11 + NULL = sınırsız kodu (önce kırmızı test → uygulama → yeşil) | `cd02a62` | **N-07 kapandı** (özele çekme bağımsız limitine takılmıyor, özel yapma hakkından düşüyor). Chatbotlarım kartına "Özel Yap" düğmesi eklendi (canlı arayüzde yayından kaldırma yoktu). |
+| 012 onaylandı, `migrations/`'a taşındı, **yerelde uygulandı** | `c260b8b` | Plan testi C (kullanım sayımı, rollback'li) yeşil |
+| 013 DELETE'siz yeniden yazıldı | `f8e4e89` | **Hâlâ onay bekliyor** (plan değerlerini UPDATE ediyor). `pending/` altında. |
+
+## Faz 3 — canlı uygulama sırası (güncel)
+
+Ön koşul: canlı veritabanının yedeği alınmış olmalı (admin panel → yedek). Tüm adımları kullanıcı çalıştırır; Claude canlıya bağlanmaz.
+
+**Adım 1 — Kod deploy** (`revize/pazaryeri`, en az `f8e4e89`). Bu kod 012 olmadan da çalışır (NULL'a dayanıklı, hak tablosu yoksa eski davranış + log).
+- `php api/database/migrate.php --status` → 010 / 011 bekliyorsa ikisi koşullu ALTER'dır, adım 2 ile birlikte uygulanabilir.
+- Kontrol: site ve `/dashboard` açılıyor; `/api/wallet/getpricing.php` 200 dönüyor; `/api/chatbot/getchatbotlimits.php` yanıtında `privacy_limit: 1`, `privacy_used: null` var.
+- Kontrol: `php api/database/plan_limits_selftest.php` → A/A2/C **0 başarısız** (C'nin kullanım sayımı "012 uygulanmamış" diye atlanır).
+- Bilinen geçici durum: 012 gelene kadar "Özel Yap" hak saymaz; `storage/logs/php-error.log`'da `[unpublishChatbot] user_privacy_right_usage yok` satırı görünür. Adım 2'yi bekletmeyin.
+
+**Adım 2 — 012 (şema)**
+- `--status` → `012_plan_privacy_right_and_unlimited.sql bekliyor` (⚠ VERİ SİLER işareti OLMAMALI) → `--apply` → `--status` "Her şey güncel".
+- Kontrol: `plans.independent_bot_limit` / `public_bot_limit` `IS_NULLABLE = YES`; `plans.privacy_right_limit` var (varsayılan 1); `user_privacy_right_usage` tablosu var (dosyanın sonundaki doğrulama SELECT'leri).
+- Kontrol: plan testi C bölümü artık kullanım sayımını çalıştırır ve yeşil; admin → Abonelik'te "Özel yapma hakkı (toplam)" alanı görünür; `getchatbotlimits.php` `privacy_used: 0`.
+- Geri alma: dosya başlığındaki ters ifadeler (`DROP COLUMN privacy_right_limit`, `DROP TABLE user_privacy_right_usage`; NULL'ı sıkılaştırmadan önce NULL satırlar sayıya güncellenmeli). DDL örtük commit yapar.
+
+**Adım 3 — 013 (paket verisi) — onaydan sonra**
+- Önce: canlıda plan başına özellik satırı sayısını ölç (`SELECT p.name_tr, COUNT(pi.id) FROM plans p LEFT JOIN plan_icerikler pi ON pi.plan_id = p.id GROUP BY p.id`). Yeni liste 4/5/6/6; bir plan bundan fazla satıra sahipse fazlası dokunulmadan kalır ve doğrulama 2 onları listeler.
+- Önce: canlıda admin panelden plan fiyat/limitleri elle değiştirildiyse 013 onların üzerine yazar — beklenen bu.
+- Dosyayı `pending/` → `migrations/` taşı (commit) → `--status` → `013_plan_catalog_2026_10.sql bekliyor` (⚠ VERİ SİLER işareti OLMAMALI; `--allow-destructive` GEREKMEZ) → `--apply` → `--status`.
+- Kontrol: doğrulama 1 paket tablosuyla birebir (Elmas `independent/public = NULL`, haklar 1/3/5/20, Elmas 849); doğrulama 2 **boş**.
+- Kontrol: `php api/database/plan_limits_selftest.php --strict` → **çıkış 0** (B bölümü yeşil); `/dashboard/upgrade` ve ana sayfa fiyatları 0 / 149 / 299 / 849 ₺; Elmas planındaki bir kullanıcının `getchatbotlimits.php` yanıtında `*_unlimited: true`.
+- Geri alma: plan değerleri için 007'deki değerlerle UPDATE (`privacy_right_limit = 1`); özellik metinleri için 007 BÖLÜM 3 metinleri ilk satırlara yazılır; 013'ün EKLEDİĞİ satırları kaldırmak silme gerektirir (yıkıcı, kullanıcı çalıştırır).
+
+---
+
+# Faz 4 — Bağımsız chatbot yayınlama (madde 10) — ÖNERİ, ONAY BEKLİYOR (2026-10-06)
+
+Sunucu değişikliği **uygulanmadı**. Tam diff: `docs/proposals/faz4-erisim-listeleme.patch` (4 dosya, +94/−24; `git apply --check` temiz). Öncesinde yerelde 013 uygulandı (plan testi `--strict` 44/0) ve B2 kullanıcı talimatıyla kapatıldı.
+
+**Tasarım (GK-1, GK-2):** "ücretsiz herkese açık bot" = `is_independent = 0` ve iki fiyat da boş/0. Fiyat yalnızca `publishChatbot`/`updateChatbotPrice` ile ve en az 100 ₺ yazılabildiği için fiyatlı bir bot bu tanıma giremez. Yeni bir erişim amacı eklenir — `userHasAccess('chat')` = sahip/abone **veya** ücretsiz herkese açık. `'full'` (persona `style_prompt`, eğitim metni `get_training_chunks`) **değişmez**: ücretsiz botların personası ve eğitim metni yalnızca sahip/aboneye kalır.
+
+## Ölçülen önce/sonra matrisi
+
+Kullanıcı U = sahip değil, aktif aboneliği yok. Yerelde ölçüldü (`f4_matrix.php`). Senaryo verisi transaction içinde kuruldu, ROLLBACK yapıldı; kalıcı yazma yok.
+
+| Bot | Vitrin (getPublished) | preview | **chat** (sohbet) | full (persona/eğitim) | getDetail persona |
+|---|---|---|---|---|---|
+| Özel (`is_independent=1`) | hayır → hayır | hayır → hayır | hayır → hayır | hayır → hayır | yok → yok |
+| Ücretsiz herkese açık, yazar satıcı DEĞİL | hayır → **EVET** | hayır → **EVET** | hayır → **EVET** | hayır → hayır | yok → **gizli** |
+| Fiyatlı, satıcı aktif | EVET → EVET | EVET → EVET | hayır → hayır | hayır → hayır | gizli → gizli |
+| Fiyatlı, satıcı pasif | hayır → hayır | hayır → hayır | hayır → hayır | hayır → hayır | yok → yok |
+| Sahibin kendi özel botu (sahip olarak) | — | — | EVET → EVET | EVET → EVET | görünür → görünür |
+
+## Kural bazında önce/sonra
+
+| Kural / uç nokta | Önce | Sonra |
+|---|---|---|
+| `userHasAccess('preview')` | sahip/abone + (yayında **ve** satıcı aktif) | sahip/abone + yayında **ve** (ücretsiz **veya** satıcı aktif) |
+| `userHasAccess('chat')` (yeni) | yok — `generateReply` `'full'` kullanıyordu | sahip/abone + ücretsiz herkese açık. `generateReply` artık bunu kullanıyor |
+| `userHasAccess('full')` | sahip/abone | **değişmedi** |
+| `getPublished` / `countPublished` / `getSuggested` | yalnızca satıcısı aktif yazarın yayındaki botları (INNER JOIN) | ücretsiz herkese açık (her yazar) + fiyatlı yalnızca satıcı aktifse (LEFT JOIN + koşul) |
+| `getBotsOfList` (N-09) | listede yalnızca satıcısı aktif botlar | vitrinle aynı görünürlük |
+| `publishChatbot` | fiyat zorunlu (≥100 ₺) + aktif satıcı | fiyatsız → ücretsiz herkese açık, satıcı şartı YOK; fiyatlı → eskisi gibi (fiyat aralığı + aktif satıcı). Herkese açık limiti ikisinde de kilit altında |
+| `saveChatbot` (herkese açık oluşturma) | aktif satıcı şartı | şart yok — oluşturulan herkese açık bot her zaman ücretsiz (fiyat alanları burada zaten reddediliyor) |
+| `updateChatbotPrice` (N-08) | yalnızca sahiplik | sahiplik + **aktif satıcı** |
+| `getDetail` (`getchatbot.php`) | `has_access` = full | `has_access` = chat; `style_prompt` yalnızca full'de |
+
+## Sömürü / kötüye kullanım senaryoları
+
+| # | Senaryo | Sonuç |
+|---|---|---|
+| E1 | Özel botun sızması: U, özel bir botun id'siyle `getchatbot`/`generatereply` çağırır. | Engelli. Yeni dalların hepsi `is_independent = 0` şartını taşıyor; matriste özel bot her sütunda "hayır". |
+| E2 | Fiyatlı botu ücretsiz kullanmak: U, fiyatlı bir botla abonelik olmadan sohbet etmeye çalışır. | Engelli. `chat` dalı iki fiyatın da 0/boş olmasını istiyor; fiyat <100 ₺ yazılamıyor (`assertValidPrice`). Matriste "Fiyatlı, satıcı aktif" → chat hayır. |
+| E3 | Ücretsiz botun persona/eğitim metnini çekmek: U, ücretsiz bir botun `style_prompt`'unu `getchatbot.php`'den, eğitim metnini `get_training_chunks.php`'den ister. | Engelli. İkisi de `'full'`'e bağlı ve `'full'` değişmedi (matris: persona gizli, full hayır). Ücretsiz botu `'full'`'e eklemek bu iki sızıntıyı açardı; ayrı `'chat'` amacının nedeni bu. |
+| E4 | Satıcı olmayanın fiyat ataması (N-08): ücretsiz botuna fiyat yazıp publish'in satıcı şartını dolaylı atlamak. | Kapanıyor: `updateChatbotPrice` aktif satıcı istiyor. |
+| E5 | Limit aşımı: herkese açık limitini ücretsiz yayınla aşmak. | Engelli. Ücretsiz yayın da `getPublicBotLimit` + C-01 kilidinden geçiyor; `saveChatbot` da aynı. |
+| E6 | Bedava sınırsız sohbet: ücretsiz bot üzerinden coin harcamadan model kullanmak. | Engelli. `generateReply`'de `consumeMessage` erişim kontrolünden sonra her mesajda çalışıyor; ücretsiz botta kullanıcının günlük coin'i düşüyor (GK-2). |
+| E7 | İçerik/spam: satıcı olmayan herkes vitrine bot koyabilir. | **Yeni risk.** `ContentPolicy::assertClean` kayıtta çalışıyor, bildir/gizle var; ama ön moderasyon yok. Herkese açık limiti (ücretsiz plan 2) yığılmayı sınırlıyor. |
+| E8 | Ücretsiz bota sepet/abonelik: satıcısı aktif bir yazarın fiyatsız botunu sepete ekleyip 0 ₺ abonelik oluşturmak. | **Kapsam dışı, açık** (ödeme yolu: `addToCart`/`createSubscription`). Bugün `addToCart` yalnızca satıcı aktifliğine bakıyor, fiyata bakmıyor. Öneri ayrı onayla: `addToCart`'ta `ucret_haftalik <= 0` → "Bu bot ücretsiz" reddi; arayüzde ücretsiz botta "Sepete Ekle" gizlenir. |
+
+## Henüz yazılmayan arayüz işleri (sunucu onayından sonra)
+
+- **Madde 2 — oluştur sayfası:** "Pazaryerinde Yayınla" kartının yerine "Herkese Açık Chatbot Oluştur" (ücretsiz, satıcı şartı yok); seller-wizard'lı "State 2" kalkar; "Pazaryerine Kaydet" küçük bağlantı → başvuru sayfası.
+- **Madde 10 — `PublishModal`:** iki seçenek. **Yayınla** = fiyatsız `publishChatbot`. **Pazaryerine Kaydet** = "pazaryerinde satış için şirket başvurusu gerekiyor" açıklamalı pop-up → `/dashboard/pazaryeri-basvurusu`. Satıcı durumu yaratmaz, B1'i örtmez.
+- **Madde 1 (sihirbaz):** bu iki değişiklikten sonra `SellerOnboardingWizard` hiçbir yerden çağrılmaz (bugün tek çağıranları `create/page.jsx` ve `PublishModal.jsx`). Sihirbazı düzenlemek yerine üç yerde çağıran araması yapılıp ölü kod olarak silinir. Bireysel kayıt yalnızca başvuru sayfasındaki "Yakında" kartı olarak kalır.
+- **Vitrin/profil:** fiyatsız bota "Ücretsiz" rozeti; ücretsiz botta "Sepete Ekle" gizli (E8'in arayüz yarısı).
+
+## N-14 — ölçüm
+
+Yerelde platform botu "LUMANORIS AI" (#5) herkese açık ama **50 ₺ fiyatlı** (sahibi `lumanoris`). Matristeki "Fiyatlı, satıcı aktif" satırı bu bot: abonesi olmayan kullanıcı bugün sohbet edemiyor (**şüphe yerelde doğrulandı**) ve önerilen yamadan sonra da edemez. Ana sayfa ise onu herkese varsayılan bot olarak sunuyor. Çözüm bir veri kararı: platform botunun fiyatı kaldırılırsa (`ucret_haftalik/aylik = NULL`) yamadan sonra ücretsiz herkese açık olur ve herkes sohbet edebilir. Bu bir UPDATE, onay gerektirir; canlıdaki durum kullanıcıdan bekleniyor.
+
+## Faz 4 — kontrol A ve B (2026-10-06)
+
+**A — yamadan sonra vitrine yeni çıkacak botlar.** Yerelde **0 satır** (ölçüt: yayında, iki fiyat da boş/0, yazarı aktif satıcı değil). Canlı için salt okunur sorgu aşağıda. Satır dönerse ve bunlar sahiplerinin taslağıysa `api/database/pending/014_unlist_free_public_drafts.sql` (öneri, **uygulanmadı**) onları özele çeker; Faz 4 kodundan ÖNCE çalışmalı, özel yapma hakkı düşmez.
+
+```sql
+-- Faz 4 / kontrol A — yamadan sonra vitrine YENİ çıkacak botlar. SALT OKUNUR.
+-- Ölçüt: yayında (is_independent = 0), iki fiyat da boş/0 ve bugün listelenmiyor
+-- (yazarı aktif satıcı değil). Yazarı aktif satıcı olan fiyatsız botlar bugün de
+-- listeleniyor; onlar ayrıca ikinci sorguda.
+SELECT c.id, c.isim, c.author_user_id, u.kullanici_adi AS yazar,
+       COALESCE(pms.status, 'kayit_yok') AS satici_durumu,
+       c.yayimlanma_tarih, c.edit_tarih,
+       CHAR_LENGTH(COALESCE(c.training_prompt, '')) AS egitim_karakter,
+       (SELECT COUNT(*) FROM chatbot_chats ch WHERE ch.chatbot_id = c.id) AS mesaj,
+       (SELECT COUNT(*) FROM user_subscriptions us WHERE us.chatbot_id = c.id) AS abonelik
+FROM chatbotlar c
+LEFT JOIN kullanicilar u ON u.id = c.author_user_id
+LEFT JOIN param_marketplace_sellers pms ON pms.user_id = c.author_user_id
+WHERE c.is_independent = 0
+  AND COALESCE(c.ucret_haftalik, 0) = 0 AND COALESCE(c.ucret_aylik, 0) = 0
+  AND COALESCE(pms.status, '') <> 'active'
+ORDER BY c.id;
+
+-- Bilgi: bugün DE listelenen fiyatsız botlar (yazar aktif satıcı) — davranışları
+-- değişmez ama yamadan sonra herkes ücretsiz sohbet edebilir.
+SELECT c.id, c.isim, u.kullanici_adi AS yazar
+FROM chatbotlar c
+JOIN param_marketplace_sellers pms ON pms.user_id = c.author_user_id AND pms.status = 'active'
+LEFT JOIN kullanicilar u ON u.id = c.author_user_id
+WHERE c.is_independent = 0
+  AND COALESCE(c.ucret_haftalik, 0) = 0 AND COALESCE(c.ucret_aylik, 0) = 0
+ORDER BY c.id;
+```
+
+**B — sohbet sayfasının çağırdığı uç noktalar** (sayfa + ProfileCard + DialogNotebookModal, 21 uç nokta). Ücretsiz herkese açık bot için:
+
+| Uç nokta | Erişim kontrolü (önce) | Sonuç |
+|---|---|---|
+| `chatbot/getchatbot.php` | `getDetail`: full veya preview (preview satıcı aktif istiyordu) | Bugün ücretsiz bota **404** → sayfa açılmıyordu. Yamayla preview/chat. Persona artık **yalnızca sahibine** (sohbet persona kullanmıyor; tek okuyan oluştur/düzenle sayfası). |
+| `chat/generatereply.php` | `userHasAccess(full)` | Sohbeti **kırıyordu** → yamada `chat`. Persona/eğitim metni yalnızca sunucuda modele gidiyor, istemciye dönmüyor. |
+| `chat/getchat.php`, `getconversation.php`, `addconversation.php`, `addchat.php`, `gethistory.php` | yalnızca oturum; satırlar `user_id` ile kapsanıyor | Erişim türü istemiyor; sohbeti kırmıyor. Persona dönmüyor. |
+| `message/checkmessageallowance.php` | yalnızca oturum | Coin bakiyesi; sorun yok. |
+| `wallet/getsubscription.php` | yalnızca oturum, kullanıcının kendi aboneliği | Sayfadaki `hasSubscription` kapısı yorum satırında; sohbeti engellemiyor. |
+| `content/getadcounts.php`, `auth/sessioncheck.php` | herkese açık / oturum | İlgisiz. |
+| ProfileCard: `getcart`, `getuserlists`, `getuserbotstatus`, `like/dislike/follow/addcomment/adduninterest` | oturum, kullanıcıya kapsanmış | İlgisiz; persona dönmüyor. |
+| ProfileCard: `marketplace/addtocart.php` | satıcı aktif mi | E8 → adım 4 (ücretsiz bot reddi). |
+| `note/adddialogbook.php` | yalnızca oturum | İlgisiz. |
+
+Sonuç: full isteyen ve sohbeti kıran tek uç nokta `generatereply.php` (yamada düzeldi); `getchatbot.php` ücretsiz bota 404 veriyordu (yamada düzeldi) ve personayı abonelere de döndürüyordu (sahiple sınırlandı). Yama `8ebb757` ile uygulandı; yeni `access_selftest.php` 21/0 (eski kodla 4 hata).
+
+## GK-18 ve N-14 (2026-10-06)
+
+| # | Karar | Etkilenen iş |
+|---|---|---|
+| GK-18 | **Geliştirici kararı (müşteri onayı yok, 2026-10-06):** platform botu "Lumanoris AI" ücretsiz herkese açık olur (fiyatı kaldırılır); herkes sohbet eder, mesaj kullanıcının günlük coin'inden düşer. | N-14, ana sayfa varsayılan botu (GK-13) |
+
+**N-14 — kapandı (yerel).** `015_house_bot_free.sql` yerelde uygulandı (öncesi/sonrası `--status`; DB_HOST yerel). Önceki fiyat (geri alma için): bot #5, haftalık **50,00 ₺**, aylık **150,00 ₺**. Sonra: sahibi/abonesi olmayan kullanıcı `chat = EVET`, `full = hayır`, vitrinde. Migration yalnızca tam olarak BİR "LUMANORIS AI" herkese açık bot varsa günceller. Canlıda uygulamadan önce aynı `SELECT` ile eski fiyat not alınmalı; aktif abonelikler dokunulmadan sürer.
+
+Koşullu 014 (öneri) platform botunu hariç tutacak şekilde güncellendi: aksi hâlde yazarı aktif satıcı olmayan bir kurulumda 015'in ücretsiz yaptığı platform botunu özele çekerdi.
+
+Doğrulama notu: bu turda iyzico öz-testinin B bölümü (sandbox ağ çağrısı) bir kez `Could not resolve host` ile düştü (aynı anda git push da DNS hatası verdi); kural gereği commit beklendi, yeniden çalıştırmada 77/0.
+
+## Faz 4 — yapılanlar (2026-10-06)
+
+| İş | Commit | Not |
+|---|---|---|
+| Kontrol A/B | `5be4668` | A yerelde 0 satır; B: sohbeti kıran tek uç nokta `generatereply.php` |
+| Erişim/listeleme yaması + persona yalnızca sahibe | `8ebb757` | **N-08, N-09 kapandı.** `access_selftest.php` 21/0 (eski kodla 4 hata) |
+| N-14 — platform botu ücretsiz (GK-18, 015) | `908f452` | **N-14 kapandı (yerel).** Eski fiyat 50/150 ₺ kayıtlı |
+| E8 — `addToCart` ücretsiz bot reddi | `ceedebf` | Ödeme yolu, kullanıcı talimatıyla |
+| Arayüz: Herkese Açık kartı, PublishModal iki seçenek, Ücretsiz rozeti, Sepete Ekle gizli | `7c1a301` | Madde 2 kartı + madde 10 |
+| Madde 1 — `SellerOnboardingWizard` silindi | `03f1a9d` | **Madde 1 tamam.** Üç yerde çağıran araması |
+
+Doğrulama her commit'te: lint, verify build, php -l, iyzico 77/0, `plan_limits_selftest --strict` 44/0, `access_selftest` 21/0. **Tarayıcıda denenmedi** — kullanıcı tüm fazları Faz 4 sonunda tek seferde elle test edecek.
+
+### Faz 4'te bulunan / açık kalan
+
+| ID | Sev | Dosya | Problem | Durum |
+|---|---|---|---|---|
+| **N-15** | P3 | `entities/chatbot/ui/BotCard.bento.jsx:158` | Puanı olmayan her bota sabit **"4.9"** yıldız gösteriliyor (`bot.rating \|\| "4.9"`) — uydurma veri (N-13 ile aynı aile). | Açık — Faz 4'te görüldü, kapsam dışı. |
+| **N-16** | P2 | `MarketplaceController::createSubscription` (ödeme yolu) | Fiyatı sonradan kaldırılan bir bot (ör. 015 sonrası platform botu) eski bir sepet satırında kalmışsa `createSubscription` onu güncel fiyattan (0 ₺) işleyebilir. `addToCart` artık ücretsiz botu reddediyor ama mevcut sepet satırlarını kapsamıyor. Yerelde ücretsiz bot içeren sepet satırı yok; canlıda olabilir (platform botu 50 ₺'yken sepete eklenmiş olanlar). | **Açık — ödeme yolu, onay gerekiyor.** Öneri: `createSubscription`'da fiyatı 0 olan kalemi sepetten düşüp reddetmek. |
+| N-11 (ek) | P3 | `shared/hooks/useSellerStatus.js`, `api/api/seller/submerchant_register.php` | Sihirbaz silindikten sonra hook'un tek kullanıcısı zaten ölü `features/wallet/BankInfo.jsx`; `submerchant_register.php`'nin web'den çağıranı kalmadı. | Ölü kod adayı — silinmedi. |
+
+### Canlı uygulama sırası (Faz 4) — Faz 3 sırasının devamı
+
+1. **Kontrol A** (AUDIT "Faz 4 — kontrol A ve B" sorgusu) canlıda çalıştırılır. Satır dönerse ve taslaksa: `014_unlist_free_public_drafts.sql` `pending/` → `migrations/`, **kod deploy'undan ÖNCE** `--apply`. Kontrol: dosya sonundaki `kalan = 0`.
+2. **015 öncesi not:** `SELECT id, ucret_haftalik, ucret_aylik FROM chatbotlar WHERE UPPER(TRIM(isim)) = 'LUMANORIS AI'` çıktısı saklanır (geri alma).
+3. **Kod deploy** (en az `03f1a9d`). Kontrol: `php api/database/access_selftest.php` 0 başarısız; ücretsiz herkese açık bir bot sahibi/abonesi olmayan hesapla açılıp mesaj gönderilebiliyor ve coin düşüyor; fiyatlı bot abonelik olmadan sohbet etmiyor; `getchatbot.php` yanıtında sahibi olmayan için `style_prompt` yok.
+4. **015** `--apply`. Kontrol: doğrulama SELECT'inde `eslesen = 1`, fiyat NULL; sıradan hesapla Lumanoris AI sohbeti çalışıyor (N-14).
+5. **N-16 kararı** verilene kadar: canlıda `SELECT uc.* FROM user_cart uc JOIN chatbotlar c ON c.id = uc.chatbot_id WHERE c.is_independent = 0 AND COALESCE(c.ucret_haftalik,0) = 0 AND COALESCE(c.ucret_aylik,0) = 0` ile ücretsiz botu tutan sepet satırları kontrol edilmeli.
+
+## Faz 4 kapanış düzeltmeleri (2026-10-06)
+
+| ID | Commit | Durum |
+|---|---|---|
+| **N-16** | `1351119` | **Bulgu YANLIŞTI — düzeltme.** `createSubscription` kalem fiyatı `<= 0` ise ödemeyi zaten reddediyordu ("Bu chatbot için geçerli bir fiyat tanımlanmamış."); 0 ₺ işleme riski yoktu. Bulgu o satır okunmadan yazılmıştı. Yapılan: ücretsizleşmiş bot için mesaj netleştirildi ("… artık ücretsiz; … sepetinizden çıkarın"). |
+| **N-15** | `d8f3ff4` | **Kapandı.** Uydurma puan beş yerdeydi: ana sayfa + Keşfet eşlemesi (`rating: 4.9`), bento kart ve Takip Edilenler (iki yer) `|| "4.9"`. Aynı ailede Takip Edilenler takipçi sayısı `|| "1.2k"` (iki yer). Hiçbir API puan döndürmüyor; puan yalnızca varsa çiziliyor, takipçi gerçek değer. Not: Takip Edilenler'deki "puana göre sırala" seçeneği veri olmadığı için etkisiz kalıyor. |
+| **N-11** (kısmi) | `cfd7554` | `useSellerStatus.js` ve tek kullanıcısı ölü `features/wallet/BankInfo.jsx` silindi (üç yerde çağıran araması). `submerchant_register.php` kullanıcı kararıyla kaldı; BLOCKERS B1'e not. Kalan N-11 adayları: `ChatbotForm.jsx`, `features/notes/DialogueModal.jsx`, `entities/chatbot/ui/{ChatbotCard,BotCard,MarketplaceListCard,SuggestedCard}.jsx`, `features/purchasing/BuyModal.jsx` (tek importeri ölü `entities/chatbot/ui/ChatbotCard.jsx`). |
+
+**Etiket:** `faz4-tamam` bu commit'ten sonra atıldı. Canlıya bu etiket alınacak; uygulama sırası Faz 3 + Faz 4 "canlı uygulama sırası" bölümlerinde (madde 5 — N-16 sepet kontrolü — artık gerekmiyor, yalnızca kullanıcıya açık mesaj için bilgi amaçlı).
+
+---
+
+# Faz 5 — Pazaryeri Başvurusu backend (madde 3) — ŞEMA + API SÖZLEŞMESİ ÖNERİSİ, ONAY BEKLİYOR (2026-10-06)
+
+Kod yazılmadı. Şema: `api/database/pending/016_marketplace_applications.sql` (uygulanmadı).
+
+## Şema özeti
+
+`marketplace_applications`: kullanıcı başına tek satır (`UNIQUE user_id`, FK `kullanicilar` ON DELETE CASCADE). Alanlar GK-7 (unvan, vergi no, vergi dairesi, MERSİS, yetkili ad/soyad/doğum tarihi, IBAN, il/ilçe/adres) + `account_type` (`sahis` / `kurumsal`, GK-8) + `status` (`submitted` → `reviewed` | `rejected`) + `review_note`, `reviewed_by_admin_id`, `reviewed_at`. `active` bu tabloda yok — satıcı aktifliği `param_marketplace_sellers`'ta ve B1'e bağlı (GK-9).
+
+## API sözleşmesi (yeni, geriye dönük kırıcı değişiklik yok)
+
+| Uç nokta | Yetki | İstek | Yanıt |
+|---|---|---|---|
+| `POST /api/seller/application_submit.php` | kullanıcı oturumu; `checkRateLimit('mapp_submit:<uid>', 5, 3600)` | `FormData data` = JSON `{account_type, company_title, tax_number, tax_office, mersis_no?, authorized_first_name, authorized_last_name, authorized_birth_date (YYYY-AA-GG), iban, il, ilce, address}`. `InputSanitizer::pickAllowed` beyaz listesi; listede olmayan alan → 400. | `{success, application:{status:"submitted", submitted_at}}`. Hatalar: 400 doğrulama (alan bazında mesaj), 409 durum `reviewed` iken yeniden gönderim (S-3), 429 hız sınırı. |
+| `GET /api/seller/application_status.php` | kullanıcı oturumu | — | `{success, application: null \| {status, account_type, company_title, iban_masked:"TR** **** … 1234", submitted_at, reviewed_at, review_note}}`. Doğum tarihi, tam IBAN, vergi no **dönmez**. |
+| `/admin/basvurular` (sayfa) | `_guard.php` admin oturumu | liste (durum filtresi) + detay (tam alanlar) | — |
+| `POST /admin/ajax/basvuru_durum.php` | admin + CSRF (`parcekme` deseni) | `{id, status: "reviewed" \| "rejected", review_note}` | `{success}`. Genel CRUD (`update.php`) bu tabloya açılmaz — tablo `assertAllowedAdminTable` beyaz listesine EKLENMEZ. |
+
+**Doğrulama:** `account_type ∈ {sahis, kurumsal}`. Vergi no: kurumsal → `BankIdentity::normalizeVkn` (10 hane); şahıs → 11 haneyse `normalizeTckn`, 10 haneyse `normalizeVkn` (S-6). MERSİS: 16 hane rakam. IBAN: `BankIdentity::normalizeIban` (TR + mod97). Doğum tarihi geçerli tarih ve ≥ `AppConfig::MIN_REGISTRATION_AGE` (18). Metin alanları `InputSanitizer::text` + uzunluk sınırı. `ContentPolicy` uygulanmaz (ticari kimlik verisi). Hata log'larında alan değerleri yazılmaz.
+
+**Tek "kaydı var mı" kaynağı:** `useMarketplaceRegistration` (Faz 2) artık `application_status.php`'yi de okur. Kayıt sayılan: başvuru durumu S-4'teki küme **veya** eski `param_marketplace_sellers` durumları (`pending/active/suspended/rejected`, geriye uyum). Sunucuda karşılığı `hasMarketplaceRegistration(Database, int): bool` (`functions/` altında), endpoint ve ileride sunucu kapıları aynı yerden okur.
+
+**Arayüz:** Faz 2 iskeleti bu uca bağlanır: gönder düğmesi açılır, gönderim sonrası "Başvurunuz alındı / inceleniyor" (sahte başarı yok; yanıt gelmeden mesaj yok). Mevcut başvuru varsa form salt-okunur özet + durum gösterir; `rejected` ise gerekçe + yeniden gönderim. README API tablosuna iki uç nokta eklenir.
+
+## Karar soruları
+
+| # | Soru | Kodun ima ettiği / önerim |
+|---|---|---|
+| S-1 | Şema (016) ve yukarıdaki API sözleşmesi onaylı mı? | — |
+| S-2 | Başvuru geçmişi tutulsun mu? | Öneri: hayır — kullanıcı başına tek satır, yeniden gönderim üzerine yazar (`updated_at`). Geçmiş gerekirse ayrı log tablosu (ek şema). |
+| S-3 | `reviewed` ("incelendi") olan başvuru kullanıcı tarafından değiştirilebilir mi? | Öneri: hayır (409, "değişiklik için destekle iletişime geçin"); yalnızca `submitted` ve `rejected` yeniden gönderilebilir. |
+| S-4 | GK-5 "başvuru yapmış" — `rejected` başvuru Bakiyem'i açar mı? | Öneri: `submitted` ve `reviewed` açar, `rejected` açmaz. |
+| S-5 | Başvurudaki IBAN para çekmede kullanılsın mı? Bugün çekim yalnızca `banka_bilgileri.iban`'a yapılabiliyor (COMP-005b) ve M7 sonrası kullanıcının IBAN girebileceği arayüz yok. | Öneri: admin "incelendi" dediği anda başvurudaki IBAN `banka_bilgileri.iban`'a yazılsın (gönderimde değil — incelenmemiş IBAN'a para gitmesin). Bu, mevcut `banka_bilgileri` satırının üzerine yazmak demek. |
+| S-6 | Şahıs şirketinde vergi no: TCKN (11) mi, VKN (10) mu? MERSİS şahısta zorunlu mu? | Öneri: şahısta ikisi de kabul; MERSİS kurumsalda zorunlu, şahısta isteğe bağlı (ticaret siciline kayıtlı olmayan şahıs işletmesi var). |
+| S-7 | Başvuru sonucu kullanıcıya nasıl bildirilsin? | Öneri: uygulama içi bildirim (`notifications` tablosu mevcut); e-posta B5 (SMTP) açık olduğu için yok. |
+| S-8 | Admin "Başvurular" sayfasında tam IBAN / doğum tarihi görünsün mü? | Öneri: evet (inceleme için gerekli), ama sayfa erişimi yalnızca admin oturumu; dışa aktarma yok. |
+
+## Faz 5 kararları — geliştirici kararı (müşteri onayı yok, 2026-10-06)
+
+| # | Karar | Etkilenen iş |
+|---|---|---|
+| GK-19 (S-1) | 016 şeması ve API sözleşmesi onaylandı; 016 yerelde uygulanır. | Faz 5 |
+| GK-20 (S-2) | Başvuru geçmişi tutulmaz; kullanıcı başına tek satır, yeniden gönderim üzerine yazar. | 016, submit ucu |
+| GK-21 (S-3) | `reviewed` başvuru kullanıcı tarafından değiştirilemez (409); yalnızca `submitted` / `rejected` yeniden gönderilir. | submit ucu |
+| GK-22 (S-4) | "Kaydı var" tek kaynağı = yeni tabloda `submitted` / `reviewed` **VEYA** eski `param_marketplace_sellers`'ta `active` / `suspended`. Eski tablodaki `rejected` (B1 kaynaklı otomatik ret) ve `pending` SAYILMAZ. **Davranış değişikliği:** Faz 2'deki hook `pending` ve `rejected`'ı da sayıyordu. | `useMarketplaceRegistration`, `hasMarketplaceRegistration`, Bakiyem kapısı (madde 4) |
+| GK-23 (S-5) | Admin "incelendi" dediğinde başvurudaki IBAN `banka_bilgileri.iban`'a yazılır. Şartlar: onay ekranında mevcut ve yeni IBAN yan yana; kullanıcının `beklemede` para çekme talebi varsa IBAN güncellemesi engellenir ve admin'e nedeni gösterilir; IBAN değişikliği (kim, ne zaman, eski/yeni maskeli) kalıcı kayda geçer. **Mevcut bir admin işlem logu YOK** (iade denetimi bile yalnızca `error_log`'da) → yeni tablo önerisi, **onay bekliyor**; onaya kadar IBAN aktarımı yapılmaz. | admin Başvurular, 017 (öneri) |
+| GK-24 (S-6) | Şahısta vergi no TCKN (11) veya VKN (10); MERSİS kurumsalda zorunlu, şahısta isteğe bağlı. | submit doğrulaması |
+| GK-25 (S-7) | Uygulama içi bildirim altyapısı VAR (`notifications` tablosu + başlıktaki bildirim kutusu): inceleme sonucu kullanıcıya oraya yazılır; ayrıca başvuru sayfasında durum gösterilir. Yeni sistem kurulmadı. | admin durum ucu, başvuru sayfası |
+| GK-26 (S-8) | Admin Başvurular sayfasında tam IBAN ve doğum tarihi görünür; yalnızca admin oturumu; dışa aktarma yok. | admin Başvurular |
+
+## Faz 5 — yapılanlar (2026-10-06)
+
+| İş | Commit | Not |
+|---|---|---|
+| 016 uygulandı (yerel) | `ef2e002` | `marketplace_applications` |
+| Başvuru backend: doğrulama, kayıt, "kaydı var" | `e7991b6` | `application_selftest.php` önce kırmızı (dosya yok), sonra 30/0 |
+| Başvuru sayfası backend'e bağlı; hook sunucu kuralına (GK-22) | `8e50e96` | **Davranış değişikliği:** eski tablodaki `pending`/`rejected` artık "kaydı var" sayılmıyor |
+| Admin Başvurular | `7fefa7a` | GK-23 IBAN aktarımı **kapalı** — 017 onay bekliyor |
+| README | `429d83d` | aşağıda Faz 6 madde 4 |
+| 017 admin işlem logu önerisi | bu commit | `api/database/pending/017_admin_audit_log.sql` — UYGULANMADI |
+
+---
+
+# Faz 6 — Kapanış raporu (2026-10-06)
+
+## 1. Doğrulama komutları (CLAUDE.md, son çalıştırma)
+
+`npm run lint` ✔ · `NEXT_DIST_DIR=.next-verify npm run build` ✔ · `php -l` (tüm api) ✔ · `iyzico_selftest.php` 77/0 · `plan_limits_selftest.php --strict` 44/0 · `access_selftest.php` 21/0 · `application_selftest.php` 30/0. Hepsi çıkış kodu 0. **Tarayıcıda uçtan uca test yapılmadı** — kullanıcı tüm fazları elle test edecek.
+
+## 2. Madde bazında durum
+
+Durumlar: **tamam** · **onay bekliyor** · **blocker'a bağlı (Bn)** · **veri bekliyor**. Blocker'a bağlı madde "çalışıyor" ilan edilmedi.
+
+| Madde | Durum | Not |
+|---|---|---|
+| M0-1 belge ile eğitim | tamam | N-02, sihirbazda kalma, PDF 5 MB. Sohbetin gerçek cevabı **B4**'e (Gemini prod anahtarı) bağlı. |
+| M0-2 bağımsız bota tıklayınca sohbet | tamam | N-01 |
+| M0-3 Liste sayfası 500 | (b) tamam · (a) **veri bekliyor** | N-04 hata/boş durum ayrımı; 500'ün kök nedeni (N-03, büyük olasılıkla migration 009) canlı `migrate.php --status` bekliyor. |
+| M0-4 defter profil butonu | tamam | N-05, N-06; mevcut bozuk kayıtlar için salt okunur teşhis SELECT'i AUDIT'te, onarım yapılmadı. |
+| 1 Bireysel kayıt "Yakında" | tamam | Başvuru sayfasında "Yakında"; eski sihirbaz silindi. |
+| 2 Herkese Açık Chatbot Oluştur | tamam · sınırsız hak **B1** | Kart + sunucu limiti; onaylı satıcıya sınırsız hak B1 açıkken kimseye uygulanamıyor. |
+| 3 Pazaryeri Başvurusu | tamam · IBAN aktarımı **onay bekliyor** · satış **B1** | Başvuru/inceleme çalışıyor; "incelendi" satıcıyı aktif yapmaz (GK-9). GK-23 IBAN aktarımı 017'ye bağlı. |
+| 4 Bakiyem kapısı | tamam | GK-22 kuralı sunucuda; yalnızca arayüz kapısı. |
+| 5 Satın Aldıklarım görünürlüğü | tamam · pratikte **B1/B3** | Satın alma B1 ve B3 yüzünden yapılamadığı için menü kimsede görünmez. |
+| 6 Ana sayfa seçici | tamam | Erişimsiz bot kilitli; platform botu ücretsiz (N-14, 015). |
+| 7 Ayarlar → Banka → Başvuru | tamam | Yeni IBAN girişi başvuruda; çekime aktarım GK-23/017'ye bağlı. |
+| 8 Günlük 10 coin | doğrulandı | Değişmedi. |
+| 9 Sohbet sayfası "Satın Al" | tamam | Limit bandında "Paketini yükselt". |
+| 10 Yayınla / Pazaryerine Kaydet | tamam · ücretli satış **B1** | Ücretsiz herkese açık yayın çalışıyor. |
+| 11 Özel yapma hakkı | tamam | 012 + kod; N-07 kapandı. |
+| P Paketler | tamam · satın alma **B3** | 013 kataloğu; paket satın alma ödeme yolu B3 (iyzico reddi). |
+
+Açık: N-03 (veri bekliyor), N-06 mevcut kayıt onarımı (karar bekliyor), N-11 kalan ölü kod adayları, 017 (onay bekliyor). Kapanan: N-01, N-02, N-04, N-05, N-06 (yeni kayıtlar), N-07, N-08, N-09, N-10, N-12, N-13, N-14 (yerel), N-15. N-16 yanlış bulguydu.
+
+## 3. Uygulanmamış migration'lar ve canlı sırası
+
+Yerelde uygulananlar: 010, 011, 012, 013, 015, 016. Canlıda hiçbiri uygulanmadı (Claude canlıya bağlanmaz).
+
+| Sıra | Dosya | Tür | Ne zaman / kontrol |
+|---|---|---|---|
+| 0 | yedek | — | Canlı veritabanının yedeği. |
+| 1 | `pending/014_unlist_free_public_drafts.sql` | veri (UPDATE), **koşullu** | Yalnızca "Faz 4 — kontrol A" sorgusu satır döndürür ve onaylanırsa; **koddan ÖNCE**. Kontrol: `kalan = 0`. |
+| 2 | 015 öncesi not | — | Platform botunun mevcut fiyatı (geri alma için). |
+| 3 | **Kod deploy** | — | `faz4-tamam` etiketi Faz 5'i İÇERMEZ; Faz 5 dahil alınacaksa yeni etiket gerekir. Kontrol: dört öz-test 0 başarısız (`plan_limits --strict` 013'ten önce B'de kırmızı verir — normal). |
+| 4 | `010_…`, `011_…` | şema (koşullu ALTER) | Canlıda bekliyorsa. |
+| 5 | `012_plan_privacy_right_and_unlimited.sql` | şema | Koddan SONRA. Kontrol: kolonlar, `user_privacy_right_usage`. |
+| 6 | `013_plan_catalog_2026_10.sql` | veri (UPDATE + INSERT; DELETE yok) | Kontrol: `plan_limits_selftest.php --strict` çıkış 0; doğrulama 2 boş. |
+| 7 | `015_house_bot_free.sql` | veri (UPDATE) | Kontrol: `eslesen = 1`; sıradan hesapla Lumanoris AI sohbeti. |
+| 8 | `016_marketplace_applications.sql` | şema | Kontrol: `application_selftest.php` 30/0; başvuru sayfası 503 vermiyor. |
+| — | `pending/017_admin_audit_log.sql` | şema, **onay bekliyor** | Onaylanırsa 016'dan sonra + IBAN aktarım kodu. |
+
+Geri alma notları her dosyanın başlığında. Hiçbiri `--allow-destructive` gerektirmez.
+
+## 4. README kontrolü
+
+Güncellendi (`429d83d`): rota tablosu (`/dashboard/pazaryeri-basvurusu`), seller API tablosu (2 yeni uç), hız sınırı (`mapp_submit`), çağıransız uçlar (`submerchant_register.php`), yetkilendirme (`full` / `chat` / `preview`, persona yalnızca sahibe), admin Başvurular, `MIN_WEEKLY_PRICE` (README 1 ₺ diyordu, kod 100 ₺), `FREE_PRIVACY_RIGHT_LIMIT`, paket kataloğu + NULL = sınırsız + özel yapma hakkı, migration aralığı 001–016 + `pending/`, yeni öz-testler, coin kademeleri atfı (`BuyModal` → `pricing.js`). Üretici paketi satırları S14'te kaldırılmıştı.
+
+## 5. Değiştirilen dosyalar (main..revize/pazaryeri)
+
+| Dosya | Ne değişti | Madde / ID | Doğrulama |
+|---|---|---|---|
+| `.claude/settings.json` | allow (git add, revize push, migrate) + deny listesi; parolalı kural silindi | kural | geçerli JSON |
+| `AUDIT.md` | Faz 0–6 kayıtları, GK-1…26, N-01…N-16 | kayıt | elle |
+| `BLOCKERS.md` | B1 notları, B2 kapandı (kullanıcı talimatı) | B1, B2 | elle |
+| `CLAUDE.md` | git/migration/faz akışı kuralları, pipefail, öz-test listesi | kural | elle |
+| `README.md` | bkz. madde 4 | Faz 6 | elle |
+| `api/admin/abonelik.php` | özel yapma hakkı alanı, boş kota = sınırsız | M11 | php -l |
+| `api/admin/ajax/basvurular.php` | yeni: başvuru listesi + incele/reddet + bildirim | M3, GK-21/23/25/26 | php -l; oturumsuz 403 |
+| `api/admin/basvurular.php` | yeni: admin Başvurular sayfası | M3 | php -l |
+| `api/admin/index.php` | `/admin/basvurular` rotası | M3 | php -l |
+| `api/admin/partials/_sidebar.php` | Başvurular bağlantısı | M3 | php -l |
+| `api/api/marketplace/buyproduceraccount.php` | silindi | S14 | 3'lü çağıran araması |
+| `api/api/marketplace/getproducerplanstatus.php` | silindi | S14 | 3'lü çağıran araması |
+| `api/api/seller/application_status.php` | yeni uç | M3 | php -l; oturumsuz 401 |
+| `api/api/seller/application_submit.php` | yeni uç | M3 | php -l; oturumsuz 401, GET 405 |
+| `api/database/access_selftest.php` | yeni: erişim/listeleme matrisi testi | M10 | 21/0 (eski kodla 4 hata) |
+| `api/database/application_selftest.php` | yeni: başvuru testi | M3 | 30/0 (önce kırmızı) |
+| `api/database/migrations/012_…` | şema: NULL = sınırsız, hak kolonu/tablosu | M11 | yerelde uygulandı |
+| `api/database/migrations/013_…` | paket verisi (DELETE'siz) | P | yerelde uygulandı; plan --strict 44/0 |
+| `api/database/migrations/015_house_bot_free.sql` | platform botu ücretsiz | N-14, GK-18 | yerelde uygulandı |
+| `api/database/migrations/016_…` | başvuru tablosu | M3, GK-19 | yerelde uygulandı |
+| `api/database/pending/014_…` | koşullu özele çekme | Faz 4 kontrol A | yazıldı, uygulanmadı |
+| `api/database/pending/017_admin_audit_log.sql` | admin işlem logu önerisi | GK-23 | yazıldı, uygulanmadı |
+| `api/database/plan_limits_selftest.php` | yeni: plan/kota testi | P, M2, M11 | 44/0 `--strict` |
+| `api/functions/chatbot_limits.php` | onaylı satıcıya sınırsız, NULL = sınırsız, hak yardımcıları | M2, M11 | php -l; plan testi |
+| `api/functions/marketplace_application.php` | yeni: doğrulama / kayıt / "kaydı var" | M3, GK-20…24 | application_selftest |
+| `api/functions/plans.php` | hak geri düşüşü | M11 | plan testi |
+| `api/functions/producer_plan.php` | silindi | S14 | 3'lü çağıran araması |
+| `api/src/Infrastructure/Repositories/ChatbotRepository.php` | `chat` erişimi, vitrin görünürlüğü, persona yalnızca sahibe | M10, N-09 | access 21/0 |
+| `api/src/Presentation/Controllers/ChatController.php` | `chat` erişimi; anahtar yokken belge hakkı iadesi | M10, N-12 | php -l; access |
+| `api/src/Presentation/Controllers/ChatbotController.php` | ücretsiz yayın, oluşturmada satıcı şartı yok, fiyata satıcı şartı, özel yapma hakkı, limit yanıtı | M2, M10, M11, N-07, N-08 | php -l; plan + access |
+| `api/src/Presentation/Controllers/MarketplaceApplicationController.php` | yeni: submit / status | M3 | application_selftest; 401/405 |
+| `api/src/Presentation/Controllers/MarketplaceController.php` | üretici metotları silindi; ücretsiz bot sepete eklenmez; ücretsizleşmiş bot mesajı | S14, E8, N-16 | php -l; iyzico 77/0 |
+| `api/src/Presentation/Controllers/SocialController.php` | listelerde vitrin görünürlüğü | N-09 | php -l |
+| `api/src/Presentation/Controllers/TrainingController.php` | PDF sınırı 5 MB | F1-3 | php -l |
+| `api/src/Presentation/Controllers/WalletController.php` | getPricing NULL'a dayanıklı + hak | M11 | php -l |
+| `api/src/Shared/Constants/AppConfig.php` | PRODUCER_* silindi; hak ve tablo sabitleri | S14, M11 | php -l |
+| `docs/prompts/11-pazaryeri-revizyon.md` | görev prompt'u | — | — |
+| `docs/proposals/faz4-erisim-listeleme.patch` | Faz 4 onaylı diff (tarihçe) | M10 | git apply --check |
+| `web/src/app/components/landing/PricingSection.jsx` | fiyatlar getpricing'den; yıllık indirim kaldırıldı | N-10 | lint + build |
+| `web/src/app/dashboard/chat/page.jsx` | deftere bot id; "Paketini yükselt"; ölü importlar | N-06, M9 | lint + build |
+| `web/src/app/dashboard/chatbots/components/ChatbotCard.jsx` | sohbete bağlantı, "Özel Yap", fiyat düzenleme yalnızca fiyatlıda | N-01, M11, M10 | lint + build |
+| `web/src/app/dashboard/chatbots/create/page.jsx` | KB kapısı, sihirbazda kalma, 5 MB, kapasite, Üretici kartı ve State 2 silindi, Herkese Açık kartı | N-02, F1-2/3, M2, S14, M10 | lint + build |
+| `web/src/app/dashboard/explore/page.jsx` | uydurma puan kaldırıldı | N-15 | lint + build |
+| `web/src/app/dashboard/following/page.jsx` | uydurma puan/takipçi kaldırıldı | N-15 | lint + build |
+| `web/src/app/dashboard/list/page.jsx` | yükleme / hata / boş durum | N-04 | lint + build |
+| `web/src/app/dashboard/notes/page.jsx` | profil butonu → sohbet | N-05 | lint + build |
+| `web/src/app/dashboard/page.jsx` | takip edilenlerden seçici; uydurma puan | M6, N-15 | lint + build |
+| `web/src/app/dashboard/pazaryeri-basvurusu/layout.jsx` | yeni rota | M3 | build |
+| `web/src/app/dashboard/pazaryeri-basvurusu/page.jsx` | başvuru formu backend'e bağlı | M1, M3 | lint + build |
+| `web/src/app/dashboard/settings/page.jsx` | Ödeme Bilgileri → başvuru | M7 | lint + build |
+| `web/src/app/dashboard/wallet/components/WithdrawalModal.jsx` | IBAN yönlendirme metni | M7 | lint + build |
+| `web/src/app/dashboard/wallet/page.jsx` | uydurma sipariş kaldırıldı; Bakiyem kapısı | N-13, M4 | lint + build |
+| `web/src/entities/chatbot/ui/BotCard.bento.jsx` | uydurma puan kaldırıldı | N-15 | lint + build |
+| `web/src/entities/user/ui/ProfileCard.jsx` | "Satın Al" kaldırıldı; Ücretsiz rozeti; sepet gizli | M9, M10 | lint + build |
+| `web/src/features/chatbot-mgmt/PublishModal.jsx` | Yayınla / Pazaryerine Kaydet | M10 | lint + build |
+| `web/src/features/purchasing/BuyProducerAccountModal.jsx` | silindi | S14 | 3'lü çağıran araması |
+| `web/src/features/seller/SellerOnboardingWizard.jsx` | silindi | M1 | 3'lü çağıran araması |
+| `web/src/features/wallet/BankInfo.jsx` | silindi (ölü) | N-11 | 3'lü çağıran araması |
+| `web/src/features/wallet/WithdrawalModal.jsx` | IBAN yönlendirme metni | M7 | lint + build |
+| `web/src/shared/hooks/useMarketplaceRegistration.js` | yeni → sunucu kuralı (GK-22) | M4, M3 | lint + build |
+| `web/src/shared/hooks/useSellerStatus.js` | silindi | N-11 | 3'lü çağıran araması |
+| `web/src/widgets/DashboardHeader.jsx` | kayıtsıza bakiye gizli | M4 | lint + build |
+| `web/src/widgets/Sidebar.jsx` | Satın Aldıklarım kapısı; kayıtsıza bakiye gizli | M5, M4 | lint + build |
+
+Not: git bu dalda silinen iki üretici ucunu iki yeni seller ucuyla "yeniden adlandırma" olarak eşleştiriyor; gerçekte ayrı silme + ekleme.
+
+Gözlem (yeni değil): admin sayfa parçaları (`/admin/parcekme.php` dahil) `php -S` geliştirme sunucusunda doğrudan çağrılınca 500 veriyor ve statik HTML'in başını basıyor (veri yok). Mevcut tüm parçalarda aynı; Apache `.htaccess` altındaki davranış ayrıca kontrol edilmedi.
+
+---
+
+# Canlı uygulama sırası — GÜNCEL (2026-10-10, `canli-2026-10f`)
+
+Bu bölüm Faz 3, Faz 4 ve Faz 6'daki canlı sıralarının ve önceki `canli-2026-10` / `canli-2026-10b` / `canli-2026-10c` / `canli-2026-10d` / `canli-2026-10e` sıralarının **yerine geçer**. Tüm adımları kullanıcı çalıştırır; Claude canlıya bağlanmaz. Yerelde 010–013 ve 015–017 uygulandı.
+
+**`canli-2026-10f` = `canli-2026-10e` + N-36 (ölü kod: Keşfet `?from=list` modu, `MarketCard`, `MarketplaceListCard`) + N-37…N-42 (arayüz taraması: sunucuya gitmeden ya da yanıta bakmadan "başarılı" görünen yerler — Geçmişim, "tümünü okundu", çıkış, sohbet başlığı takip/beğeni, paylaş/kopyala, Diyalog Defteri gizleme) + N-43 (390 px bildirim paneli taşması) + `scripts/verify.sh`; ayrıntı: aşağıda "Arayüz taraması".** **`canli-2026-10e` = `canli-2026-10d` + N-34 (bot yorumu kaydedilmiyordu) + N-35 (Takip Edilenler'de takibi bırakma, kart beğenisi ve liste kaydı sunucuya yazılmıyordu) + `hoppa_selftest` yalıtım düzeltmesi; ayrıntı: aşağıda "Canlıdan gelen hatalar — N-34, N-35".** `canli-2026-10d` = `canli-2026-10c` + N-33 (sohbetteki "Bugün kalan Lumacoin" göstergesi iade sonrası güncelleniyor; tek ön yüz değişikliği) + belgeler ("Hoppa canlıya açma", BLOCKERS B3 notu, görev metni). `canli-2026-10c` = `canli-2026-10b` + Faz 8 (12 — uçtan uca doğrulama bulguları N-23…N-32 kapatıldı; ayrıntı: aşağıda "Faz 8"). `canli-2026-10b` = `canli-2026-10` + Faz 7a / 7a-2 / 7a-3 (Hoppa ile paket ödemesi, mutabakat, iade, admin "Paket Ödemeleri" ekranı) + N-21 (admin paneli göreli yollar) + N-22 (CSRF'siz iade ucu kapatıldı, 410). Bu sürümde canlıda ödeme **AÇILMAZ**: Hoppa kodu `PAYMENT_PROVIDER=none` ile kapalı gelir.
+
+**Doğrulananlar (2026-10-10, `canli-2026-10..canli-2026-10f`):**
+
+- **`canli-2026-10e..canli-2026-10f` yalnızca ön yüz:** PHP kodu, API sözleşmesi, migration, `pending`, `schema.sql`, `.htaccess`/`router.php` değişmedi (api tarafında tek değişen `access_selftest.php`, kaynak kilitleri). Yalnızca web deploy'u yeterli; adım 6'daki migration listesi aynı. Production build'inde (`d1f5ac5`; N-43 için `3f0d172` ile aynı dosya) N-37…N-43 tarayıcıda (zorlanmış 500) masaüstü + 390 px doğrulandı; `scripts/verify.sh` yeşil.
+
+- **`canli-2026-10d..canli-2026-10e`: yeni migration yok**, şema/denylist değişmedi (`api/database/migrations`, `pending`, `schema.sql`, `.htaccess`, `router.php` aynı). PHP: `SocialController` (follow/like isteğe bağlı `action`), `ChatbotController::getChatbots` + `ChatbotRepository::getPublished` (`liked_by_me`, eklemeli), yeni `functions/social_relations.php`. API sözleşmesi geriye dönük uyumlu: eylemsiz follow/like eski toggle ve eski yanıt adları; `addcomment.php` aynı (sıkı izin listesi korunuyor). Web ve API **birlikte** deploy edilmeli (eski bir sekme yorumda yine 403 alır, veri bozulmaz). `ee04666` production build'inde N-34/N-35 tarayıcıda (masaüstü + 390 px) ve tüm doğrulama komutları yeşil.
+
+- **`canli-2026-10c..canli-2026-10d` kodda yalnızca `web/src/app/dashboard/chat/page.jsx` (+4 satır, N-33).** `api/database/` (migration, pending, şema, selftest), `.htaccess`/`router.php` denylist'leri ve tüm PHP kodu değişmedi; adım 6'daki migration listesi aynı. N-33 tarayıcıda (geliştirme sunucusu, yeniden oynatılan SSE) önce/sonra doğrulandı; lint + verify build + `php -l` yeşil. 10d için ayrı bir production yeniden koşusu yapılmadı — 10c'nin uçtan uca sonuçları geçerli, değişen tek dosya o.
+
+- **Faz 8 yeni migration getirmedi** (`canli-2026-10b..canli-2026-10c`: `migrations/`, `pending/`, `schema.sql` değişmedi). N-25: `migrate.php` checksum'ı artık satır sonundan bağımsız; LF dosyada değer eskisiyle aynı, yani canlıdaki `schema_migrations` kayıtları geçerli kalır (migrate_selftest B: 17 kaydın LF ve CRLF hali eşleşiyor). Kopya Windows'ta alınmışsa da `--status` artık yanlışlıkla "DOSYA DEĞİŞMİŞ" demez.
+- **N-30 API sözleşmesi değişti:** `adddialogbook.php` yalnızca `{message_id, name}` alıyor; `addchat.php` istemciden üretilmiş bot cevabı kabul etmiyor (sunucu kaydediyor). Web ve API **aynı anda** deploy edilmeli; deploy anında açık eski bir sekme bir defter kaydı ya da bot cevabı kaydı için 400 alır (veri bozulmaz).
+
+- **Yeni migration yok.** `api/database/migrations/`, `pending/` ve `schema.sql`'de değişiklik yok; kodda yeni DDL ya da `ensureTable` yok. Faz 7a'nın kullandığı her şey mevcut şemada: `param_marketplace_payments` (yeni durum değerleri `hoppa_pending` / `hoppa_failed` / `hoppa_expired` → `varchar(32)`, şema değişikliği gerekmez), `user_plan_selection.expires_at` (011), `notifications`, `admin_audit_log` (017). Adım 6'daki liste bu yüzden `canli-2026-10` ile aynı.
+- **`PAYMENT_PROVIDER` varsayılanı `none`** — hem kodda (`PaymentGatewayFactory`: tanımsız, boş ya da tanınmayan değer → `none`) hem `api/.env.example`'da. `none` iken: paket satın alma 503 → kullanıcıya "Ödeme altyapısı hazırlanıyor"; `hoppa_return.php` hiçbir şeyi kesinleştirmez; admin "Paket Ödemeleri" ekranı boş liste gösterir, iade 503. Canlı `.env`'in içeriğini Claude göremez → adım 5a'da kullanıcı kontrol eder.
+- **Cron bu sürümde KURULMAZ** (aşağıdaki "Bu sürümde yapılmayacaklar").
+
+| Sıra | Adım | Kontrol / durma koşulu |
+|---|---|---|
+| 0 | Canlı veritabanı yedeği | — |
+| 1 | `php api/database/migrate.php --status` | **009 (`009_user_list_color.sql`) `bekliyor` görünüyorsa** M0-3'teki Liste sayfası 500'ünün nedeni büyük olasılıkla budur (N-03 / K-01). 009 saf `ADD COLUMN`, adım 6'da diğerleriyle uygulanır. Çıktıyı not edin. |
+| 2 | **GK-22 kontrolü** (aşağıdaki sorgu) | **Satır dönerse DURUN.** Bu kullanıcılar yeni kurala göre artık "pazaryeri kaydı var" sayılmayacak (Bakiyem kapısı kapanır) ama bakiyeleri ya da bekleyen çekim talepleri var. Karar verilmeden deploy edilmemeli. |
+| 2b | **iyzico ödeme kontrolü** (aşağıdaki "iyzico kaynaklı ödeme sorgusu") | Bilgi amaçlı, deploy'u durdurmaz. `kaynak = iyzico` ve durumu `paid` / `partial_refund` / `unknown` / `pending` olan satır varsa: bu ödemelerin iadesi ya da mutabakatı yalnızca iyzico ile yapılabilir → Hoppa geçişinde iyzico kodu "yalnızca iade/sorgulama" modunda tutulmalı (keşif raporu §5.4). **Not (N-22):** iyzico iadesinin artık giriş noktası yok (eski API iade ucu 410); böyle satır çıkarsa iade iyzico panelinden yapılır ya da admin ekranına iyzico iadesi eklenir. `IYZICO_BASE_URL` sandbox iken alınmış satırlar test ödemesidir (gerçek para yok). |
+| 3 | Faz 4 kontrol A (AUDIT "Faz 4 — kontrol A ve B") | Satır dönerse ve taslaksa `pending/014_…` → `migrations/`, **koddan önce** `--apply`; kontrol `kalan = 0`. |
+| 4 | 015 öncesi not: `SELECT id, ucret_haftalik, ucret_aylik FROM chatbotlar WHERE UPPER(TRIM(isim)) = 'LUMANORIS AI'` | Geri alma için saklayın. |
+| 4b | **Diyalog Defteri ölçümü** (aşağıdaki "N-30 mevcut kayıt sorgusu", salt okunur) | Bilgi amaçlı, deploy'u durdurmaz. Yeni görünürlük kuralı özel/bağımsız botların kayıtlarını deploy anında başkalarından gizler (veri değişmez). Sayıları not edin. |
+| 5 | **Kod deploy** (`canli-2026-10f` etiketi; web + api birlikte) | Kod 012/016/017 yokken de çalışır (eksik tablolar için fail-safe / 503). `api/.htaccess` ve `api/admin/.htaccess` de değişti (`cron` dizini denylist'e eklendi) — deploy'a dahil olmalı. |
+| 5a | **Canlı `api/.env` kontrolü** (değerleri paylaşmadan) | `PAYMENT_PROVIDER` satırı **yok** ya da **`PAYMENT_PROVIDER=none`** olmalı. `HOPPA_TEST_*`, `HOPPA_LIVE_*`, `APP_PUBLIC_URL` **girilmez**. Yerel `.env`'den kopyalanmış bir `PAYMENT_PROVIDER=hoppa` satırı varsa **DURUN** ve silin: test anahtarı girilmiş bir kurulum canlıda kullanıcıları Hoppa TEST sayfasına yönlendirir. |
+| 6 | `--status` → `--apply` → `--status` | Bekleyenler sırayla uygulanır: 009 (varsa), 010, 011, 012, 013, 015, 016, 017. **Faz 7a yeni migration getirmedi.** Hiçbiri `--allow-destructive` gerektirmez; `⚠ VERİ SİLER` işareti hiçbirinde olmamalı. |
+| 7 | Öz-testler | `plan_limits_selftest.php --strict`, `access_selftest.php`, `application_selftest.php`, `hoppa_selftest.php` (A + B + B2: sahte sağlayıcı, ağ yok, transaction + ROLLBACK; 017 uygulanmış olmalı), `migrate_selftest.php` (salt okunur) → hepsi 0 başarısız. `iyzico_selftest.php` A bölümü. **`hoppa_selftest.php --e2e` canlıda ÇALIŞTIRILMAZ.** |
+| 8 | Elle kontrol | Liste sayfası (009 sonrası 500 yok), Lumanoris AI sıradan hesapla sohbet (015), Başvuru gönder → admin Başvurular → İncelendi → kullanıcının IBAN'ı ve `admin_audit_log` satırı (017). **Faz 7a:** Paketler'de ücretli paket seç → pencerede "Ödeme altyapısı hazırlanıyor" (kart alanı yok, Hoppa'ya yönlendirme yok); admin menüsü Ödeme → Paket Ödemeleri açılıyor, liste boş; `POST /api/seller/marketplace_refund.php` → `410`; `/cron/plan_payments.php` web'den erişilemiyor (403/404). **10e:** sohbet sayfasında bir bota yorum yaz → hata yok, sayfa yenilenince yorum duruyor; Takip Edilenler'de kalple takibi bırak → yenile → bot geri gelmiyor; Keşfet'te kalp → yenile → basılı. **10f:** Geçmişim'de uydurma sohbet yok; çıkış → `/login`, geri gelince oturum kapalı; sohbet başlığında "Bildirimler Açık/Kapalı" düğmesi yok, takip/beğeni çalışıyor; Paylaş → Kopyala → "Kopyalandı" ve bağlantı botu açıyor. **Faz 8:** Keşfet'te yeni bir ücretsiz botta "Daha Önce Satıldı" yok, "+12% / +24%" yok; Paketler'de yıllık/%20 anahtarı yok; takip edilen ücretsiz bot ana sayfa seçicisinde seçilebiliyor; sohbette "Diyalog Defterine Ekle" → kayıt akışta görünüyor. |
+
+**Bu sürümde yapılmayacaklar:**
+
+- **Cron satırı kurulmaz** (`api/cron/plan_payments.php`). `PAYMENT_PROVIDER=none` iken mutabakat zaten atlanır ve Hoppa siparişi oluşamaz. Sonuç: **yenileme hatırlatması (GK-27) da çalışmaz** — canlıda süresi biten mevcut paketlere bildirim gitmez. Cron, ödeme Hoppa canlı anahtarıyla açılırken kurulur (README → *Plan purchases*).
+- Hoppa canlı anahtarı ve `PAYMENT_PROVIDER=hoppa` bu sürümde girilmez. Açılmadan önce kapanması gerekenler: N-19 (komisyon), N-20 (alıcı adresi), Hoppa soruları #1, #2, #5, #17, BLOCKERS (B1/B3).
+
+Her migration'ın geri alma notu kendi dosya başlığında.
+
+### GK-22 kontrol sorgusu (salt okunur — deploy'dan ÖNCE)
+
+Deploy'dan önce yeni başvuru tablosu (016) henüz yok; o anda yeni kurala göre "kayıtlı" olan yalnızca eski `param_marketplace_sellers`'ta `active`/`suspended` olan. Bakiye, `WalletController::computeBalanceAndTransactions()`'ın birebir SQL karşılığı (yerelde 53 kullanıcıda uygulamanın hesabıyla aynı sonuç verdiği doğrulandı; yerelde sonuç 0 satır). `param_marketplace_*` tabloları canlıda hiç oluşturulmamışsa sorgu "tablo yok" hatası verir — o durumda satış/bakiye de yoktur.
+
+```sql
+SELECT k.id AS kullanici_id, k.kullanici_adi,
+       COALESCE(pms.status, 'kayit_yok') AS eski_satici_durumu,
+       ROUND(COALESCE(inc.gelir, 0) - COALESCE(inc.iade, 0) - COALESCE(w.cekim, 0), 2) AS bakiye,
+       COALESCE(w.bekleyen, 0) AS bekleyen_cekim
+FROM kullanicilar k
+LEFT JOIN param_marketplace_sellers pms ON pms.user_id = k.id
+LEFT JOIN (
+    SELECT d.seller_user_id AS uid,
+           SUM(CASE WHEN d.status = 'approved' AND p.status = 'paid' THEN d.payable_amount ELSE 0 END) AS gelir,
+           SUM(CASE WHEN NOT (d.status = 'approved' AND p.status = 'paid')
+                     AND (d.status = 'refunded' OR p.status = 'refunded') THEN d.payable_amount ELSE 0 END) AS iade
+    FROM param_marketplace_details d
+    JOIN param_marketplace_payments p ON p.id = d.payment_id
+    WHERE p.status IN ('paid', 'refunded')
+    GROUP BY d.seller_user_id
+) inc ON inc.uid = k.id
+LEFT JOIN (
+    SELECT user_id,
+           SUM(CASE WHEN durum NOT IN ('reddedildi', 'iptal') THEN miktar ELSE 0 END) AS cekim,
+           SUM(durum = 'beklemede') AS bekleyen
+    FROM para_cekme_talepleri
+    GROUP BY user_id
+) w ON w.user_id = k.id
+WHERE COALESCE(pms.status, '') NOT IN ('active', 'suspended')
+HAVING bakiye <> 0 OR bekleyen_cekim > 0
+ORDER BY k.id
+;
+```
+
+### iyzico kaynaklı ödeme sorgusu (salt okunur — canlı sırası adım 2b)
+
+`param_*` tabloları sağlayıcıdan bağımsız adlandırılmış; iyzico satırı, ham yanıtta (`param_response_json`) iyzico'nun `paymentId` alanının bulunmasıyla ayırt ediliyor. Sağlayıcı kimliği hiç olmayan satırlar iyzico öncesi, simüle ödeme döneminden kalma. Yerelde (2026-10-07): 1 iyzico `paid` satırı (35 ₺, 2026-09-01 — sandbox denemesi) ve 16 sağlayıcısız eski `paid` satırı. `param_marketplace_payments` canlıda hiç oluşturulmamışsa sorgu "tablo yok" hatası verir — o durumda ödeme de yoktur.
+
+Özet:
+
+```sql
+SELECT
+  CASE
+    WHEN JSON_VALID(p.param_response_json)
+         AND JSON_EXTRACT(p.param_response_json, '$.paymentId') IS NOT NULL THEN 'iyzico'
+    WHEN p.param_transaction_id IS NULL OR p.param_transaction_id = '' THEN 'saglayicisiz (eski/simule)'
+    ELSE 'diger'
+  END AS kaynak,
+  p.status,
+  COUNT(*) AS adet,
+  ROUND(SUM(p.amount), 2) AS toplam_tutar,
+  MIN(p.created_at) AS ilk,
+  MAX(p.created_at) AS son
+FROM param_marketplace_payments p
+WHERE p.status IN ('paid', 'partial_refund', 'refunded', 'unknown', 'pending')
+GROUP BY kaynak, p.status
+ORDER BY kaynak, p.status;
+```
+
+Ayrıntı (iyzico'da hâlâ iade/mutabakat gerektirebilecek satırlar):
+
+```sql
+SELECT p.id, p.order_id, p.user_id, p.status, p.amount, p.param_transaction_id AS iyzico_payment_id, p.created_at,
+       (SELECT COUNT(*) FROM param_marketplace_details d WHERE d.payment_id = p.id) AS kalem
+FROM param_marketplace_payments p
+WHERE JSON_VALID(p.param_response_json)
+  AND JSON_EXTRACT(p.param_response_json, '$.paymentId') IS NOT NULL
+  AND p.status IN ('paid', 'partial_refund', 'unknown', 'pending')
+ORDER BY p.created_at;
+```
+
+---
+
+## Hoppa geçişi — keşif sonrası bulgu (2026-10-07)
+
+| ID | Sev | Dosya | Problem | Durum |
+|---|---|---|---|---|
+| **N-17** | **P1** | `web/src/app/dashboard/checkout/page.jsx`, `web/src/features/payment/PlanPaymentModal.jsx`, `CardFields.jsx`, `web/src/shared/lib/card.js` → `api/api/marketplace/createsubscription.php` (`MarketplaceController::createSubscription`, `$data['card']`) ve `api/api/wallet/upgradeplan.php` (`WalletController::upgradePlan`) → `api/functions/checkout_payments.php::chargeCard` | **Kart verisi (numara, son kullanma tarihi, CVV) bizim sunucumuzdan geçiyor.** Tarayıcıdaki kart formu tam kart bilgisini JSON olarak Lumanoris API'sine gönderiyor; istek Express proxy'sinden (`web/server.js`, `http-proxy-middleware`) PHP'ye akıyor; PHP onu sağlayıcıya iletiyor. Bu, platformu **PCI-DSS'in tam kapsamına** sokar (kart verisini işleyen sistem; tipik olarak en ağır öz-değerlendirme). Kontrol edilenler: kart verisi veritabanına **yazılmıyor**; proxy istek gövdesini **loglamıyor** (yalnızca hata satırı); PHP tarafında kartı loglayan satır **bulunamadı**, sağlayıcı yanıtı `IyzicoClient::redact()` ile maskeleniyor. Yani sızıntı değil, **kapsam** sorunu: kart verisi bellekte bizim süreçlerimizden geçiyor. Ek risk: barındırma/TLS kararı açık (**B6**); TLS'siz bir kurulumda kart verisi ağda düz metin olurdu. | **Açık — Hoppa entegrasyonunda düzeltilecek.** Hedef mimari (keşif raporu §0.1): Hoppa ödeme sayfası / 3DS yönlendirmesi; kart verisi Lumanoris'e hiç ulaşmaz; kart formları ve `chargeCard`'daki kart doğrulaması kaldırılır. O zamana kadar ödeme zaten kapalı (iyzico anahtarı yok → `CONFIG_MISSING`), yani canlıda kart verisi gönderilse bile sağlayıcıya iletilmiyor ve tahsilat yapılmıyor — ama form hâlâ kart bilgisini sunucuya postalıyordu. **Ara önlem UYGULANDI (2026-10-07, onaylı, `canli-2026-10`):** pazaryeri ödeme sayfası ve üyelik paketi penceresinde kart formu, kart doğrulaması ve kartı gönderen kod silindi; yerine "Ödeme altyapısı hazırlanıyor" gösteriliyor. Ücretsiz pakete geçiş yalnızca `plan_name` gönderir. Sunucu tarafı (`chargeCard`) değişmedi. `CardFields.jsx` ve `shared/lib/card.js` artık hiçbir yerden çağrılmıyor (Hoppa entegrasyonunda silinecek). Bulgu, kalıcı çözüme (Hoppa) kadar açık kalıyor. |
+| **N-18** | P2 | `web/src/app/dashboard/checkout/page.jsx` (sepet adımındaki alt not; ödeme adımındaki "Ödeme Dökümü" kartı) | **Pazaryeri ödeme sayfasında gerçeği yansıtmayabilecek iki taahhüt metni var.** (1) Sepet adımında "30 Gün Para İade Garantisi" yazıyor; müşterinin böyle bir iade politikası olduğuna dair kayıt yok. Ayrıca site içi "Teslimat ve İade Şartları" metni veritabanından (`teslimat_iade_sartlari`) ayrıca geliyor; iki metnin uyumlu olduğu doğrulanmadı. (2) Ödeme dökümünde "Anında Bulut Sağlama — Ödeme tamamlandığında API anahtarlarınız ve küme uç noktalarınız panelinizde hemen oluşturulacaktır." yazıyor. Pazaryerinde satılan ürün sohbet botu erişimi; satın almada API anahtarı ya da küme uç noktası oluşturan bir kod yok. Şu an ödeme kapalı olduğu için (N-17 ara önlemi) kimse bu metinlere dayanarak ödeme yapamıyor. | **Açık — Hoppa entegrasyonunda, ödeme açılmadan ÖNCE düzeltilecek.** İade metni müşterinin gerçek iade politikasına göre yeniden yazılacak; müşteriye soruldu (`docs/musteri-ozet-2026-10.md`, B bölümü). Bulut sağlama metni gerçek teslimatı anlatacak şekilde değiştirilecek ya da kaldırılacak. Kod henüz değiştirilmedi. |
+
+## Hoppa — gerçek doküman sonrası (2026-10-07)
+
+Kaynak ve servis eşlemesi: `docs/proposals/hoppa-gecis-kesif.md` §0.2. Hoppa sanal POS'u = EsnekPOS altyapısı.
+
+### Geliştirici kararı
+
+| ID | Karar | Gerekçe | Etkilediği yer |
+|---|---|---|---|
+| GK-27 | **Otomatik paket yenileme yok.** Her dönem kullanıcı paketi Ortak Ödeme Sayfası üzerinden elle yeniler. Süre bitmeden kullanıcıya hatırlatma yapılır. | Hoppa'nın tekrarlı ödeme servisi (`RecurringPayment`, `RecurringPaymentCardAdd`) kart numarası ve CVV'yi bizim sunucumuzdan istiyor (N-17'yi geri getirir) ve bölüştürme desteklemiyor. D-05'teki "30 günlük tek seferlik satış" kuralıyla uyumlu. | Paket satın alma (Faz 7a). **Hatırlatma henüz yazılmadı** (mevcut `notifications` altyapısıyla yapılacak; zamanlanmış iş gerekir). Erken yenilemede kalan günlerin devredilip devredilmeyeceği **iş kuralı, karar verilmedi**: bugünkü kod bitişi her satın almada `NOW() + 30 gün` yazıyor (kalan günler devretmiyor). |
+
+### Bulgu
+
+| ID | Sev | Dosya | Problem | Durum |
+|---|---|---|---|---|
+| **N-19** | P2 | Hoppa üye işyeri ayarı (kod değil); paket fiyatının gösterildiği ekranlar | **Test üye işyerinde komisyon alıcıya yansıtılıyor.** 149,00 ₺'lik siparişte Hoppa ödeme sayfası "151,25 TRY ÖDEME YAP" gösterdi ve karttan 151,25 çekildi (`COMMISSION=2,25`, `COMMISSION_RATE=1,490`). Bizim ekranımız 149 ₺ gösteriyor. Canlı hesapta da böyle olursa kullanıcı ödeme sayfasında ilk kez daha yüksek bir tutar görür. Bu, fiyat gösterimi açısından (tüketici mevzuatı: toplam fiyat) sorun olabilir. Kod tarafında kesinleştirme her iki modeli de kabul ediyor: çekilen tutar sipariş tutarına eşitse **ya da** çekilen tutar eksi komisyon sipariş tutarına eşitse ödeme geçerli. | **Açık — Hoppa'ya soruldu** (`docs/hoppa-sorular.md` #3: hesap ayarı mı); **müşteriye soruldu** (`docs/musteri-ozet-2026-10.md` B, öneri: komisyonu müşteri karşılasın). Canlı ödeme açılmadan önce komisyonun kimde kalacağına müşteri karar vermeli; alıcıya yansıyacaksa fiyat ekranları bunu göstermeli. |
+
+## Faz 7a — Paket ödemesi Hoppa ile (yalnızca TEST ortamı, 2026-10-07)
+
+**Akış:** "Ödemeye geç" → `upgradeplan.php` (yalnızca `plan_name`) → `hoppa_pending` satırı → Hoppa `CommonPaymentDealer` → kullanıcı Hoppa sayfasında kartı girer → `hoppa_return.php` (BACK_URL; POST alanlarına güvenilmez) → sunucudan `ProcessQuery` → ödendiyse ve tutar tutuyorsa paket aynı transaction'da tanımlanır. Koşullu `UPDATE … WHERE status IN ('hoppa_pending','hoppa_failed')` aynı `ORDER_REF_NUMBER`'ın iki kez paket tanımlamasını engeller. Ayrıntı: README → *Plan purchases — Hoppa*; servis eşlemesi: keşif raporu §0.2.
+
+**Ayarlar:** `PAYMENT_PROVIDER` (varsayılan `none` → paket ödemesi 503, arayüzde "Ödeme altyapısı hazırlanıyor"), `HOPPA_MODE` (varsayılan `test`), `HOPPA_TEST_*` / `HOPPA_LIVE_*`, `APP_PUBLIC_URL`. Test kimlik bilgileri (dokümandaki herkese açık test üye işyeri) yalnızca yerel `api/.env`'de; `.env.example`'da boş. Canlı anahtar alanları boş.
+
+**Test ortamında gerçek ödeme (`php api/database/hoppa_selftest.php --e2e`, 2026-10-07, ROLLBACK):**
+
+| Kart | BACK_URL POST | ProcessQuery sonucu | Paket |
+|---|---|---|---|
+| 9792100000000001 (başarılı) | `STATUS=SUCCESS RETURN_CODE=0 AMOUNT=151,25 COMMISSION=2,25` | `paid` | tanımlandı; aynı sipariş ikinci kez işlenince yeniden tanımlanmadı |
+| 5100050000006661 (hata 51) | `STATUS=PAYMENT_ERROR RETURN_CODE=51` | `failed` ("51-Limit Yetersiz") | değişmedi |
+
+`hoppa_return.php` ucu ayrıca geçici `php -S` ile denendi: GET → `303 ?odeme=pending`; bozuk referans → `303 ?odeme=failed`; var olmayan siparişe `STATUS=SUCCESS` yazılmış sahte POST → `303 ?odeme=failed` (POST'a güvenilmediği görüldü).
+
+**N-17:** paket satın alma akışı için **kapandı** — kart verisi ne toplanıyor ne sunucumuza geliyor (`upgradePlan` artık `$data['card']` okumuyor, `chargeCard` çağırmıyor; selftest A bunu kaynak düzeyinde kilitliyor). **Pazaryeri için açık kalıyor:** Hoppa'da bölüştürme yalnızca kartı sunucudan isteyen EYV3DPay'de var (keşif §0.2 sınır a, Hoppa sorusu #1); orada N-17 ara önlemi (kart formu yok) sürüyor.
+
+### Yeni bulgu
+
+| ID | Sev | Dosya | Problem | Durum |
+|---|---|---|---|---|
+| **N-20** | P2 | `WalletController::startHostedPlanPayment` | **Hoppa alıcının il, ilçe ve adresini zorunlu istiyor; kayıtta bu bilgiler yok.** Şu an Hoppa'nın kendi örneğindeki gibi `"-"` gönderiliyor; telefon yoksa o da `"-"`. Doküman "fraud önleme için tüm parametrelerin eksiksiz gönderilmesi gerekir" diyor. Test ortamı `"-"`'yi kabul etti; canlıda kabul edilip edilmeyeceği ve adres toplanıp toplanmayacağı (KVKK, kayıt formu) **müşteri kararı**. | **Açık — karar bekliyor.** Müşteriye (`musteri-ozet-2026-10.md` B) ve Hoppa'ya (`hoppa-sorular.md` #17: canlıda `"-"` kabul ediliyor mu) soruldu. Canlı ödeme açılmadan önce: ya Hoppa `"-"`'yi canlıda kabul ettiğini teyit eder, ya da ödeme öncesi adres alanı eklenir. |
+
+### Faz 7a'da yapılmayanlar (açık)
+
+- **Mutabakat işi yok.** Hoppa webhook belgelemiyor. Kullanıcı Hoppa sayfasında sekmeyi kapatırsa `hoppa_pending` satırı öyle kalır; ödeme Hoppa'da başarılı olup dönüş gelmezse paket **tanımlanmaz** — ta ki aynı sipariş yeniden sorgulanana kadar. Zamanlanmış bir ProcessQuery mutabakatı gerekiyor (`hoppa_pending`/`hoppa_failed`, son 7 gün). iyzico'nun `reconcilePayments()`'ı bu satırlara bilerek dokunmuyor (ayrı durum değerleri).
+- **İade yok.** Hoppa `OrderReturn` yazılmadı. Admin iade ucu (`processRefund`, iyzico) Hoppa satırını reddediyor: iyzico anahtarı yoksa 503, varsa `itemTransactions` olmadığı için 422 — yanlış sağlayıcıya iade gitmez. Hoppa iadesi şimdilik Hoppa panelinden.
+- **Yenileme hatırlatması yok** (GK-27). Erken yenilemede kalan günler devretmiyor (her satın alma `NOW()+30`) — iş kuralı, karar verilmedi.
+- **AUTH_HASH doğrulanmıyor** (algoritma belgelenmemiş, Hoppa sorusu #2); güven yalnızca sunucudan yapılan ProcessQuery'de.
+- **Komisyon alıcıya yansıyor** (N-19) — kesinleştirme iki modeli de kabul ediyor.
+- `iyzico` kodu ve pazaryeri satışı değiştirilmedi.
+
+## Faz 7a-2 — Canlı öncesi tamamlayıcılar (yalnızca TEST ortamı, 2026-10-07)
+
+Faz 7a'nın "yapılmayanlar" listesindeki mutabakat, iade ve hatırlatma maddeleri kapandı. Kod: `api/functions/hosted_plan_payments.php`, `api/cron/plan_payments.php`. Selftest: `hoppa_selftest.php` B2 (sahte sağlayıcı, ROLLBACK) + C (`--e2e`, gerçek test ortamı).
+
+### 1. Mutabakat işi (`php api/cron/plan_payments.php`, önerilen 5 dakikada bir)
+
+| Sipariş durumu | Ne zaman sorulur | Sonuç |
+|---|---|---|
+| `hoppa_pending` | oluşturulduktan **15 dk** sonra, her turda | ödendi → paket tanımlanır (`finalizeHostedPlanPayment`; aynı sipariş iki kez işlenmez) · reddedildi → `hoppa_failed` · ödenmemiş → beklemede kalır |
+| `hoppa_pending`, **24 saatten** eski ve Hoppa'da hâlâ ödenmemiş | — | `hoppa_expired` |
+| `hoppa_expired` | ilk **7 gün** boyunca en fazla **6 saatte bir** | ödenmiş çıkarsa paket tanımlanır (geç dönüş kaçmasın); değilse bekler |
+| `hoppa_expired`, 7 günden eski | **artık sorulmaz** | Bu noktada ödeme çıkarsa ancak Hoppa panelinden ya da destekten öğrenilir; sipariş numarasıyla `hoppa_return`/mutabakat elle tetiklenebilir. |
+| `unknown` (tutar uyuşmazlığı, paket yazılamadı, sorgu hatası) | her turda | satır `hoppa_pending` kalır, `error_log`'a yazılır — insan incelemesi gerekir |
+
+**Neden 24 saat / 7 gün:** Hoppa ödeme sayfasının ne kadar açık kaldığı belgelenmemiş (`hoppa-sorular.md` #5). 24 saat, kullanıcının sayfayı açık bırakıp sonra ödemesine yetecek kadar uzun. `hoppa_expired` son durum değil: sonradan ödeme görülürse `paid` olur. Hoppa cevap verince bu süreler gerekirse kısaltılır.
+
+Kilit: aynı anda iki tur çalışmaz (`GET_LOCK('cron_plan_payments')`, alınamazsa tur atlanır). `PAYMENT_PROVIDER=none` iken mutabakat atlanır, hatırlatma çalışır. `api/cron/` dizini üç denylist'e de eklendi (`api/.htaccess`, `api/admin/.htaccess`, `api/router.php`), betik ayrıca CLI dışından çağrılırsa 404 döner (`php -S` ile doğrulandı). Sunucuda cron kurulumu kullanıcıda (README → *Plan purchases*).
+
+### 2. Hoppa iadesi
+
+- **Admin iade ekranı BULUNAMADI.** Mevcut tek iade yolu admin oturumu isteyen `POST /api/seller/marketplace_refund.php` (`SellerController::refund`); onu ne `api/admin`, ne `web/src`, ne `router.php` çağırıyor. Hoppa iadesi bu uca bağlandı: satır Hoppa paketi ise `hostedPlanRefund()`'a, değilse eskisi gibi `processRefund()`'a (iyzico, değişmedi) gider. **Admin panelinde iade düğmesi/ekranı yok** — eklenmesi ayrı iş (karar senin).
+- **Tam iade, kısmi yok:** tutar istekten okunmaz; Hoppa'nın kayıtlı çekim tutarı iade edilir (komisyon alıcıya yansıdıysa o da dahil — testte 151,25). `amount`/`items`/`partial` gönderen istek 422.
+- **Akış:** iyzico yoluyla aynı kilit (`refund_payment_<id>`) → satır yeniden okunur (yalnızca `paid` iade edilir; `refunded` → 409) → ProcessQuery → OrderReturn (`SYNC_WITH_POS=true`) → **ProcessQuery ile doğrulama** (iptal/iade görülmeden satır `refunded` yapılmaz, paket alınmaz) → durum + paket geri alma tek transaction'da. Hoppa'da zaten iade edilmişse (panelden) istek gönderilmez, yalnızca eşitlenir.
+- **Paket iptali** (`revokeRefundedPlan`, iyzico'daki D-03 erişim geri alma kuralının paket karşılığı): kullanıcı varsayılan plana (Ücretsiz, süresiz) döner. `user_plan_selection` sipariş bağı tutmadığı için iki durumda **paket alınmaz** ve nedeni yanıtta + log'da görünür: kullanıcının bu ödemeden sonra ödenmiş başka paket ödemesi varsa, ya da şu anki paketi iade edilen paket değilse.
+- **Kayıt:** her deneme (reddedilen, başarısız, doğrulanamayan, tamamlanan) `admin_audit_log`'a `action='hoppa_plan_refund'` ile yazılır: admin, sipariş, sebep, tutar, Hoppa yanıtı (müşteri alanları ayıklanmış), önceki/sonraki durum, paket sonucu. Tablo yoksa (017 uygulanmamış) iade **hiç başlatılmaz** (503). `param_marketplace_refunds`'a yazılmıyor: `detail_id` NOT NULL + FK ve paket ödemesinin detay satırı yok.
+- **Test ortamında gerçek iade (2026-10-07):** başarılı test ödemesi (151,25) → OrderReturn → `İŞLEM İPTAL EDİLDİ`, ProcessQuery `ORDER_CANCEL` (aynı gün iade iptal olarak işleniyor) → satır `refunded`, paket Ücretsiz'e döndü, audit `tamamlandi`; ikinci iade 409. Ertesi gün yapılan iadenin `İade - Başarılı` (STATUS_ID 7) döneceği dokümandan; sınıflandırıcı ikisini de tanıyor ama 7 gerçek ortamda görülmedi.
+- Uç yönlendirmesi CLI'dan admin oturumu taklidiyle denendi: Hoppa satırı Hoppa yoluna gitti (iyzico'ya değil).
+
+### 3. Yenileme hatırlatması (GK-27)
+
+Bitişe **3 gün** kala uygulama içi bildirim (`notifications`, `type='plan_renewal_reminder'`): "Paketiniz otomatik yenilenmez; Paketler sayfasından yenileyebilirsiniz." **Aynı dönem için bir kez:** dönemin penceresi `[bitiş − 3 gün, bitiş)`; pencere içinde bu türde bildirim varsa yenisi yazılmaz. Yenileme bitişi 30 gün ileri taşıdığı için yeni dönemde yeniden gönderilir. Şema değişikliği yok. Süresiz (ücretsiz) ve süresi geçmiş paketlere gönderilmez. Aynı cron'dan çalışır.
+
+### 4. Müşteri ve Hoppa soruları
+
+N-19 (komisyon) ve N-20 (adres) `musteri-ozet-2026-10.md` B bölümüne sade dille, `hoppa-sorular.md`'ye teknik haliyle eklendi (#3 güncellendi, #17 yeni; mevcut numaralar korunuyor çünkü belgelerde ve kodda atıf var).
+
+### Hâlâ açık (canlıdan önce)
+
+N-19, N-20 (müşteri + Hoppa cevabı), AUTH_HASH algoritması (#2), Hoppa ödeme sayfası geçerlilik süresi (#5 — 24 saat/7 gün varsayımı), admin iade ekranı yok, erken yenilemede kalan günlerin devri (iş kuralı, karar yok), pazaryeri Hoppa entegrasyonu (bölüştürme, #1).
+
+## Faz 7a-3 — Admin "Paket Ödemeleri" ekranı ve iade (2026-10-07)
+
+**Ekran:** `/admin/odemeler` (menü: Ödeme → Paket Ödemeleri). Veri ve iade `admin/ajax/odemeler.php` üzerinden; `basvurular.php` ile aynı desen (`_guard.php`: admin oturumu + her POST'ta CSRF; DOM'a yalnızca textContent).
+
+- **Liste:** yalnızca Hoppa ile satılmış paket ödemeleri (SQL ön süzgeci + `isHostedPlanPayment()`); pazaryeri ve iyzico satırları yok. Sütunlar: kullanıcı (e-posta, ad, #id), paket, tutar, tarih, durum (Ödendi / İade edildi / Beklemede / Süresi doldu / Başarısız), sipariş; test ortamı satırlarında "TEST" etiketi. Filtre: durum + e-posta (LIKE, joker karakterler kaçışlı). En fazla 300 satır.
+- **İade:** yalnızca "Ödendi" satırında "İade et" → onay penceresi (kullanıcı, paket, tutar, sipariş, tarih, neden alanı, "geri alınamaz" uyarısı) → `hostedPlanRefund()`.
+- **İade ucu kararı:** ekran `/api/seller/marketplace_refund.php`'ye istek atmıyor, onun Hoppa satırları için çağırdığı **aynı fonksiyonu** (`hostedPlanRefund`) doğrudan çağırıyor. Neden: o API ucunda CSRF denetimi yok, admin panelinin kuralı her POST'ta CSRF. İade mantığı (kilit, doğrulama, paket geri alma, `admin_audit_log`) tek yerde kaldı.
+- **Sonuç kutusu:** iade edilen tutar, Hoppa durumu ("iptal edildi (aynı gün)" / "iade edildi"). Paket geri alınmadıysa kırmızı vurgulu ayrı satır: `DİKKAT — "<paket>" paketi geri ALINMADI: <neden>.`
+
+**Uçtan uca test (Hoppa TEST ortamı + geçici `php -S` + headless Chrome, 2026-10-07; KALICI yerel kayıt):**
+
+| Sipariş | Senaryo | Ekrandaki sonuç | Hoppa | Paket |
+|---|---|---|---|---|
+| PLN-91CC115F1676A6D6 | tek ödeme | "İade tamamlandı; paket geri alındı." · 151,25 ₺ · iptal edildi (aynı gün) | `ORDER_CANCEL` | Gümüş → Ücretsiz |
+| PLN-6EB44E85690A4EDB | sonrasında ikinci ödeme (B) var | "İade tamamlandı. Paket geri alınmadı: kullanıcının sonradan ödenmiş başka bir paket ödemesi var" + DİKKAT satırı | `ORDER_CANCEL` | Gümüş kaldı (B'ye ait) |
+| PLN-7958D8D35264F716 | B | "İade tamamlandı; paket geri alındı." | `ORDER_CANCEL` | Gümüş → Ücretsiz |
+
+Üç deneme de `admin_audit_log`'da (`tamamlandi`, admin adı, neden, paket sonucu). Ayrıca: menü bağlantısı görünüyor; iade sonrası satır "İade edildi" oldu ve düğme kalktı; e-posta filtresi çalışıyor; sayfada JS hatası yok; oturumsuz GET/POST → 403. Test kullanıcısı #6'nın önceden paket satırı yoktu (varsayılan plan); şimdi `Ücretsiz`, süresiz satırı var — davranış aynı.
+
+### Yeni bulgu
+
+| ID | Sev | Dosya | Problem | Durum |
+|---|---|---|---|---|
+| **N-21** | P3 | `api/admin/index.php:20` (ve aynı dosyadaki diğer göreli `../`/`./` yolları) | `require_once '../functions/db.php'` göreli yol; PHP `../` yollarını **çalışma dizinine** göre çözer. README'deki geliştirme komutu (`cd api && php -S 127.0.0.1:8000 router.php`, `dev:all`) ile çalışma dizini `api/` olduğundan admin girişinden sonra her sayfa **fatal error** veriyor (`Failed opening required '../functions/db.php'`). Apache'de çalışma dizini betiğin dizini olduğu için canlıyı etkilemiyor. Faz 7a-3 testinde `cd api/admin && php -S … -t .. ../router.php` ile aşıldı. | **Kapandı (2026-10-07).** `index.php`'deki `../functions/db.php`, üç `./partials/...` include'u ve rota include'u `__DIR__` ile; aynı hata sınıfındaki beş ajax ucu (`adminler`, `ayarlar`, `delete`, `read`, `smtp`: `require '../../functions/db.php'`) da düzeltildi. `api/admin` altında göreli include kalmadı. Doğrulama: README komutu (`cd api && php -S 127.0.0.1:8099 router.php`) + headless Chrome ile admin girişi açıldı, 24 admin rotasının hepsi 200, ajax'ta 5xx yok, PHP log'una yeni hata yok. |
+
+### N-22 — CSRF'siz admin iade ucu (2026-10-07)
+
+| ID | Sev | Dosya | Problem | Durum |
+|---|---|---|---|---|
+| **N-22** | P2 | `api/api/seller/marketplace_refund.php` → `SellerController::refund` | **Admin iade ucu yalnızca admin oturumuna bakıyordu, CSRF token denetimi yoktu** (admin panelinin kuralı: her POST'ta CSRF). Sömürü senaryosu: admin oturumu açıkken, admin'in tarayıcısından `POST /api/seller/marketplace_refund.php` gövdesi `data={"order_id":"PLN-…"}` olan bir istek tetiklenirse ödenmiş sipariş gerçekten iade edilir ve kullanıcının paketi geri alınır (gerçek para hareketi). **Sınır:** oturum çerezi `SameSite=Lax`; modern tarayıcılar bu çerezi başka bir siteden gelen POST'ta göndermez, yani dış bir siteden saldırı bugün büyük ölçüde engelli. Kalan risk: aynı site (same-site) kaynaklı istek (ör. alt alan adında barındırılan içerik) ya da SameSite uygulamayan tarayıcı; savunma tek bir çerez özelliğine dayanıyordu. Çağıran araması (`web/src`, `api/admin`, `api/router.php`): **çağıran yok** (`api/admin`'de yalnızca bir açıklama yorumu). | **Kapandı (2026-10-07):** uç diğer emekli uçlar gibi (`buyChatbot`) her istekte **410** döner; tek endpoint, çağıran yok → kademeli kural madde 3 gereği uygulandı. `hostedPlanRefund()` ve iyzico `processRefund()` kodda duruyor. İade artık yalnızca admin panelinin CSRF korumalı "Paket Ödemeleri" ekranından (`admin/ajax/odemeler.php`, `_guard.php`). Not: iyzico/pazaryeri satırlarının iadesi için şu an hiçbir giriş noktası yok (iyzico anahtarsız, kapalı; pazaryeri Hoppa'ya bağlanınca ekrana eklenmeli). Doğrulama: `curl -X POST` → `410`; ekran üzerinden iade yolu değişmedi. |
+
+## 12 — Uçtan uca doğrulama, `canli-2026-10b` (2026-10-09)
+
+Gerçek tarayıcıda (playwright-core, headless Chromium), ayrı worktree'de, yerel veritabanıyla 14 senaryo. Rapor: `docs/verification/2026-10-dogrulama.md`. Bu turda **kod değiştirilmedi**; aşağıdaki maddeler yalnızca kayıt.
+
+| ID | Sev | Dosya | Problem | Durum |
+|---|---|---|---|---|
+| **N-23** | P2 | `web/src/app/dashboard/chat/page.jsx` (`generateReply`, ~612-773) | **Yeni sohbetin ilk mesajında model hatası kullanıcıya hiç gösterilmiyor.** `generatereply.php` 200 + `event: error` (UPSTREAM_ERROR) döndüğünde istemci hata balonunu yazıyor, ama yeni sohbet açılışının tetiklediği `getchat.php` yeniden yüklemesi mesaj listesini DB'den baştan kuruyor ve balon (DB'de olmadığı için) siliniyor. Kullanıcı sorusunu görür; ne cevap ne hata ne "Tekrar Dene" görür. Mevcut bir sohbette ikinci mesajda aynı hata doğru gösteriliyor. Yeniden üretim: yeni sohbette ilk mesaj + Gemini 403 (gerçek, 1 istek) ve aynı SSE gövdesinin `page.route` ile yeniden oynatılması (Gemini'ye gitmeden) — 2/2. Coin iadesi doğru (sunucu `refunded:true`). | Açık |
+| **N-24** | P3 | `web/src/entities/user/ui/ProfileCard.jsx:506` | Sahibin kendi **bağımsız (özel)** botunun sohbet sayfasında "Sepete Ekle" düğmesi var (`isFreePublic` değilse çiziliyor). Tıklanınca `addtocart.php` → 422 `SELLER_NOT_ACTIVE` "Satıcısı henüz pazaryeri kaydını tamamlamamış" — kullanıcı kendi botunu sepete eklemeye çalışmış oluyor. GK-14 "Satın Al" düğmelerini kaldırdı; bu düğme kapsam dışı kalmış. | Açık |
+| **N-25** | P3 | `api/database/migrate.php` (sha256 checksum), repoda `.gitattributes` yok | Checksum satır sonuna duyarlı. `core.autocrlf=true` olan bir Windows checkout'ta (bu turun worktree'si) 17 migration'ın hepsi `--status`'ta **"UYGULANMIŞ AMA DOSYA DEĞİŞMİŞ"** görünüyor; içerik CR farkı dışında birebir aynı (doğrulandı). Canlıya Windows'ta alınmış bir kopyadan yükleme yapılırsa operatör yanlış alarm görür. | Açık |
+| **N-26** | P2 | `web/src/app/dashboard/explore/page.jsx:227, 347, 355`; `web/src/app/dashboard/page.jsx:914` | **Uydurma ticari beyan** (N-13/N-15 ailesi; N-15 yalnızca puanı kapattı). Keşfet ve ana sayfa kartlarında `bot.durum == 1` olan **her** bota "Daha Önce Satıldı" rozeti — `durum` yayın durumu, satış değil; bugün oluşturulmuş ücretsiz bot da (satılamaz) bu rozeti taşıyor. Keşfet istatistiklerinde sabit "+12% bu ay" ve "+24%" trend etiketleri. | Açık |
+| **N-27** | P2 | `api/src/Infrastructure/Repositories/ChatbotRepository.php:200` (`getMenuItems`) ← `web/src/app/dashboard/page.jsx:946-994` | **Madde 6: takip edilen ücretsiz herkese açık bot, ana sayfa bot seçicisinde kilitli + "Profili gör".** Seçici "erişim" kümesini `getchatbotsmenu.php`'den alıyor; o yalnızca *sahip + aktif abone* botlarını döndürüyor. Sunucu (GK-2, `userHasAccess('chat')`) bu botla sohbete izin veriyor. Yorum (`page.jsx:943`) "Faz 4'te genişleyecek" diyor; genişlemedi. Yeniden üretim: e2e-b, E2E Bot A2'yi (ücretsiz, herkese açık) takip eder → seçicide kilitli. | Açık |
+| **N-28** | P2 | `web/src/app/dashboard/upgrade/components/BillingCycleToggle.jsx:27-29`, `PricingCard.jsx:59` | **"Yıllık Faturalandırma · %20 İndirim" anahtarı yalnızca etiketi değiştiriyor**: fiyat aynı (149/299/849), etiket "/Yıllık (Aylık)" oluyor; yıllık ürün ve indirim yok (`upgradeplan` yalnızca `plan_name` alıyor, paket 30 gün). Landing'deki aynı anahtar daha önce kaldırılmıştı (`PricingSection.jsx:10` yorumu). Aynı sayfada "İstediğiniz zaman yükseltin veya iptal edin" metni; paket otomatik yenilenmiyor, iptal akışı yok. | Açık |
+| **N-29** | P3 | `api/functions/marketplace_application.php:172`, `MarketplaceApplicationController.php:66` | Başvuru durum ucundaki `submitted_at` aslında `updated_at`. Admin "İncelendi" dediğinde kullanıcıya gönderim zamanı olarak inceleme zamanı dönüyor (14:02:06 → 14:02:18). | Açık |
+| **N-30** | P2 | `api/src/Presentation/Controllers/NoteController.php:3-28` (`addDialogBook`); aynı kök `ChatController.php:28-54` (`addChat`) | **Diyalog Defteri'ne istemcinin yazdığı "asistan yanıtı" doğrulanmadan yayınlanıyor; bot erişimi de denetlenmiyor.** `input_message`/`output_message` istemciden aynen alınıyor, sohbet geçmişiyle karşılaştırılmıyor; `chatbot_id` için erişim kontrolü yok. **Sömürü senaryosu (kanıtlandı):** e2e-b (#109), erişimi olmayan e2e-a'nın **özel** botu #51 için `POST /api/note/adddialogbook.php` `data={"chatbot_id":51,"name":"…","input_message":"Soru","output_message":"Bu yanıtı bot üretmedi…"}` → 200; kayıt herkese açık akışta (`getdialogues.php`) `chatbot_isim:"E2E Bot A1"`, `owner_kullanici_adi:"e2e-a"` ile görünüyor. Sonuç: (a) herhangi bir kullanıcı, herhangi bir bota (başkasının ücretli/özel botu dahil) uydurma cevap yazıp herkese açık olarak o botun yanıtıymış gibi yayınlayabilir — itibar/içerik bütünlüğü; (b) özel botun adı ve sahibi akışta görünür. Aynı aile: `addChat` `sent_by:"bot"` ile serbest metni erişim kontrolü olmadan `chatbot_chats`'e yazıyor (kanıt: e2e-b'nin abone olmadığı ücretli bot #27 için satır #156); bu satırlar botun kartlardaki "Diyalog" sayacını (`toplam_chats`) da şişiriyor. Yamanın kapsamı iki uç + istemcinin cevap kaydetme akışı (cevap sunucuda kaydedilmeli) → **birden fazla endpoint, kademeli kural madde 4: uygulanmadı, öneri.** | Açık — karar/tasarım gerekiyor |
+| **N-31** | P1 (ödeme açılmadan önce; `canli-2026-10b`'yi engellemez, orada `PAYMENT_PROVIDER=none`) | `api/api/wallet/hoppa_return.php` → `WalletController::hoppaReturn`; oturum `src/autoload.php` → `functions/bootstrap.php:34` ile her istekte `session_start()` | **Hoppa'dan dönüş kullanıcıyı oturumdan düşürüyor.** BACK_URL çapraz-site bir form POST'u; `SameSite=Lax` oturum çerezi bu istekte gelmiyor, PHP yeni bir oturum başlatıp `Set-Cookie: PHPSESSID=<yeni>` gönderiyor ve tarayıcıdaki oturum çerezinin üstüne yazıyor. 303 → `/dashboard/upgrade?odeme=…` → giriş yok → `/login/`; ödeme sonucu da kayboluyor. Ödeme (`paid`) ve paket tanımı doğru çalışıyor. Kanıt: Hoppa TEST'te gerçek ödeme `PLN-4EC28FD239F538C4` (başarılı) ve `PLN-C732473EF5F50FA2` (hata 51) — ikisinde de dönüşte `sessioncheck` → `authenticated:false`; ayrıca ödeme yapmadan deterministik yeniden üretim (127.0.0.1'den `hoppa_return.php`'ye sahte referanslı form POST). Faz 7a e2e'si BACK_URL'i `route.fulfill` ile kestiği için görülmemişti. | Açık |
+
+Not (bulgu değil, gözlem): `user_plan_selection.selected_at` (11:34:08) ile `expires_at` (14:34:08 + 30 gün) arasında 3 saatlik fark — DB `NOW()` (UTC) ile PHP saat dilimi karışıyor olabilir; etkisi doğrulanmadı. Bir kez "Page crashed" (Listeye Ekle → Kaydet) görüldü, 3 denemede tekrarlanmadı.
+
+## Faz 8 — 12 doğrulama bulgularının kapatılması (2026-10-09) → `canli-2026-10c`
+
+Her madde ayrı commit; her commit'ten önce lint + verify build + `php -l` yeşil. Yeniden koşu: ayrı worktree, production build, `PAYMENT_PROVIDER=none` (S-12'de geçici `hoppa`/TEST1234), rapor `docs/verification/2026-10-dogrulama.md` → "Yeniden koşu".
+
+| ID | Commit | Ne yapıldı | Doğrulama | Durum |
+|---|---|---|---|---|
+| **N-23** | `e27dcfd` | Geçmiş yükleme effect'i "mesaj var + sohbet var" kontrolünü bir sonraki effect'te güncellenen ref yerine aynı render'ın `conversationId` state'iyle yapıyor; ilk mesajdan sonra geçmiş yeniden yüklenip hata balonunu silmiyor. | Tarayıcı: yeniden oynatılan SSE ile önce kırmızı / sonra yeşil (hata yolu + başarılı yol); S-02 yeniden koşusunda gerçek Gemini 403 ile "…ulaşılamıyor" + "Tekrar Dene" ilk mesajda görünüyor. | **Kapandı** |
+| **N-24** | `afa6c20` | `getDetail` yanıtına `is_owner` (eklemeli). "Sepete Ekle" yalnızca başkasının herkese açık, fiyatlı botunda. | access_selftest (`is_owner`, 3 kontrol); S-02: sahibin özel botunda düğme yok. | **Kapandı** |
+| **N-25** | `bd6ba22` | `migrationChecksum()` (CRLF/CR → LF, sonra sha256); `.gitattributes`: `*.sql`, `*.php` `eol=lf`. | `migrate_selftest.php` (A: satır sonu bağımsızlığı; B: 17 kaydın LF ve CRLF hali kayıtlı checksum'la eşleşiyor, salt okunur); yeni Windows worktree'sinde `.sql`/`.php` LF geldi, `--status` 17/17 "uygulanmış". | **Kapandı** |
+| **N-26** | `d41456b` | `getPublished` → `has_sales` (user_subscriptions — süresi dolmuş dahil — veya chatbot_purchase_credits). Rozet yalnızca `has_sales`; bento kartın "Doğrulanmış" yedeği kaldırıldı. `durum` sütunu geriye dönük uyum için duruyor. | access_selftest N-26 (vitrindeki 9 botta bayrak = gerçek satış; eklenen satışla olumlu durum); S-03/S-06: yeni botlarda rozet yok, gerçek satışı olan 6 seed botta var. | **Kapandı** |
+| **N-27** | `423774f` | `ChatbotRepository::chatAccessibleIds()` = `userHasAccess(…, 'chat')`; `getfollowedbots` her bota `can_chat` ekliyor (eklemeli); ana sayfa seçicisi kilidi buradan alıyor (getchatbotsmenu değil). | access_selftest N-27; S-06: takip edilen ücretsiz A2 seçilebilir ve çipe geliyor, ücretli bot kilitli + "Profili gör". | **Kapandı** |
+| **N-28** | `9e9e3f6`, `77eb463` | Keşfet'teki sabit "+12% bu ay / +24%" kaldırıldı; yükseltme sayfasındaki yıllık/%20 anahtarı ve `BillingCycleToggle` kaldırıldı; başlıktaki "İstediğiniz zaman … iptal edin" → "Paketler 30 gün geçerlidir ve otomatik yenilenmez". | S-03 / S-07 yeniden koşusu. | **Kapandı** |
+| **N-29** | `33f124f` | Gönderim zamanı `updated_at` (ON UPDATE) yerine `created_at`; yeniden gönderim (GK-20) `created_at`'i günceller. Tek kaynak `marketplaceApplicationSubmittedAt()`. | application_selftest E (önce kırmızı); S-09: inceleme öncesi/sonrası 15:34:06 = 15:34:06. | **Kapandı** |
+| **N-30** | `8861665` | Aşağıdaki tablo. | access_selftest N-30 (16 senaryo); canlı HTTP denemeleri; S-11 + S-13 yeniden koşusu. | **Kapandı** |
+| **N-31** | `92c10ba` | `hoppa_return.php` `LUMANORIS_STATELESS_ENDPOINT` tanımlıyor; `bootstrap.php` o uçta `session_start()` yapmıyor → Set-Cookie yok, kullanıcının oturum çerezi korunuyor. Çerez ayarı değişmedi; uç zaten oturumsuz ProcessQuery ile kesinleştirip 303 GET yapıyordu. | hoppa_selftest A: N-31 kilidi; curl: Set-Cookie yok (diğer uçlar oturum açmaya devam ediyor); Hoppa TEST gerçek ödeme, ana ağaçta 2 + yeniden koşuda 2: başarılı → `?odeme=paid`, aynı çerez, oturum açık, paket tanımlı; hata kartı → `?odeme=failed`, oturum açık, paket değişmedi; admin iadesi → paket geri alındı. | **Kapandı** |
+| **N-32** | `540486b` | **Yeni (S-06 yeniden koşusunda bulundu; `canli-2026-10b`'de de var).** Ana sayfadan `?prompt=` ile sohbet başlatınca, kullanıcının o botla geçmişi varsa ilk (id=0) sohbetin geç dönen geçmiş yüklemesi bayat `conversationId` ile mesaj listesini "yalnızca karşılama mesajı"na çeviriyor; kullanıcının mesajı ve cevap ekrandan siliniyordu. Effect yeniden çalışınca eski yükleme iptal ediliyor. | S-06: geçmişi olan kullanıcıyla önce kırmızı (yalnızca karşılama mesajı), sonra yeşil (mesaj + cevap görünür); N-23 kontrolleri yeşil kaldı. | **Kapandı** |
+
+### N-30 — etkilenen uçlar, önce / sonra
+
+| Uç | Önce | Sonra |
+|---|---|---|
+| `POST /api/note/adddialogbook.php` | `{chatbot_id, name, input_message, output_message}` aynen kaydediliyor; bot erişimi denetlenmiyor. | Yalnızca `{message_id, name}` (`user_id` yok sayılır; başka alan → 400). Mesaj, çağıranın kendi geçmişindeki bir **bot** mesajı olmalı (değilse 404); o bota sohbet erişimi yoksa 403; önünde kullanıcı sorusu yoksa 422. Soru ve cevap DB'den kopyalanır. |
+| `POST /api/chat/addchat.php` | `sent_by:"bot"` ile serbest metin, erişim kontrolü yok ("Diyalog" sayacı şişirilebiliyordu). | Sohbet erişimi zorunlu (403). `bot` yalnızca botun `sohbet_basi_mesaj`'ı birebir ise; aksi 400. |
+| `POST /api/chat/generatereply.php` | Cevabı istemci `addchat` ile kaydediyordu. | Sunucu akışı biriktirip cevabı kendisi kaydediyor; son karede `event: saved` `{"saved":{"message_id":N}}` (eklemeli). |
+| `GET /api/chat/getchat.php` | `message, sent_by` | `id, message, sent_by` (`ORDER BY id`) — eklemeli. |
+| `GET /api/note/getdialogues.php` | Tüm kayıtlar (özel bot adı/sahibi dahil). | Yalnızca botu vitrin kuralını (`ChatbotRepository::publicVisibleSql()`) geçen kayıtlar + izleyenin kendi paylaştıkları. |
+| `getdialoginteracts.php`, `addcomment2.php`, `likedialog.php`, `dislikedialog.php`, `diduserlike2.php`, `diduserdislike2.php` | Kimlikle herhangi bir kayda erişim. | Aynı görünürlük kuralı; görünmeyen kayıt → 404. |
+| İstemci (`chat/page.jsx`, `DialogNotebookModal.jsx`) | Bot cevabını kendisi kaydediyor; deftere metin gönderiyor. | `saved` kimliğini mesajda tutuyor; "Diyalog Defterine Ekle" yalnızca kimliği olan (sunucunun kaydettiği) cevapta; modal `{message_id, name}` gönderiyor. |
+
+Çağıran araması (`web/src`, `api/admin`, `api/router.php`): `adddialogbook` → yalnızca `DialogNotebookModal.jsx`; `addchat` → yalnızca `chat/page.jsx` (kullanıcı mesajı + karşılama); `getdialogues` ve etkileşim uçları → `notes/page.jsx`, `DialogueModal.jsx`. Admin ve router'da çağıran yok.
+
+**Sınır (B4):** Gemini anahtarı askıda olduğu için sunucunun gerçek bir cevabı kaydedip `saved` gönderdiği yol canlı modelle uçtan uca görülmedi. `geminiSseText` + `chatSaveBotReply` selftest'te kaydedilmiş SSE gövdesiyle, tarayıcı akışı ise aynı fonksiyonla yazılmış fixture satırıyla doğrulandı. Anahtar geldiğinde S-02/S-11 bir gerçek mesajla tekrarlanmalı.
+
+**Mevcut kayıtlar — öneri: dokunma (veri değiştirme yok).** Yeni görünürlük kuralı özel/bağımsız botların kayıtlarını deploy anında başkalarından gizler; adı ve sahibi sızmaz. Herkese açık botlardaki eski kayıtların cevap metni istemci kaynaklıydı ve doğrulanamaz (o günkü bot cevabı satırlarını da istemci yazıyordu, yani geçmişle eşleşmesi kanıt değil). Silmek ya da gizlemek veri değiştiren bir migration olur ve onaya tabidir. Önerim: canlıda aşağıdaki salt okunur ölçümü görmek; `cevabi_gecmiste_yok > 0` ise gizleme kararını o sayıyla vermek. Yerel ölçüm (bu sorgu, 2026-10-09): `toplam 4, botu_silinmis 0, ozel_botta_gizlenecek 0, cevabi_gecmiste_yok 1`. Bu 1 kayıt doğrulamanın test kaydı #16; temizlikte sohbeti silindiği için kaynağı kalmadı. Bu, bir durumu da gösteriyor: sohbet silinince defter kaydı kalıyor; yani `cevabi_gecmiste_yok` tek başına "uydurma" demek değildir.
+
+### N-30 mevcut kayıt sorgusu (salt okunur — canlı sırası adım 4b)
+
+```sql
+SELECT COUNT(*) AS toplam,
+       SUM(c.id IS NULL) AS botu_silinmis,
+       SUM(c.id IS NOT NULL AND NOT (c.is_independent = 0 AND (COALESCE(c.ucret_haftalik,0) = 0 AND COALESCE(c.ucret_aylik,0) = 0 OR pms.user_id IS NOT NULL))) AS ozel_botta_gizlenecek,
+       SUM(NOT EXISTS (SELECT 1 FROM chatbot_chats b
+                        WHERE b.user_id = udb.user_id AND b.chatbot_id = udb.chatbot_id
+                          AND b.sent_by = 'bot' AND b.message = udb.output_message)) AS cevabi_gecmiste_yok
+  FROM user_dialog_books udb
+  LEFT JOIN chatbotlar c ON c.id = udb.chatbot_id
+  LEFT JOIN param_marketplace_sellers pms ON pms.user_id = c.author_user_id AND pms.status = 'active';
+```
+
+### N-33 — sohbet coin çipi iade sonrası güncellenmiyor (2026-10-09)
+
+| ID | Sev | Dosya | Problem | Durum |
+|---|---|---|---|---|
+| **N-33** | P3 | `web/src/app/dashboard/chat/page.jsx` (`generateReply`, SSE `error` karesi) | Model hatasında sunucu hakkı iade edip `error {refunded:true}` gönderiyor, ama ilk `meta` karesinin çipe yazdığı tüketim sonrası değer (ör. 9) kalıyordu: "Bugün kalan Lumacoin: 9" ↔ kenar çubuğu 10/10. S-02 yeniden koşusunda görüldü. | **Kapandı** (`3f2959d`): `refunded:true` gelince değer sunucudan (`checkmessageallowance.php`) yeniden okunuyor. Tarayıcı (yeniden oynatılan SSE, Gemini'siz): önce çip 9 / sunucu 10 → sonra 10 / 10; N-23 kontrolleri yeşil kaldı. `canli-2026-10c`'de yok, **`canli-2026-10d`'de var**. |
+
+## Hoppa canlıya açma (2026-10-09)
+
+Hoppa canlı hesabı açıldı (merchant: lumanoris.net). **Bu bölümde hiçbir anahtar değeri yok;** değerleri sunucuya kullanıcı girer. Claude canlı `.env`'i görmez, canlıya bağlanmaz, ödeme komutu çalıştırmaz.
+
+### 1. Canlı `api/.env` satırları
+
+Kodun okuduğu adlar (`HoppaGateway.php:51-54`, `PaymentGatewayFactory.php:22`, `WalletController.php:547`). Okuma kuralı: `HOPPA_MODE=live` iken **yalnızca** `HOPPA_LIVE_*` okunur; mod `test` ise `HOPPA_TEST_*`.
+
+| Satır | Ne | Not |
+|---|---|---|
+| `PAYMENT_PROVIDER=hoppa` | Paket ödemesini Hoppa'ya açan anahtar. | Bugün `none` (ya da satır yok). Ödeme açma gününün **son** değişikliği bu; geri dönüş de bu satırı `none` yapmak. |
+| `HOPPA_MODE=live` | Canlı Hoppa servisi (`https://posservice.esnekpos.com`, GERÇEK PARA). | Yalnızca `test` ve `live` geçerli; başka değer → ödeme kapalı. |
+| `HOPPA_LIVE_MERCHANT=` | Hoppa üye işyeri kimliği (panelde "Merchant"). | İstek gövdesinde `MERCHANT` olarak gider. |
+| `HOPPA_LIVE_MERCHANT_KEY=` | Üye işyeri gizli anahtarı (panelde "Merchant Key"). | İstek gövdesinde `MERCHANT_KEY`; **log'a hiç yazılmaz** (gövde log'lanmaz, saklanan yanıttan `MERCHANT_KEY` ve `CUSTOMER_*` ayıklanır — `HoppaGateway.php:18, 335`). **Yenilenmiş anahtar girilmeli** (B3 notu). |
+| `APP_PUBLIC_URL=https://…` | Sitenin dışarıdan açılan adresi, sonda `/` yok. Hoppa sonucu `APP_PUBLIC_URL/api/wallet/hoppa_return.php`'ye döndürür. | **Canlı modda `https` zorunlu** — değilse ödeme başlatılmaz (`WalletController.php:604-607`, log: "APP_PUBLIC_URL tanımsız/geçersiz"). Kullanıcıların siteyi açtığı alan adıyla **aynı** olmalı; farklıysa dönüşte oturum çerezi gelmez. |
+
+Gerekmeyenler:
+- **Canlı API base URL** — `.env`'de yok, kodda sabit (`HoppaGateway::LIVE_BASE_URL`).
+- **Merchant Public Token** — kod **kullanmıyor** (`api/` ve `web/src`'de hiçbir referans yok; Ortak Ödeme Sayfası akışı yalnızca Merchant + Merchant Key ile çalışıyor). **Eklenmesine gerek yok.**
+- `HOPPA_TEST_MERCHANT` / `HOPPA_TEST_MERCHANT_KEY` — canlıda boş kalır (test ortamı canlıda kullanılmaz).
+- `HOPPA_E2E_*` — yalnızca yerel `--e2e` testi; canlıda yok.
+
+Dikkat: `functions/env.php` **gerçek ortam değişkenini `.env`'e tercih eder.** Barındırma panelinde/servis tanımında `PAYMENT_PROVIDER` ya da `HOPPA_*` ortam değişkeni olarak tanımlıysa `.env` değişikliği etkisiz kalır. Değişiklikten sonra PHP sürecini (php-fpm / Apache) yeniden başlatın.
+
+### 2. `PAYMENT_PROVIDER=hoppa`'dan önce kapanması gerekenler (tek liste)
+
+| # | Madde | Tür | Durum (2026-10-09) |
+|---|---|---|---|
+| 1 | **Merchant Key yenilemesi** — anahtar sohbette paylaşıldı; Hoppa'dan yenileme, yeni anahtar canlıya girilir, eski anahtar geçersiz. | Kullanıcı / Hoppa | Bekliyor |
+| 2 | **Sürüm** — canlıda `canli-2026-10f` ya da `canli-2026-10e` (asgari `canli-2026-10c`: N-31, dönüşte oturum düşmesi orada kapandı; daha eski sürümle ödeme açılmamalı). 10e, N-33/N-34/N-35'i de içerir; 10f yalnızca ön yüz düzeltmeleri ekler, ödeme yoluna dokunmaz. | Deploy | `canli-2026-10e` hazır |
+| 3 | **N-19 komisyon** — test hesabında komisyon alıcıya yansıyor (149 ₺ → karttan 151,25 ₺). Canlı hesapta komisyonu kim ödeyecek? Ya Hoppa panelinde/üye işyeri ayarında "komisyon üye işyerinde" yapılır, ya da ekranlarda "+ komisyon" açıkça yazılır. | Müşteri kararı + Hoppa #3 | Açık |
+| 4 | **N-20 alıcı adresi** — `CITY/STATE/ADDRESS` (ve telefon yoksa `PHONE`) `"-"` gidiyor; canlıda kabul ediliyor mu? | Hoppa #17 (+ müşteri: adres toplanacak mı) | Açık |
+| 5 | **HTTPS ve alan adı** — `APP_PUBLIC_URL` https; TLS sertifikası; ters vekil `X-Forwarded-Proto: https` iletiyor (oturum çerezi `Secure` ancak öyle alır — J-02). | Altyapı (B6) | Açık |
+| 6 | **Cron** — `*/5 * * * * cd /path/to/lumanoris && php api/cron/plan_payments.php >> /var/log/lumanoris-plan-payments.log 2>&1`. Hoppa webhook belgelemiyor; sekmesini kapatan alıcının ödemesi yalnızca bu mutabakatla kesinleşir. Yenileme hatırlatması (GK-27) da bu işte. | Sunucu | Kurulmadı (`canli-2026-10c`'de bilerek yok) |
+| 7 | **Hoppa soruları** — #2 AUTH_HASH (bugün güven yalnızca sunucudan `ProcessQuery`'de; kabul edilebilir ama teyit iyi olur), #4 webhook (yoksa 6. madde şart), #5 ödeme sayfası geçerlilik süresi (kod 24 saat / 7 gün varsayıyor), #6 aynı ORDER_REF ile ikinci ödeme, #12 iade süre sınırı, #13 canlıya geçiş onayı, #14-16 PCI/KVKK/yasal metin koşulları. | Hoppa | Açık (`docs/hoppa-sorular.md`) |
+| 8 | **Yasal metinler / şirket bilgileri** — mesafeli satış sözleşmesi, iade koşulları, ticari unvan/adres/vergi no sitede (B3 2026-09-05 notu; Hoppa #16). | Müşteri | Kontrol edilmeli |
+| 9 | **Erken yenileme** — süre bitmeden ikinci paket alınırsa kalan günler devretmiyor (her ödeme `NOW()+30`). | İş kuralı | Karar yok (ekranda "30 gün, otomatik yenilenmez" yazıyor) |
+| 10 | **Sohbet (B4)** — paketler günlük coin satıyor; canlıda Gemini çalışmıyorsa ödeyen kullanıcı hizmeti kullanamaz. | Hesap | Açık — ödeme açmadan önce kapanması **önerilir** |
+| 11 | Kapsam notu — bu yalnızca **paket** ödemesini açar. Pazaryeri ücretli satışı (B1) kapalı kalır; iyzico kodu yalnızca eski satırlar için (canlı sırası adım 2b). | — | — |
+
+Faz 8 bulguları (N-23…N-32) kapandı; ödeme yolunu doğrudan etkileyen N-31 `canli-2026-10c`'de.
+
+### 3. Ödeme açma günü — sıra
+
+Ön koşul: 2. bölümdeki 1-6 kapanmış, sürüm `canli-2026-10f` ya da `canli-2026-10e` (asgari `canli-2026-10c`), canlı veritabanı yedeği alınmış.
+
+| Adım | Ne | Kontrol / durma koşulu |
+|---|---|---|
+| 1 | **Anahtar yenileme** (Hoppa) | Yeni Merchant Key elde; eski anahtarın geçersiz olduğu Hoppa'dan teyitli. |
+| 2 | **Anahtarları girme** — canlı `api/.env`: `HOPPA_MODE=live`, `HOPPA_LIVE_MERCHANT`, `HOPPA_LIVE_MERCHANT_KEY`, `APP_PUBLIC_URL=https://…`. `PAYMENT_PROVIDER` **henüz `none`**. PHP sürecini yeniden başlat. | `php api/database/hoppa_selftest.php` (A + B; **`--e2e` canlıda çalıştırılmaz**) 0 başarısız. `.env` dosya izinleri yalnızca web kullanıcısı. |
+| 3 | **Cron kurulumu** (2. bölüm #6) | Bir çalıştırma elle: `php api/cron/plan_payments.php` → hata yok (provider `none` iken mutabakat atlanır, normal). |
+| 4 | **Açma** — `PAYMENT_PROVIDER=hoppa`, PHP yeniden başlat. | Paketler'de ücretli paket → "Ödemeye geç" görünür ("Ödeme altyapısı hazırlanıyor" gitmeli). |
+| 5 | **Küçük tutarlı gerçek test ödemesi** — kendi hesabınızla **Gümüş** (en düşük tutar, 149 ₺; N-19'a göre karttan komisyonlu tutar çekilebilir). Hoppa sayfasının adresi `posservice.esnekpos.com` olmalı (`posservicetest` değil). | Dönüş: `/dashboard/upgrade?odeme=paid`, oturum açık, "Ödemeniz alındı…", kenar çubuğu Gümüş. Admin → Ödeme → Paket Ödemeleri: satır **Ödendi**, "TEST" etiketi **yok**. `?odeme=pending` görürseniz 5 dk bekleyin (cron); `failed` ise DURUN. |
+| 6 | **Aynı gün iade** — **bizim** admin ekranımızdan: Paket Ödemeleri → satır → "İade et" → neden yaz → onayla. | Sonuç kutusu: "İade tamamlandı; paket geri alındı", Hoppa durumu **"iptal edildi (aynı gün)"**; kullanıcı Ücretsiz'e döndü. **Hoppa panelinden iade yapmayın:** orada yapılan iade bizim veritabanımıza yazılmaz, paket geri alınmaz ve satır "Ödendi" kalır. |
+| 7 | **Kontrol** | Hoppa panelinde işlem iptal görünüyor; kartta provizyon iptali (banka ekstresi 1-2 gün); `admin_audit_log`'da iade satırı; PHP log'unda `[hoppaFinalize] paket tanımlandı` + `[admin/odemeler] iade … sonuc=ok`; cron log'unda hata yok. |
+| 8 | **Geri dönüş** (herhangi bir adımda sorun) | `PAYMENT_PROVIDER=none` + PHP yeniden başlat → ödeme anında kapanır; mevcut paketler etkilenmez, admin iade ekranı `none` iken 503 verir (iade gerekirse önce sorunu çözüp tekrar açın ya da Hoppa ile görüşün). |
+
+### 4. Yerelde canlı anahtarla deneme (isteğe bağlı)
+
+**Bu deneme sırasında Claude `.env` okumaz, ödeme/iade komutu ya da tarayıcı ödemesi çalıştırmaz.** Gerçek para hareket eder; aynı gün iade edin.
+
+**Önemli kısıt:** canlı modda `APP_PUBLIC_URL` **https olmak zorunda** (kod `http://localhost:3000`'u reddeder, "Ödemeye geç" hata verir). Yerel deneme için siteyi **https bir tünel** üzerinden açmanız gerekir (ör. bir HTTPS tünel aracıyla `localhost:3000`'a). Tarayıcıda da siteyi **o tünel adresinden** açın (localhost'tan değil); yoksa dönüşte oturum çerezi gelmez. Hoppa, BACK_URL'in kayıtlı alan adınızda (lumanoris.net) olmasını şart koşuyor olabilir — bilinmiyor; şart koşuyorsa yerel deneme dönüşte başarısız olur ve tek doğru deneme canlı alan adındadır (3. bölüm). Bu soruyu Hoppa'ya sormak iyi olur.
+
+Yerel `api/.env`'de değişecek satırlar (önce mevcut hallerini not edin; bugün yerelde `PAYMENT_PROVIDER=hoppa` + `HOPPA_MODE=test` + test üye işyeri kullanılıyor):
+
+| Satır | Deneme sırasında |
+|---|---|
+| `PAYMENT_PROVIDER` | `hoppa` |
+| `HOPPA_MODE` | `live` |
+| `HOPPA_LIVE_MERCHANT`, `HOPPA_LIVE_MERCHANT_KEY` | canlı değerler (yenilenmiş anahtar) |
+| `APP_PUBLIC_URL` | tünelin `https://…` adresi (sonda `/` yok) |
+
+Sonra `php -S` (API) sürecini yeniden başlatın. Akış 3. bölümün 5-6. adımlarıyla aynı; ödeme ve iade **yerel** veritabanına yazılır, iade yerel admin ekranından (Paket Ödemeleri) yapılır ve canlı Hoppa'da gerçekten iptal eder. Sekme kapanır ve `?odeme=pending` kalırsa: `php api/cron/plan_payments.php`'yi siz elle bir kez çalıştırın.
+
+**Geri alma** (deneme biter bitmez):
+1. `HOPPA_LIVE_MERCHANT` ve `HOPPA_LIVE_MERCHANT_KEY` satırlarını **boşaltın** (yerelde canlı anahtar kalmasın).
+2. `HOPPA_MODE=test`, `APP_PUBLIC_URL=http://localhost:3000`, `PAYMENT_PROVIDER` eski değerine (ya da `none`).
+3. `php -S`'i yeniden başlatın; tüneli kapatın.
+4. Kontrol: Paketler → "Ödemeye geç" → açılan sayfa `posservicetest.esnekpos.com` (test) ya da "Ödeme altyapısı hazırlanıyor" (`none`) olmalı; `posservice.esnekpos.com` açılıyorsa canlı anahtar hâlâ okunuyor demektir.
+5. Hoppa panelinde deneme işleminin iptal göründüğünü kontrol edin. Canlı anahtarı içeren bir `.env` kopyası (yedek, `.env.bak-*`) bırakmayın.
+
+## Canlıdan gelen hatalar — N-34, N-35 (2026-10-10) → `canli-2026-10e`
+
+Müşteri lumanoris.net'te bildirdi. İkisi de **`canli-2026-10d`'de var** (ayrıca `canli-2026-10` ve `canli-2026-10b`'de; N-34'ün sunucu tarafındaki sıkı izin listesi 2026-08-26'dan, Takip Edilenler'deki istek hiç yazılmamıştı). Canlıya hangi sürümün gittiğini kullanıcı kontrol edecek.
+
+| ID | Sev | Dosya | Problem | Durum |
+|---|---|---|---|---|
+| **N-34** | P2 | `web/src/entities/user/ui/ProfileCard.jsx` (sohbet sayfası "Yorumlar"), `web/src/features/comments/CommentModal.jsx` | **Bot yorumu eklenemiyor ama listede görünüyor.** İstemci gövdeye `user_id` koyuyordu; `SocialController::addComment` yalnızca `chatbot_id` + `comment` kabul edip başka anahtarı 403 "Bu alanlar gönderilemez: user_id" ile reddediyor ve yazarı oturumdan alıyor (**sunucu doğru; izin listesi gevşetilmedi**). Ayrıca `CommentModal` yorumu sonuca bakmadan "Siz · Şimdi" olarak listeye ekliyordu. | **Kapandı** (`42998bb`): `features/comments/api.js` (`postBotComment`) `addcomment.php`'nin tek istemci yolu, kimlik göndermez. `CommentModal` satırı "Gönderiliyor…" olarak ekler; `onSend` `{ok:true}` dönmezse satırı geri alır, metni girişe geri koyar, hata mesajı pencerede kalır. |
+| **N-35** | P2 | `web/src/app/dashboard/following/page.jsx` (`handleUnfollow`) | **Takip Edilenler'de takibi bırakma kalıcı değil.** İki sayfa karşılaştırıldı: sohbet sayfası `followchatbot.php`'ye `{chatbot_id}` (toggle) gönderiyor ve çalışıyor; Takip Edilenler **hiç istek göndermiyordu** — kartı yalnızca ekrandan siliyor ve "çıkarıldı" diyordu; sayfa yenilenince bot geri geliyordu. | **Kapandı** (`ee04666`): açık eylem `{chatbot_id, action:"unfollow"}` (toggle değil — bayat bir sayfa botu yeniden takip edemez); kart yalnızca sunucu başarı dönünce kalkar, hata olursa yerinde kalır ve mesaj gösterilir. Sunucu: `functions/social_relations.php` → `chatbotRelationSet()` (açık eylem idempotent; eylemsiz çağrı eski toggle, sohbet sayfası değişmedi; yanıt adları aynı + `following`/`liked` bayrağı + `unchanged`). |
+
+### Tarama sonuçları
+
+**N-34 sınıfı — sunucunun izin listesinin reddettiği alan gönderen istekler.** Sıkı izin listesi olan uçlar: `addcomment` (SocialController), `addchat`, `addconversation`, `updateconversation` (ChatController), `savechatbot`, `updatechatbot`, `updatecart`, `updatesubscription`, `adddialogbook`, pazaryeri başvurusu. Bunlardan **yalnızca `addcomment`** `user_id`'yi kontrolden önce düşürmüyordu; diğerleri düşürüyor ya da istemci izinli alan gönderiyor. Bu uca giden istemciler: `ProfileCard.jsx` (canlı) ve `entities/chatbot/ui/ChatbotCard.jsx` (hiçbir yerden import edilmiyor) — ikisi de düzeltildi. `web/src`'te `user_id` gönderen diğer ~20 istek, kimliği oturumdan alan ve `user_id`'yi yok sayan uçlara gidiyor (zararsız; sunucu kodunda gövdeden `user_id` okuyan tek yer admin'e özel `SellerController` satıcı silme). `features/notes/DialogueModal.jsx` (import edilmiyor, defter yorumu) de aynı sözleşmeye getirildi.
+
+**N-35 sınıfı — sunucuya yazmadan "başarılı" görünen takip/beğeni/listeye ekle düğmeleri:**
+
+| Yer | Durum (önce) | Sonuç |
+|---|---|---|
+| Takip Edilenler → kalp (takibi bırak) | İstek yok | Düzeltildi (N-35) |
+| Keşfet + ana sayfa kartı (`BotCard.bento.jsx`) → kalp | Yalnızca yerel state; başlangıç durumu her zaman "beğenilmemiş" | Düzeltildi: `{chatbot_id, action:"like"/"unlike"}`, başlangıç `getchatbots.php` → `liked_by_me` (eklemeli, `optionalAuth`); arayüz yalnızca başarıda değişir |
+| Aynı kart → yer imi ("Listeme Kaydet") | Yalnızca yerel state | Düzeltildi: gerçek "Listeye Ekle" penceresini açar |
+| `AddToListModal` (sohbet sayfası + kart) | İsteklerin yanıtına bakmadan "Kaydedildi" | Düzeltildi: her yanıt kontrol edilir; hata varsa pencere açık kalır, mesaj gösterilir, durum sunucudan yeniden okunur |
+| Sohbet sayfası takip/beğeni (`ProfileCard`) | Doğru çalışıyor | Değişmedi (eylemsiz toggle); regresyon kontrolü yeşil |
+| Keşfet `?from=list` seçim modu | `localStorage`'a "liste" yazıyor, sunucuya değil | **Düzeltilmedi:** uygulamada bu adrese giden bağlantı yok (yalnızca adres elle yazılırsa açılıyor). Kaldırılması ya da gerçek listelere bağlanması önerilir. |
+| `widgets/MarketCard.jsx` | Sabit (uydurma) yorumlar gösteriyor | **Düzeltilmedi:** hiçbir yerden import edilmiyor (ölü kod). Kaldırılması önerilir. |
+
+### Doğrulama
+
+- `access_selftest`: N-34 (tek çağıran + kimlik yok + sunucu izin listesi ve oturum kimliği kilitli), N-35 (10 kontrol: takip yokken "unfollow" yeniden takip etmez, idempotent follow, kalıcı unfollow, eylemsiz toggle korunuyor, like/unlike, `liked_by_me` beğenen/oturumsuz, geçersiz eylem reddi). Önce kırmızı, sonra yeşil.
+- Tarayıcı, e2e-b + seed bot #27, masaüstü ve 390 px: **önce** (ana ağaç, dev): N-34 → 403 "Bu alanlar gönderilemez: user_id", yorum kayıtsız ama listede; N-35 → 0 istek, yenilemede bot geri geldi. **Sonra** (dev ve `ee04666` production build): N-34 → istek `{"chatbot_id":27,"comment":…}`, 200, kayıtlı; zorlanmış 500'de satır geri alındı, metin ve mesaj kaldı. N-35 → istek `{chatbot_id:27, action:"unfollow"}`, yenilemede gelmiyor, sunucuda takip yok. Kart kalbi yenileme sonrası basılı ve sunucuda kayıtlı; yer imi liste penceresini açıyor (detay penceresi açılmıyor); liste penceresi zorlanmış 500'de açık kalıp mesaj gösteriyor. Sohbet sayfası takip/beğeni regresyonu yeşil. 390 px: Takip Edilenler, Keşfet, ana sayfa, yorum ve liste pencereleri — yatay kaydırma/taşma yok.
+- Tam doğrulama (`ee04666`): lint, verify build, `php -l`, iyzico 77/77, plan_limits --strict 44/44, access 59/59, application 52/52, hoppa 83/83, migrate 21/21; S-13 güvenlik smoke öncekiyle aynı.
+
+### Not — kurala aykırı bir commit ve test yalıtımı
+
+- `42998bb` (N-34) commit'i, N-35'in henüz kırmızı olan test bölümünü içeren `access_selftest.php` ile girdi: dosyayı N-34 bölümüne indirecek adım başarısız oldu ve zincir durmadı. lint/build/`php -l` yeşildi ama CLAUDE.md "doğrulamalardan biri başarısızsa commit atılmaz" diyor. Geçmiş yeniden yazılmadı; `ee04666` (N-35) ile test yeşil.
+- `9b86d6b`: `hoppa_selftest`'in mutabakat sayaç kontrolü, yerel veritabanında kart girilmeden bırakılmış gerçek bir TEST siparişi (`PLN-7F32C6492C3C4534`, N-31 doğrulamasından) yüzünden kırmızıya düştü. Kod regresyonu değil, test yalıtım hatası: beklenen sayaç artık senaryo + senaryo dışı satırların son durumu. Veriye dokunulmadı.
+
+Silme ucu olmadığı için kalan test verisi: seed bot #27'de e2e-b'nin 6 yorumu (#16–#21). Takip, beğeni ve listeler temiz.
+
+## Arayüz taraması (→ `canli-2026-10f`) — "sunucuya gitmeden ya da yanıta bakmadan başarılı görünen" düğme/formlar (2026-10-10)
+
+Yöntem: rotalardan (`app/**/page.jsx`, `layout.jsx`) başlayıp statik + `dynamic()` import grafiği izlendi → **151 canlı dosya**. Bunlardaki durum değiştiren **56 istek** tek tek okundu; ayrıca istek atmadan durum değiştiren yerel aç/kapa'lar ve başarı mesajı gösteren her satır (toast, "Kaydedildi/eklendi/silindi/alındı", `setShowFeedback`) çevresindeki istek ve yanıt kontrolüyle tarandı. Hiçbir rotadan erişilmeyen 36 dosya ayrıca listelendi (aşağıda).
+
+### Bulgular (hepsi düzeltildi — bkz. Kapanış)
+
+| ID | Dosya | Ne yapıyor | Sunucuya gidiyor mu | Yanıta bakıyor mu | Sonuç |
+|---|---|---|---|---|---|
+| **N-37** | `app/dashboard/history/page.jsx` — sil | Sohbeti siler | Evet | Bakıyor ama **başarısızlıkta da** satırı ekrandan siliyor ("Fallback UI deletion for preview resilience") | Yenilemede geri geliyor |
+| **N-37** | aynı — yeniden adlandır | Başlığı değiştirir | Evet | **Hayır** (iyimser, geri alma yok) | Hata olursa yeni başlık yalnızca ekranda |
+| **N-37** | aynı — ilk durum | Geçmiş listesi | Evet | `gethistory` başarısızsa | **Üç uydurma sohbet** ("Yapay Zeka Mimari Analiz", "Stripe Entegrasyon Kılavuzu", "Next.js App Router…") ilk durum olarak duruyor; istek başarısızsa kullanıcının geçmişi gibi gösteriliyor, başarılıysa da yüklenene kadar görünüyor |
+| **N-38** | `widgets/DashboardHeader.jsx` — "tümünü okundu say" | Bildirimleri okundu yapar | Evet | **Hayır** (rozet hemen temizleniyor, istekler ateşle-unut) | Hata olursa yenilemede okunmamış geri geliyor |
+| **N-39** | `widgets/DashboardHeader.jsx`, `widgets/Sidebar.jsx` — çıkış | Oturumu kapatır | Evet | **Hayır** (her durumda `/login`'e yönlendiriyor) | Çıkış başarısızsa kullanıcı çıktığını sanıyor (paylaşılan bilgisayarda risk) |
+| **N-40** | `entities/user/ui/ProfileCard.jsx` (sohbet sayfası) — takip / beğen / beğenme | İlişkiyi değiştirir | Evet | Bakıyor (yalnızca başarıda değişiyor) ama **hata sessiz** | Kullanıcı neden olmadığını görmüyor |
+| **N-40** | aynı — "Bildirimler Açık/Kapalı" | Bot bildirimi ayarı gibi görünüyor | **Hayır** — sunucuda karşılığı yok | — | Sahte ayar |
+| **N-40** | aynı — sepet durumu | "Sepette" göstergesi | `getcart` ile sunucudan okunuyor; ayrıca **`localStorage` `cart`** anahtarından okuyan eski bir etki onu ezebiliyor (bu anahtara artık kimse yazmıyor) | — | Yanıltıcı yerel durum |
+| **N-40** | aynı — `BlockModal` | "Engelle" penceresi | Hayır | — | Hiçbir yerden açılmıyor (erişilemeyen arayüz) |
+| **N-41** | `features/sharing/ShareModal.jsx` — bot paylaş | Bağlantı üretip kopyalar | — | Pano işlemini **beklemeden** "Kopyalandı" | Ayrıca `urlId` verilince bağlantı `?botid=` (küçük harf) üretiyor; sohbet sayfası `botId` okuyor. **Düzeltme notu:** bu dal bugün gizli — `urlId`'yi yalnızca erişilemeyen bileşenler (`entities` `BotCard`, `ChatbotCard`, `DialogueModal`) veriyor; canlı sohbet sayfası `window.location.href` kullanıyor ve tarayıcıda `/dashboard/chat/?botId=27` üretip botu açtı. Yine de düzeltildi |
+| **N-41** | `app/dashboard/notes/page.jsx` — diyalog paylaş | Bağlantıyı kopyalar | — | Pano işlemini beklemeden "Kopyalandı" | |
+| **N-42** | `app/dashboard/notes/page.jsx` — "bu botu gizle" | Botun kayıtlarını gizler | Evet | Bakıyor (yalnızca başarıda) ama **hata sessiz** | |
+
+### Kapanış (N-37…N-42)
+
+Her madde ayrı commit; her commit `bash scripts/verify.sh` geçtikten sonra ayrı komutla atıldı. Kaynak düzeyindeki gerileme kilitleri `api/database/access_selftest.php` "Arayüz kilitleri" bölümünde (eski koda karşı kırmızı, yeniye karşı yeşil). Tarayıcı: Playwright, ilgili istek `page.route` ile 500'e zorlanarak; masaüstü + 390 px.
+
+| ID | Commit | Değişiklik | Tarayıcı — önce | Tarayıcı — sonra |
+|---|---|---|---|---|
+| **N-37** | `b34d454` | Uydurma sohbetler kaldırıldı (ilk durum boş + yükleme hatası mesajı); silme yalnızca `success`'te; başlık iyimser ama başarısızlıkta eski ada döner | Başarısız silmede satır kayboldu; yeni başlık ekranda kaldı; istek hatasında üç uydurma sohbet | Satır kalıyor + hata; eski başlık geri + hata; uydurma yok, "yüklenemedi" mesajı |
+| **N-38** | `9fa24be` | "Tümünü okundu" yalnızca sunucunun onayladığı bildirimleri işaretler; başarısızlıkta toast | Rozet temizlendi, sunucuda okunmamış kaldı, mesaj yok | Rozet duruyor, "Bazı bildirimler okundu olarak işaretlenemedi" |
+| **N-39** | `cdac00f` | Başlık ve kenar çubuğu ortak `shared/lib/logout.js` (`logoutAndRedirect`) kullanıyor; `/login`'e yalnızca `success`'te gider | `/login`'e gitti, oturum sunucuda açık kaldı, mesaj yok | Sayfada kalıyor, hata mesajı, oturum açık (doğru: çıkış olmadı). Başarılı çıkış ayrıca denendi: `/login/`, oturum kapalı |
+| **N-40** | `c863842` | Takip/beğeni/beğenmeme ortak `postRelation()`: başarısızlıkta toast. "Bildirimler Açık/Kapalı" düğmesi, `localStorage` `cart` etkisi ve açılmayan `BlockModal` kaldırıldı | Takip 500 → mesaj yok; sahte bildirim düğmesi vardı | "Takip güncellenemedi", "Beğeni güncellenemedi"; sayaç değişmiyor; düğme yok. Başarı yolu: takip/bırak ve beğen/geri al ikişer kez → sayaç ve durum doğru |
+| **N-41** | `691a770` | `shared/lib/clipboard.js` (`copyText`) yazmayı bekler; "Kopyalandı" yalnızca başarıda, aksi hâlde satır içi uyarı (bot paylaş + diyalog paylaş). Instagram paylaşımında pencere tıklamayla aynı anda açılır, kopyalama sonucu sonra gösterilir. `?botid=` → `?botId=` | Pano reddedilse de "Kopyalandı" | Pano reddedildi → düğme "Kopyala", uyarı görünür; pano başarılı → "Kopyalandı", panoda doğru bağlantı (`?botId=27`, `?dialog=16`) |
+| **N-42** | `d1f5ac5` | Diyalog Defteri "Bu Profili Önermeyin": başarısızlıkta toast | Mesaj yok | Kart sayısı aynı (4→4), hata görünüyor. Başarı yolu veri değiştirdiği için tarayıcıda denenmedi (kod yolu değişmedi) |
+
+**N-43 (son doğrulamada bulundu, 10e'de de vardı):** 390 px'te bildirim paneli (`widgets/DashboardHeader.jsx`) zile göre sağa hizalı 320 px genişliğindeydi; sol kenarı ekranın dışına (−26 px) taşıp başlık ve metin kesiliyordu. 10e..10f arasında bu dosyada yerleşim değişmedi (yalnızca N-38/N-39 mantığı). Düzeltme: sarmalayıcı yalnızca `sm` üstünde `relative`; dar ekranda panel başlığa göre `inset-x-4`. Doğrulama: production build, 390 px panel 16–374 px (ekran içinde), dışarı tıklayınca kapanıyor; 390 px tarama (aşağıda) yeniden.
+
+**390 px tarama (production, değişen ekranlar):** Geçmişim, Diyalog Defteri, Keşfet, sohbet, sohbet + Paylaş, bildirim paneli, profil menüsü — yatay kaydırma yok, taşan öğe yok (bildirim paneli N-43 sonrası). Küçük metin uyarıları (Paylaş penceresindeki 10 px uygulama adları, profil menüsü) bu turda değişmedi.
+
+Ekran görüntüleri (yerel, `.gitignore`'da): `docs/verification/2026-10/N-37…N-43-*.png`, `S-14-10f-*.png`. `features/moderation/BlockModal.jsx` N-40 ile tek importerini kaybetti; aşağıdaki erişilemeyen dosyalar listesine eklendi (37).
+
+### Doğru çalışanlar (yalnızca sunucu başarısında değişiyor)
+
+Bot sil (Chatbotlarım), özel yap, yayınla (PublishModal), bot oluştur/güncelle, bilgi bankası (PDF/URL), fiyat (AddToSaleListModal), sepetten çıkar, liste oluştur/sil (Liste sayfası), listeye ekle/çıkar (AddToListModal — N-35), takibi bırak (Takip Edilenler — N-35), kart kalbi (N-35), yorum (N-34), diyalog defterine ekle (N-30), bildir (ReportModal), ilgilenmiyorum, sepete ekle, profil fotoğrafı, e-posta, telefon, ad/kullanıcı adı, iletişim formu (SMTP yoksa — B5 — hata döner, sahte başarı yok), Kurumsal Satışla Görüş, para çekme talebi, pazaryeri başvurusu, paket ödemesi, giriş/kayıt, şifre sıfırlama (iki adım).
+
+### Uydurma / sabit veri (yalnızca liste)
+
+| Yer | Ne | Durum |
+|---|---|---|
+| `app/dashboard/history/page.jsx` | Üç uydurma sohbet (ilk durum) | **N-37 ile kaldırıldı** (`b34d454`) |
+| `app/dashboard/purchased/page.jsx` | "Koruma Tipi: Gelişmiş RAG" — veriden gelmiyor, sabit pazarlama metni | **N-44 ile düzeltildi** — "Bot Eğitimi: Belge ve URL metni modele verilir (en fazla 60.000 karakter)" |
+| `app/components/landing/previews/*` | Landing'deki ürün önizlemeleri sabit örnek veri kullanıyor (ör. "1.000 ₺ — Hesabınıza Aktarın", "Bakiyeni Çek … tek tıkla hesabınıza güvenle hızlıca aktarın", önizleme içinde "Satın Al") | Listelendi — dekoratif önizleme, gerçek kullanıcı verisi gibi sunulmuyor; ama "tek tıkla hızlıca aktarın" iddiası bugünkü süreçle (B7: para çekme elle onaylanıyor) uyuşmuyor, metin müşteriyle gözden geçirilmeli. **Dokunulmadı:** soru `docs/musteri-ozet-2026-10.md` B) "Sorularımız"a eklendi (müşteri kararı BEKLİYOR) |
+
+### N-44 — "RAG" iddiası (2026-10-10)
+
+**Gerçek:** Ürün RAG ya da vektör arama yapmıyor. PDF/URL'den çıkarılan metin `chatbotlar.training_prompt`'a eklenir (`TrainingController`: `AppConfig::MAX_TRAINING_CHARS` = 60.000 karakter; aşan kısım kesilir, dolunca 413). Sohbette `ChatController` bu metnin tamamını (`LEFT(training_prompt, 60000)`) `[BİLGİ KAYNAĞI]` olarak sistem talimatına koyar; arama, parçalama, gömme (embedding) yok.
+
+| Yer | Önce | Sonra |
+|---|---|---|
+| `app/dashboard/purchased/page.jsx` | Sabit kart "Koruma Tipi: Gelişmiş RAG" | "Bot Eğitimi: Belge ve URL metni modele verilir (en fazla 60.000 karakter)" |
+| `app/dashboard/following/page.jsx` | Açıklaması olmayan botta "özel veri kaynakları ve gelişmiş RAG altyapısı ile donatılmıştır" | "Bu asistan için açıklama eklenmemiş." |
+| `app/dashboard/chatbots/create/page.jsx` (Bilgi Bankası sekmesi) | Boyut yalnızca "N karakter"; kodda "(RAG)" yorumları | "N / 60.000 karakter" + çalışma biçimini anlatan kısa not (her mesajda olduğu gibi modele verilir, arama/vektör dizini yok, fazlası eklenmez); yorumlar düzeltildi |
+
+Başka yerde RAG/vektör/embedding/semantik arama iddiası yok (`web/src`, `api/admin`, `README.md`, müşteri özeti tarandı). Web'deki yeni `KB_MAX_CHARS` sabiti `AppConfig::MAX_TRAINING_CHARS`'ın elle kopyası; `access_selftest` "Arayüz kilitleri" eşitliği ve RAG iddiasının geri gelmemesini kilitliyor. Landing "tek tıkla hızlıca aktarın" metnine dokunulmadı (müşteri kararı).
+
+### N-45 — Keşfet düğmeleri (müşteri isteği, 2026-10-10)
+
+Keşfet'e götüren düğmelerin etiketi tek kelime "Keşfet" oldu; arama kutusunun yanındaki "Keşfet" düğmesi (yalnızca masaüstünde görünüyordu) kaldırıldı. Keşfet'e kenar çubuğundan ve aramadan (Enter / büyüteç → `/dashboard/explore/?search=…`) gidiliyor.
+
+| Dosya | Önce | Sonra |
+|---|---|---|
+| `widgets/DashboardHeader.jsx` | Arama kutusunun yanında "Keşfet" düğmesi | Kaldırıldı |
+| `app/dashboard/following/page.jsx` | "Pazaryerinde Keşfet", boş durumda "Pazaryerine Git" | "Keşfet" |
+| `app/dashboard/purchased/page.jsx` | "Pazaryerini Keşfet" (iki yer) | "Keşfet" |
+| `app/dashboard/checkout/page.jsx` | Boş sepette "Pazaryerine Göz At" → `/dashboard` | "Keşfet" → `/dashboard/explore` |
+| `app/dashboard/page.jsx` | Bot seçicide "Keşfet'te bot bul" | "Keşfet" |
+| `app/components/landing/HeroSection.jsx` | "Hemen Keşfet" → `/dashboard/` | "Keşfet" (hedef aynı: kayıt istemeden ana sayfa) |
+
+**Bilerek değiştirilmedi:** sepetteki "Pazaryerine Dön" (`checkout/page.jsx`) bir geri düğmesi (`history.back()`), Keşfet'e gitmiyor; "Keşfet" yazsaydı yanıltırdı. "Pazaryerine Kaydet" (PublishModal) gezinme değil, yayın seçeneği. Erişilemeyen `features/history/EmptyHistory.jsx` ("Keşfetmeye Başla") dokunulmadı. Doğrulama: `access_selftest` N-45 kilidi; tarayıcıda masaüstü + 390 px (başlıkta düğme yok, arama `/dashboard/explore/?search=Fitness`, Takip Edilenler ve Satın Aldıklarım "Keşfet" → `/dashboard/explore/`).
+
+### Hiçbir rotadan erişilmeyen dosyalar (37, bu turda silinmedi)
+
+`entities/chatbot/ui/BotCard.jsx`, `ChatbotCard.jsx`, `SuggestedCard.jsx` · `entities/user/ui/AccountPoints.jsx` · `features/chatbot-mgmt/ChatbotForm.jsx` · `features/contact/ContactForm.jsx` · `features/history/EmptyHistory.jsx` · `features/lists/AddToListModalEmpty.jsx` · `features/moderation/BlockModal.jsx` (N-40 sonrası) · `features/notes/DialogueModal.jsx`, `NotesEmpty.jsx` · `features/notifications/NotificationPopup.jsx` · `features/payment/CardFields.jsx` · `features/purchasing/BuyModal.jsx` · `features/settings/EditableField.jsx`, `EmailEditor.jsx`, `PhoneEditor.jsx`, `ProfileImageEdit.jsx` · `features/user-profile/ProfilePopup.jsx` · `features/wallet/WithdrawalModal.jsx` · `shared/api/client.js` · `shared/lib/card.js` · `shared/ui/Alert.jsx`, `avatar.jsx`, `separator.jsx`, `stat-card.jsx`, `switch.jsx` · `widgets/info/*` (8 dosya) · `widgets/LanguageSelector.jsx`, `MarketplaceToolbar.jsx`. Çoğu aynı hata sınıfını taşıyor (ör. `ChatbotCard`, `BuyModal`, `DialogueModal`); kullanılmadıkları için düzeltilmedi. Silinmeleri önerilir (CLAUDE.md'ye göre üçlü çağıran araması sonrası; `CardFields.jsx` / `card.js` N-17 kilidinin okuduğu dosyalar değil — kilit `checkout/page.jsx`, `upgrade/page.jsx` ve `features/payment/PlanPaymentModal.jsx`'e bakıyor).

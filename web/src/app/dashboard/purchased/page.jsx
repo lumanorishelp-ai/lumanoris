@@ -19,7 +19,7 @@ import {
   ChevronRight,
   ExternalLink,
   MessageSquare,
-  ShieldCheck,
+  FileText,
   Filter,
 } from "lucide-react";
 import { FilterPopover2026 } from "@/shared/ui/filter-popover";
@@ -253,7 +253,7 @@ export default function SatinAldiklarim() {
             className="group inline-flex items-center justify-center gap-2 rounded-xl bg-gradient-btn px-5 py-3 text-xs font-semibold text-white shadow-glow hover:brightness-110 hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 cursor-pointer shrink-0"
           >
             <ShoppingBag className="w-4 h-4" />
-            <span>Pazaryerini Keşfet</span>
+            <span>Keşfet</span>
             <ArrowUpRight className="w-4 h-4 opacity-70 group-hover:translate-x-0.5 group-hover:-translate-y-0.5 transition-transform" />
           </button>
         </div>
@@ -288,12 +288,15 @@ export default function SatinAldiklarim() {
           </div>
 
           <div className="rounded-2xl border border-white/[0.08] bg-zinc-900/60 backdrop-blur-xl p-4 space-y-1">
+            {/* Eskiden sabit "Koruma Tipi: Gelişmiş RAG" yazıyordu; ürün RAG ya
+                da vektör arama yapmıyor. Gerçek: botun belge/URL metni
+                (AppConfig::MAX_TRAINING_CHARS = 60.000 karakter) her mesajda
+                olduğu gibi modele veriliyor (ChatController). */}
             <p className="text-caption font-mono text-zinc-500 uppercase tracking-wider flex items-center gap-1.5">
-              <ShieldCheck className="w-3.5 h-3.5 text-violet-400" /> Koruma
-              Tipi
+              <FileText className="w-3.5 h-3.5 text-violet-400" /> Bot Eğitimi
             </p>
-            <p className="text-sm font-semibold text-zinc-200 mt-1">
-              Gelişmiş RAG
+            <p className="text-xs font-medium leading-snug text-zinc-200 mt-1">
+              Belge ve URL metni modele verilir (en fazla 60.000 karakter)
             </p>
           </div>
         </div>
@@ -443,7 +446,7 @@ export default function SatinAldiklarim() {
                 onClick={() => router.push("/dashboard/explore")}
                 className="px-6 py-3 rounded-xl bg-gradient-btn text-xs font-bold text-white shadow-glow hover:brightness-110 hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 cursor-pointer"
               >
-                Pazaryerini Keşfet
+                Keşfet
               </button>
             )}
           </div>

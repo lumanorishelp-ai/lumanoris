@@ -7,7 +7,7 @@ if (empty($_SESSION['admin'])) {
 }
 
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
-    require '../../functions/db.php';
+    require __DIR__ . '/../../functions/db.php'; // N-21
     $database = Database::getInstance();
     $conn = $database->getConnection();
 

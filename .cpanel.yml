@@ -1,0 +1,12 @@
+---
+# cPanel "Git Version Control" → "Deploy HEAD Commit" bu görevleri repo
+# kopyasının kökünde çalıştırır. Canlı dizine yalnızca api/ (git'te izlenen
+# dosyalar) kopyalanır; web/, docs/, .claude/ vb. gitmez, .env'e dokunulmaz.
+# Ayrıntı: README → "Backend deploy (cPanel)" · scripts/deploy-backend.sh
+#
+# DEPLOYPATH = api.lumanoris.com alan adının Document Root'u (.env orada).
+# Betik orada .env ve functions/db.php yoksa hiçbir şey yapmadan durur.
+deployment:
+  tasks:
+    - export DEPLOYPATH=$HOME/api.lumanoris.com
+    - /bin/bash scripts/deploy-backend.sh

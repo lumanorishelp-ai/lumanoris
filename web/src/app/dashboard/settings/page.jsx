@@ -20,7 +20,6 @@ import {
   Camera,
   Trash2,
   Check,
-  Building,
   Send,
   HelpCircle,
   ExternalLink,
@@ -294,71 +293,6 @@ function EditableField({ fields, onSubmit }) {
         </button>
       </div>
     </form>
-  );
-}
-
-function BankInfo({ userId }) {
-  const [iban, setIban] = useState("");
-  const [taxNo, setTaxNo] = useState("");
-
-  useEffect(() => {
-    if (!userId) return;
-    fetch("/api/wallet/get_bank_info.php", { credentials: "include" })
-      .then((res) => res.json())
-      .then((result) => {
-        if (result.success && result.bank_info) {
-          setIban(result.bank_info.iban || "");
-          setTaxNo(result.bank_info.tax_number || "");
-        }
-      })
-      .catch((err) => console.error("Bank info fetch error:", err));
-  }, [userId]);
-
-  const handleSubmit = async (data) => {
-    try {
-      const formData = new FormData();
-      formData.append(
-        "data",
-        JSON.stringify({ iban: data.iban, tax_number: data.taxNo }),
-      );
-      const res = await fetch("/api/wallet/save_bank_info.php", {
-        method: "POST",
-        body: formData,
-        credentials: "include",
-      });
-      const result = await res.json();
-      if (!result.success) return { error: result.message || "Kaydedilemedi." };
-      setIban(data.iban);
-      setTaxNo(data.taxNo);
-    } catch (err) {
-      console.error("Bank info save error:", err);
-      return { error: "Sunucuya bağlanılamadı." };
-    }
-  };
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center gap-3">
-        <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-fuchsia-500/10 border border-fuchsia-500/20 text-fuchsia-400">
-          <Building className="h-5 w-5" />
-        </div>
-        <div>
-          <h4 className="text-sm font-semibold text-white">
-            Banka ve Fatura Bilgileri
-          </h4>
-          <p className="text-xs text-white/50">
-            Kayıtlı IBAN ve şirket fatura adresiniz.
-          </p>
-        </div>
-      </div>
-      <EditableField
-        fields={[
-          { name: "iban", value: iban, placeholder: "IBAN Numarası" },
-          { name: "taxNo", value: taxNo, placeholder: "Vergi Numarası" },
-        ]}
-        onSubmit={handleSubmit}
-      />
-    </div>
   );
 }
 
@@ -709,7 +643,15 @@ function ContactForm() {
 
 const TABS = [
   { key: "user", label: "Kullanıcı Profili", icon: User },
-  { key: "security", label: "Ödeme Bilgileri", icon: CreditCard },
+  // Madde 7 — banka/ödeme bilgileri artık Pazaryeri Başvurusu'nun parçası
+  // (GK-7: IBAN başvuru alanı). Sekme içerik göstermiyor, oraya gidiyor.
+  // Anahtar korunuyor: `?tab=security` derin bağlantıları da yönlendirilir.
+  {
+    key: "security",
+    label: "Ödeme Bilgileri",
+    icon: CreditCard,
+    href: "/dashboard/pazaryeri-basvurusu",
+  },
   { key: "email", label: "E-posta Adresi", icon: Mail },
   { key: "phone", label: "Telefon Numarası", icon: Phone },
   { key: "privacy", label: "Gizlilik Politikası", icon: ShieldCheck },
@@ -728,11 +670,26 @@ export default function App() {
   );
 
   // URL değişirse (ör. menüden başka bir sekmeye derin bağlantı) sekmeyi izle.
+  // Bağlantı sekmesi (href) içerik göstermez; o sayfaya yönlendirilir.
   useEffect(() => {
     if (requestedTab && TAB_KEYS.includes(requestedTab)) {
+      const linked = TABS.find((t) => t.key === requestedTab)?.href;
+      if (linked) {
+        router.replace(linked);
+        return;
+      }
       setActiveTab(requestedTab);
     }
-  }, [requestedTab]);
+  }, [requestedTab, router]);
+
+  const handleTabChange = (key) => {
+    const linked = TABS.find((t) => t.key === key)?.href;
+    if (linked) {
+      router.push(linked);
+      return;
+    }
+    setActiveTab(key);
+  };
   const [userInfo, setUserInfo] = useState({
     ad: "",
     soyad: "",
@@ -865,7 +822,7 @@ export default function App() {
         <PageSection>
           <Tabs
             value={activeTab}
-            onValueChange={setActiveTab}
+            onValueChange={handleTabChange}
             className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start"
           >
             {/* Sidebar Navigation */}
@@ -932,17 +889,6 @@ export default function App() {
                       onSubmit={(data) => saveFullName(data.firstName, data.lastName)}
                     />
                   </div>
-                </TabsContent>
-
-                <TabsContent
-                  value="security"
-                  className="mt-0 space-y-6"
-                >
-                  <SectionHeader
-                    title="Ödeme ve Finans"
-                    description="Banka bilgilerinizi ve faturalandırma geçmişinizi yönetin."
-                  />
-                  <BankInfo userId={userId} />
                 </TabsContent>
 
                 <TabsContent

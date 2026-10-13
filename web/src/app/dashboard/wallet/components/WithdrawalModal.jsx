@@ -26,7 +26,7 @@ export default function WithdrawalModal({ isOpen, onClose, balance, onSuccess })
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!iban) {
-      setError("Önce Ayarlar > Banka Bilgileri kısmından IBAN'ınızı ekleyin.");
+      setError("IBAN bilginiz Pazaryeri Başvurusu ile alınır; kayıtlı IBAN'ınız bulunamadı.");
       return;
     }
     const numericAmount = parseFloat(amount);
@@ -105,7 +105,7 @@ export default function WithdrawalModal({ isOpen, onClose, balance, onSuccess })
           </div>
           {iban === null ? (
             <p className="text-xs text-amber-400 bg-amber-500/10 border border-amber-500/20 rounded-xl px-4 py-3">
-              Para çekebilmek için önce Ayarlar &gt; Banka Bilgileri kısmından IBAN'ınızı ekleyin.
+              Para çekebilmek için kayıtlı bir IBAN gerekir. IBAN bilginiz Pazaryeri Başvurusu ile alınır.
             </p>
           ) : (
             <p className="text-xs text-white/40">

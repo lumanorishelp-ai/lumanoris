@@ -27,7 +27,10 @@ import {
   Check,
   Search,
   Bot,
+  Lock,
+  Compass,
 } from "lucide-react";
+import Link from "next/link";
 
 function formatCompactNumber(n) {
   const num = Number(n) || 0;
@@ -442,7 +445,9 @@ function NewChatHero({
   onChange,
   onSubmit,
   loading,
-  purchasedBots,
+  pickerBots,
+  pickerLoading,
+  pickerError,
   onSelectBot,
   onBrowseMarketplace,
 }) {
@@ -613,17 +618,10 @@ function NewChatHero({
             </div>
 
             <div className="mt-1.5 flex items-center gap-3">
-              {/* Hedef bot çipi artık gerçek bir açılır liste: ChevronDown
-                  zaten bir menü vaat ediyordu ama düğme yalnızca aşağıdaki
-                  pazaryeri aramasına kaydırıyordu. Menü kullanıcının SATIN
-                  ALDIĞI botları listeliyor — "yeni sohbete başla" alanında
-                  hakkı olan botlar bunlar.
-
-                  Süresi dolmuş abonelikler listede kalıyor ama seçilemiyor:
-                  erişim sunucuda `status = 1 AND expiry_date > NOW()` ile
-                  veriliyor, yani seçilebilir bırakmak kullanıcıyı başarısız
-                  olacak bir sohbete sokardı. Görünür durup sebebini söylemesi
-                  listeden tamamen silinmesinden daha yardımcı. */}
+              {/* Hedef bot çipi bir açılır liste. Madde 6 / GK-13: liste
+                  TAKİP EDİLEN botlar (eskiden satın alınanlardı). Erişimi
+                  olanlar seçilebilir; olmayanlar kilitli ve "Profili gör"
+                  ile. Platform botu Lumanoris AI varsayılan. */}
               <div className="relative" ref={botMenuRef}>
                 <button
                   type="button"
@@ -672,58 +670,101 @@ function NewChatHero({
                     className="absolute bottom-full left-0 z-40 mb-2 max-h-72 w-72 overflow-y-auto rounded-2xl border border-white/10 bg-[#0c0c14]/95 p-1.5 shadow-2xl backdrop-blur-xl"
                   >
                     <p className="px-3 py-2 text-caption uppercase tracking-wider text-zinc-500">
-                      Satın Aldıklarım
+                      Takip Ettiklerim
                     </p>
 
-                    {purchasedBots.length === 0 ? (
-                      <p className="px-3 pb-2 text-xs leading-relaxed text-zinc-400">
-                        Henüz satın aldığınız bir bot yok. Pazaryerinden bir bot
-                        edindiğinizde burada listelenir.
+                    {pickerLoading ? (
+                      <p className="px-3 pb-2 text-xs text-zinc-500">
+                        Takip ettiğiniz botlar yükleniyor…
+                      </p>
+                    ) : pickerError ? (
+                      <p className="px-3 pb-2 text-xs leading-relaxed text-rose-300">
+                        {pickerError}
                       </p>
                     ) : (
-                      purchasedBots.map((item) => {
-                        const isCurrent = Number(bot?.id) === Number(item.id);
-                        return (
-                          <button
-                            key={item.id}
-                            type="button"
-                            role="option"
-                            aria-selected={isCurrent}
-                            disabled={!item.isActive}
-                            onClick={() => {
-                              onSelectBot(item.id);
-                              setBotMenuOpen(false);
-                            }}
-                            className={cn(
-                              "flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left transition-colors",
-                              !item.isActive
-                                ? "cursor-not-allowed opacity-50"
-                                : isCurrent
-                                  ? "bg-violet-500/15"
-                                  : "hover:bg-white/5",
-                            )}
-                          >
+                      <>
+                        {pickerBots.map((item) => {
+                          const isCurrent = Number(bot?.id) === Number(item.id);
+                          const avatar = (
                             <img
                               src={resolveAvatarSrc(item.avatar)}
                               alt=""
                               className="h-7 w-7 shrink-0 rounded-full object-cover"
                             />
-                            <span className="min-w-0 flex-1">
-                              <span className="block truncate text-xs font-medium text-zinc-200">
+                          );
+
+                          /* Erişimi olmayan takip edilen bot: seçilemez,
+                             kilitli; yerine botun profiline (sohbet
+                             sayfasındaki profil kartı) bağlantı. */
+                          if (!item.accessible) {
+                            return (
+                              <div
+                                key={item.id}
+                                className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 opacity-70"
+                              >
+                                {avatar}
+                                <span className="min-w-0 flex-1">
+                                  <span className="flex items-center gap-1.5 truncate text-xs font-medium text-zinc-300">
+                                    <Lock className="h-3 w-3 shrink-0 text-zinc-500" />
+                                    <span className="truncate">{item.title}</span>
+                                  </span>
+                                </span>
+                                <Link
+                                  href={`/dashboard/chat?botId=${item.id}`}
+                                  onClick={() => setBotMenuOpen(false)}
+                                  className="shrink-0 rounded-lg px-2 py-1 text-caption font-medium text-violet-300 transition-colors hover:bg-white/5 hover:text-violet-200"
+                                >
+                                  Profili gör
+                                </Link>
+                              </div>
+                            );
+                          }
+
+                          return (
+                            <button
+                              key={item.id}
+                              type="button"
+                              role="option"
+                              aria-selected={isCurrent}
+                              onClick={() => {
+                                onSelectBot(item.id);
+                                setBotMenuOpen(false);
+                              }}
+                              className={cn(
+                                "flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left transition-colors",
+                                isCurrent ? "bg-violet-500/15" : "hover:bg-white/5",
+                              )}
+                            >
+                              {avatar}
+                              <span className="min-w-0 flex-1 truncate text-xs font-medium text-zinc-200">
                                 {item.title}
                               </span>
-                              {!item.isActive && (
-                                <span className="block text-caption text-amber-400/80">
-                                  Süresi doldu
-                                </span>
+                              {isCurrent && (
+                                <Check className="h-3.5 w-3.5 shrink-0 text-violet-400" />
                               )}
-                            </span>
-                            {isCurrent && item.isActive && (
-                              <Check className="h-3.5 w-3.5 shrink-0 text-violet-400" />
-                            )}
-                          </button>
-                        );
-                      })
+                            </button>
+                          );
+                        })}
+
+                        {/* GK-13 — platform botu dışında takip yoksa boş
+                            durum + Keşfet bağlantısı. */}
+                        {!pickerBots.some((b) => !b.isHouse) && (
+                          <div className="px-3 pb-2 pt-1">
+                            <p className="text-xs leading-relaxed text-zinc-400">
+                              Henüz takip ettiğiniz bir bot yok. Takip ettiğiniz
+                              botlar burada listelenir.
+                            </p>
+                            <Link
+                              href="/dashboard/explore"
+                              onClick={() => setBotMenuOpen(false)}
+                              className="mt-1.5 inline-flex items-center gap-1.5 text-xs font-medium text-violet-300 hover:text-violet-200"
+                            >
+                              <Compass className="h-3.5 w-3.5" />
+                              Keşfet
+                            </Link>
+                          </div>
+                        )}
+                      </>
                     )}
 
                     {/* Eski davranış kaybolmasın: çip daha önce pazaryeri
@@ -778,7 +819,10 @@ export function MainDashboard2026() {
   // Anasayfa kompozitörü
   const [heroPrompt, setHeroPrompt] = useState("");
   const [recentBotId, setRecentBotId] = useState(null);
-  const [purchasedBots, setPurchasedBots] = useState([]);
+  // Madde 6 / GK-13 — seçici artık TAKİP EDİLEN botlardan besleniyor.
+  const [pickerBots, setPickerBots] = useState([]);
+  const [pickerLoading, setPickerLoading] = useState(true);
+  const [pickerError, setPickerError] = useState(null);
   // Kullanıcının çipten AÇIKÇA seçtiği bot; her türlü otomatik tahmini ezer.
   const [pickedBotId, setPickedBotId] = useState(null);
 
@@ -861,15 +905,17 @@ export function MainDashboard2026() {
               kategori_id: bot.kategori_id,
               followers: bot.toplam_follows,
               likes: bot.toplam_likes,
+              // N-35: kalbin başlangıç durumu sunucudan (oturumsuz → false).
+              likedByMe: Number(bot.liked_by_me) === 1,
               comments: bot.toplam_comments,
               saves: bot.toplam_lists,
               weeklyPrice: Number(bot.ucret_haftalik) || 0,
-              badge: {
-                type: bot.durum == 0 ? "sold" : "produced",
-                label:
-                  bot.durum == 1 ? "Daha Önce Satıldı" : "Doğrulanmış Üretim",
-              },
-              rating: 4.9,
+              // N-26: yalnızca gerçek satış kaydı varsa (sunucu `has_sales`).
+              badge: Number(bot.has_sales) === 1
+                ? { type: "sold", label: "Daha Önce Satıldı" }
+                : null,
+              // N-15: puan verisi yok; sabit 4.9 uydurmaydı.
+              rating: null,
               userLists: Array.isArray(listsData?.lists) ? listsData.lists : [],
             }));
           setAllBots(mapped);
@@ -888,35 +934,56 @@ export function MainDashboard2026() {
     fetchData();
   }, [userId]);
 
-  /* Çipin açılır listesini besleyen satın alınmışlar. Kaynak, satın
-     alınanlar sayfasının kullandığı uç ile aynı; alanlar burada kompozitörün
-     bot şekline (id/title/avatar) çevriliyor ki menü ile çip aynı dili
-     konuşsun. Hata durumunda liste boş kalıyor: menü kendi boş durumunu
-     gösterir, sayfanın geri kalanı etkilenmez. */
+  /* Madde 6 / GK-13 — çipin açılır listesi TAKİP EDİLEN botlar.
+     • getfollowedbots.php: takip edilenler (+ platform botu Lumanoris AI,
+       sunucu onu her hesaba örtük takip olarak ekliyor).
+     • Kilit: her botun `can_chat` alanı. N-27 — sunucu onu sohbet kapısıyla
+       (generatereply) AYNI kuraldan, userHasAccess('chat') ile hesaplıyor:
+       sahip, aktif abone ve ücretsiz herkese açık bot (GK-2). Eskiden kilit
+       getchatbotsmenu.php'den (yalnızca sahip + abone) türetiliyordu; takip
+       edilen ücretsiz bot, sohbet edilebildiği halde kilitli görünüyordu.
+     • Lumanoris AI varsayılan bot olarak her zaman seçilebilir. */
   useEffect(() => {
-    if (!userId) return;
+    if (!userId) {
+      setPickerBots([]);
+      setPickerLoading(false);
+      return;
+    }
     let cancelled = false;
+    setPickerLoading(true);
+    setPickerError(null);
 
-    fetch(`/api/wallet/getmysubscriptions.php?user_id=${userId}`)
-      .then((res) => res.json())
-      .then((data) => {
+    const getJson = (url) =>
+      fetch(url, { credentials: "include" }).then((res) => res.json());
+
+    getJson("/api/social/getfollowedbots.php")
+      .then((followed) => {
         if (cancelled) return;
-        if (!data?.success || !Array.isArray(data.subscriptions)) {
-          setPurchasedBots([]);
-          return;
+        if (!followed?.success || !Array.isArray(followed.bots)) {
+          throw new Error(followed?.message || "Takip edilen botlar yüklenemedi.");
         }
-        setPurchasedBots(
-          data.subscriptions.map((sub) => ({
-            id: sub.chatbot_id,
-            title: sub.isim,
-            avatar: sub.profil_fotografi,
-            isActive: Number(sub.is_active) === 1,
-          })),
+        setPickerBots(
+          followed.bots.map((b) => {
+            const isHouse =
+              (b.isim || "").trim().toLocaleUpperCase("tr-TR") === HOUSE_BOT_NAME;
+            return {
+              id: b.id,
+              title: b.isim,
+              avatar: b.profil_fotografi,
+              isHouse,
+              accessible: isHouse || b.can_chat === true,
+            };
+          }),
         );
       })
       .catch((err) => {
-        console.error("Satın alınanlar yüklenemedi:", err);
-        if (!cancelled) setPurchasedBots([]);
+        if (cancelled) return;
+        console.error("Takip edilen botlar yüklenemedi:", err);
+        setPickerBots([]);
+        setPickerError("Takip ettiğiniz botlar yüklenemedi.");
+      })
+      .finally(() => {
+        if (!cancelled) setPickerLoading(false);
       });
 
     return () => {
@@ -1022,12 +1089,18 @@ export function MainDashboard2026() {
        o yüzden önce satın alınanlarda aranıyor. */
     if (pickedBotId !== null) {
       const picked =
-        purchasedBots.find((b) => Number(b.id) === Number(pickedBotId)) ||
-        allBots.find((b) => Number(b.id) === Number(pickedBotId));
+        pickerBots.find(
+          (b) => b.accessible && Number(b.id) === Number(pickedBotId),
+        ) || allBots.find((b) => Number(b.id) === Number(pickedBotId));
       if (picked) return picked;
     }
 
-    if (!allBots.length) return null;
+    /* GK-13 — pazaryeri listesi boşken de (B1: getPublished aktif satıcı
+       ister) varsayılan Lumanoris AI olabilsin diye ev botu takip
+       listesinde de aranıyor; sunucu onu her hesaba ekliyor. */
+    const followedHouse = pickerBots.find((b) => b.isHouse);
+
+    if (!allBots.length) return followedHouse || null;
 
     /* Varsayılan artık LUMANORIS AI — platformun kendi asistanı. Eskiden
        "son konuştuğun bot, o da yoksa en çok diyalog almış bot" seçiliyordu;
@@ -1039,6 +1112,7 @@ export function MainDashboard2026() {
       (b) => (b.title || "").trim().toLocaleUpperCase("tr-TR") === HOUSE_BOT_NAME,
     );
     if (house) return house;
+    if (followedHouse) return followedHouse;
 
     // Ev botu bulunamazsa (silinmiş/yayından kalkmış) eski davranış devrede.
     const recent = allBots.find((b) => Number(b.id) === recentBotId);
@@ -1046,7 +1120,7 @@ export function MainDashboard2026() {
     return [...allBots].sort(
       (a, b) => (Number(b.dialogues) || 0) - (Number(a.dialogues) || 0),
     )[0];
-  }, [allBots, recentBotId, pickedBotId, purchasedBots]);
+  }, [allBots, recentBotId, pickedBotId, pickerBots]);
 
   // Kompozitördeki bot çipi buraya bağlı: aşağıdaki pazaryeri aramasına
   // kaydırıp odaklanır, böylece "başka bir bot için aşağıdan seç" cümlesi
@@ -1090,7 +1164,9 @@ export function MainDashboard2026() {
           onChange={setHeroPrompt}
           onSubmit={startHeroChat}
           loading={loading}
-          purchasedBots={purchasedBots}
+          pickerBots={pickerBots}
+          pickerLoading={pickerLoading}
+          pickerError={pickerError}
           onSelectBot={setPickedBotId}
           onBrowseMarketplace={focusBotSearch}
         />

@@ -132,8 +132,9 @@ browser → http://localhost:3000
 ```
 
 `next.config.mjs` additionally declares `rewrites()` for the same three prefixes, so the routing also
-works when the app runs under `next start` or a platform that ignores `server.js`. Those rewrites are
-active only when `PHP_TARGET` is set, and are skipped entirely in static-export mode.
+works when the app runs under `next start` or a platform that ignores `server.js` (production runs on
+Vercel this way, with `PHP_TARGET=https://api.lumanoris.com`). A production build fails when
+`PHP_TARGET` is unset; the rewrites are skipped entirely in static-export mode.
 
 All three prefixes are in use. `/assets/*` serves user-uploaded images: `ChatbotController` writes
 cover/profile uploads into `api/assets/<column>/`, and the resulting `assets/…` relative path is what
@@ -366,7 +367,8 @@ vars are never overwritten by a stale `.env`.
 | Variable | Read by | Purpose |
 | --- | --- | --- |
 | `NEXT_PUBLIC_GOOGLE_CLIENT_ID` | `web/src/app/login/page.jsx` | Client ID passed to `google.accounts.id.initialize`. Without it the Google button shows an error toast. |
-| `PHP_TARGET` | `web/server.js`, `web/next.config.mjs` | Backend origin for the proxy/rewrites. `server.js` defaults to `http://127.0.0.1:8000`; `next.config.mjs` emits no rewrites when it is unset. |
+| `PHP_TARGET` | `web/server.js`, `web/next.config.mjs`, `web/src/shared/lib/legal-content.server.js` | Backend origin for the proxy/rewrites and for the server-side fetch of the legal texts. Production: `https://api.lumanoris.com` (the PHP host; no trailing slash). `server.js` and `legal-content.server.js` default to `http://127.0.0.1:8000`. In `next.config.mjs` a **production build fails** when it is unset (`next.config.mjs:138-145`); without it `/api` stays on Vercel and is answered `403` by Vercel's firewall. A development build only warns and emits no rewrites. |
+| `NEXT_PUBLIC_SITE_URL` | `web/src/shared/config/site.js` | Public site origin for canonical URLs, Open Graph and the sitemap. Production: `https://www.lumanoris.net`. A **production build fails** when it is unset; development falls back to localhost. Inlined at build time. |
 | `PORT` | `web/server.js` | Listen port. Defaults to `3000`. |
 | `HOST` | `web/server.js` | Bind address. Defaults to `127.0.0.1` in development and `0.0.0.0` in production. |
 | `NODE_ENV` | `web/server.js` | Anything other than `production` starts Next.js in dev mode. |

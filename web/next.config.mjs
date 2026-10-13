@@ -3,6 +3,28 @@
 // nodemon server.js (dev) → NEXT_EXPORT tanımsız, custom server çalışır.
 const isStaticExport = process.env.NEXT_EXPORT === '1';
 
+// Vercel'de (VERCEL=1) derleme proje ayarına bağımlı kalmasın: Preview
+// ortamında değişken tanımlanmamışsa derleme aşağıdaki korumalarda
+// düşüyordu (PR derlemesi "PHP_TARGET tanımlı değil"). Vercel'de tanımsız
+// değişken canlı değere düşer ve derleme log'una uyarı yazılır. Yerel
+// production derlemesinde (VERCEL yok) korumalar aynen duruyor.
+// NEXT_PUBLIC_SITE_URL burada process.env'e yazılınca Next onu derleme
+// anında pakete gömüyor (site.js); PHP_TARGET aşağıdaki `env` ile sunucu
+// paketine gömülüyor (legal-content.server.js çalışma anında okuyor).
+const VERCEL_DEFAULTS = {
+  PHP_TARGET: 'https://api.lumanoris.com',
+  NEXT_PUBLIC_SITE_URL: 'https://www.lumanoris.net',
+};
+if (process.env.VERCEL === '1') {
+  for (const [key, value] of Object.entries(VERCEL_DEFAULTS)) {
+    if (!process.env[key]?.trim()) {
+      console.warn(`[next.config] UYARI: ${key} Vercel ortam değişkenlerinde tanımlı değil — varsayılan ${value} kullanılıyor. Vercel → Settings → Environment Variables'a ekleyin.`);
+      process.env[key] = value;
+    }
+  }
+}
+const resolvedPhpTarget = process.env.PHP_TARGET?.trim();
+
 const nextConfig = {
   ...(isStaticExport && { output: 'export' }),
 
@@ -13,6 +35,11 @@ const nextConfig = {
   // NEXT_DIST_DIR ile böyle bir build ayrı bir klasöre yazılabilir.
   // Değişken tanımsızken davranış birebir eskisi gibi (.next).
   distDir: process.env.NEXT_DIST_DIR || '.next',
+
+  // Vercel'de varsayılana düşülen PHP_TARGET çalışma anındaki sunucu
+  // fonksiyonlarında yok (orada yalnızca proje ayarındaki değişkenler var);
+  // tanımlıysa derleme anındaki değer pakete gömülüyor.
+  ...(resolvedPhpTarget && { env: { PHP_TARGET: resolvedPhpTarget } }),
 
   // Statik export'ta route uyumu için (custom server'da gereksiz ama zararsız)
   trailingSlash: true,

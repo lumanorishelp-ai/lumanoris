@@ -839,6 +839,13 @@ one). `pending/` is never read in any mode. `migrate.php`'s destructive check ma
 `TRUNCATE` and `DROP` at the start of a line; it does not catch `UPDATE` (`013` and `015` update
 rows and were approved on 2026-10-06).
 
+`api/database/phpmyadmin/` holds copies of `007`–`017` for a manual import through cPanel
+phpMyAdmin, where the `cpses_…` session user gets `#1044 Access denied … to database
+'information_schema'` on the guarded blocks. These copies use no `information_schema` and no
+`PREPARE`. They are **not** idempotent: each `ADD COLUMN` / `ADD KEY` must run exactly once (check
+with the `SHOW COLUMNS` / `SHOW INDEX` line at the top of each file). They do not write
+`schema_migrations`; `migrate.php` never reads this directory.
+
 Six tables are created lazily at runtime with `CREATE TABLE IF NOT EXISTS` — everything else is
 assumed to exist:
 

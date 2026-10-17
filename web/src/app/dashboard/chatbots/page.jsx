@@ -12,6 +12,14 @@ import ChatbotCard from "./components/ChatbotCard";
 import ChatbotsHero from "./components/ChatbotsHero";
 import ChatbotsToolbar from "./components/ChatbotsToolbar";
 
+/* N-53 — yayındaki (is_independent=0) FİYATSIZ bot satıcı kaydı istemeden
+   herkese açıktır (GK-2); yalnızca fiyatlı bot pazaryeri satıcılığına bağlı.
+   Eskiden rozet her herkese açık bot için `seller_status === "active"` şartı
+   arıyor ve yayındaki ücretsiz botu "Yayında Değil" gösteriyordu. */
+const isFreePublic = (b) =>
+  !Number(b.is_independent) && !(Number(b.ucret_haftalik) > 0) && !(Number(b.ucret_aylik) > 0);
+const isLivePublic = (b) => isFreePublic(b) || b.seller_status === "active";
+
 export default function App() {
   const router = useRouter();
   const { userId } = useContext(UserContext);
@@ -109,7 +117,7 @@ export default function App() {
   const metrics = useMemo(() => {
     const total = chatbots.length;
     const active = chatbots.filter(
-      (b) => b.seller_status === "active" || b.is_independent,
+      (b) => isLivePublic(b) || Number(b.is_independent),
     ).length;
     const totalDialogs = chatbots.reduce(
       (acc, b) => acc + Number(b.toplam_chats || 0),
@@ -177,11 +185,13 @@ export default function App() {
               !isOwn && String(bot.owner_user_id) === String(userId);
             const statusLabel = isPurchased
               ? "Satın Alındı"
-              : bot.is_independent
+              : Number(bot.is_independent)
                 ? "Bağımsız"
-                : bot.seller_status === "active"
-                  ? "Aktif"
-                  : "Yayında Değil";
+                : isFreePublic(bot)
+                  ? "Yayında"
+                  : bot.seller_status === "active"
+                    ? "Aktif"
+                    : "Yayında Değil";
 
             return (
               <ChatbotCard

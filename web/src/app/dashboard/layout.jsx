@@ -12,7 +12,7 @@ export default function DashboardLayout({ children }) {
     const pathname = usePathname();
     const [userId, setUserId] = useState(null);
     const [authReady, setAuthReady] = useState(false);
-    const { account, refetchAccount, refetchBalance } = useAccountData(userId);
+    const { account, refetchAccount, refetchBalance, setDailyCoinsRemaining } = useAccountData(userId);
 
     // Checkout is a focused, distraction-free flow (common e-commerce
     // pattern) — no main nav sidebar/mobile navbar while paying.
@@ -90,7 +90,7 @@ export default function DashboardLayout({ children }) {
     }
 
     return (
-        <UserContext.Provider value={{ userId, account, refetchAccount, refetchBalance }}>
+        <UserContext.Provider value={{ userId, account, refetchAccount, refetchBalance, setDailyCoinsRemaining }}>
             <a
                 href="#main-content"
                 className="sr-only focus-visible:not-sr-only focus-visible:fixed focus-visible:top-2 focus-visible:left-2 focus-visible:z-[999] focus-visible:rounded-lg focus-visible:bg-luma-panel focus-visible:px-4 focus-visible:py-2 focus-visible:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"

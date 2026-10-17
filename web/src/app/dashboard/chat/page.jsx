@@ -17,8 +17,18 @@ import { Button } from "@/shared/ui/button";
 import { Lumacoin } from "@/shared/ui/lumacoin";
 import { Lock, NotebookPen, RotateCcw } from "lucide-react";
 
+/* N-48 — süre zinciri (api/functions/gemini.php): sunucu cURL 30 sn'de,
+   PHP 45 sn'de biter; istemci 50 sn bekler, Vercel'in harici rewrite sınırı
+   (ilk bayt) 120 sn. Sunucu her zaman istemciden önce ya cevabı kaydeder ya da
+   hata karesi + coin iadesi gönderir. gemini_selftest E bu sırayı kilitler. */
+const CHAT_REPLY_TIMEOUT_MS = 50_000;
+/* İstemci yine de vazgeçerse (ağ, yavaş sunucu) sunucu cevabı kaydetmiş
+   olabilir: getchat ile birkaç kez yeniden sorulur. */
+const SAVED_REPLY_POLLS = 6;
+const SAVED_REPLY_POLL_MS = 4_000;
+
 export default function Chat() {
-  const { userId } = useContext(UserContext);
+  const { userId, account: sharedAccount, setDailyCoinsRemaining } = useContext(UserContext) || {};
   const [bot, setBot] = useState(null);
   const [botId, setBotId] = useState(0);
   const [comments, setComments] = useState(null);
@@ -33,12 +43,25 @@ export default function Chat() {
   const [activeDialog, setActiveDialog] = useState({ input: "", output: "" });
   const [botLoadError, setBotLoadError] = useState(null);
   const [hasSubscription, setHasSubscription] = useState(false);
+  // N-52 — sunucunun sohbet erişimi kararı (getchatbot `can_chat`). false ise
+  // mesaj kutusu yerine kilitli uyarı; karşılama kaydı denenmez.
+  const [canChat, setCanChat] = useState(null);
   const [checkingSub, setCheckingSub] = useState(true);
   // Sohbet Luma Coini: mesaj hakkı tükendiğinde mesaj kutusunun yerini alan
   // "Sınır Aşıldı" bandı.
   const [limitReached, setLimitReached] = useState(false);
-  const [coinsRemaining, setCoinsRemaining] = useState(null);
+  const [coinsRemaining, setLocalCoinsRemaining] = useState(null);
   const [retryAt, setRetryAt] = useState(null);
+  // N-50 — sunucudan gelen her coin değeri hem bu sayfanın mantığına hem de
+  // layout'taki paylaşılan hesaba yazılır; kenar çubuğu ve çip aynı değeri
+  // gösterir (tek istemci kaynağı: useAccountData).
+  const setCoinsRemaining = useCallback((n) => {
+    if (typeof n !== "number") return;
+    setLocalCoinsRemaining(n);
+    setDailyCoinsRemaining?.(n);
+  }, [setDailyCoinsRemaining]);
+  // Çip paylaşılan değeri okur; hesap henüz yüklenmediyse yerel değer.
+  const sharedCoins = sharedAccount?.id != null ? sharedAccount.dailyCoinsRemaining : coinsRemaining;
 
   const checkMessageAllowance = useCallback(async (uId, bId) => {
       if (!uId || !bId) return;
@@ -52,7 +75,7 @@ export default function Chat() {
       } catch (err) {
           console.error("Mesaj hakkı sorgulama hatası:", err);
       }
-  }, []);
+  }, [setCoinsRemaining]);
 
   useEffect(() => {
       if (userId && botId) {
@@ -235,6 +258,9 @@ export default function Chat() {
           }));
           setComments(mapped);
         }
+        if (typeof data.can_chat === "boolean") {
+          setCanChat(data.can_chat);
+        }
         if (botData) {
           setBot(botData);
         }
@@ -381,6 +407,10 @@ export default function Chat() {
           };
           setMessages([initialMsg]);
 
+          // N-52 — erişim yoksa sunucu bu kaydı 403 ile reddediyordu (her
+          // ziyarette konsol hatası). Karşılama yalnızca gösterilir.
+          if (canChat === false) return;
+
           try {
             const botPayload = {
               chatbot_id: bot.id,
@@ -407,7 +437,7 @@ export default function Chat() {
     return () => {
       cancelled = true;
     };
-  }, [conversation, bot]); // bot'u da bağımlılığa ekledik
+  }, [conversation, bot, canChat]); // bot ve erişim (N-52) bağımlılıkta
 
   useEffect(() => {
     if (messagesEndRef.current) {
@@ -615,7 +645,7 @@ export default function Chat() {
     }
   }
 
-  await generateReply(data.text, filePayloads);
+  await generateReply(data.text, filePayloads, currentConvId);
 
   if (isNewConversation) {
     setConversationId(currentConvId);
@@ -631,17 +661,55 @@ export default function Chat() {
 // bir hata oluştuğunda (AbortError dahil) "placeholderId is not defined"
 // ReferenceError'ı ile catch'in kendisinin patlamasına ve sahte
 // "yazıyor..." animasyonunun sonsuza kadar ekranda kalmasına yol açıyordu.
-const generateReply = async (userText, filePayloads = []) => {
+// N-48 — sunucunun bu istek için kaydettiği cevabı ara: meta karesindeki
+// after_id'den büyük kimlikli son bot mesajı. Bulunamazsa null.
+const pollSavedReply = async (afterId) => {
+  for (let i = 0; i < SAVED_REPLY_POLLS; i++) {
+    await new Promise((r) => setTimeout(r, SAVED_REPLY_POLL_MS));
+    try {
+      const res = await fetch(`/api/chat/getchat.php?chatbot_id=${botId}&user_id=${userId}`);
+      const json = await res.json();
+      const found = (Array.isArray(json?.messages) ? json.messages : [])
+        .filter((m) => m.sent_by !== "user" && Number(m.id) > afterId)
+        .pop();
+      if (found) return found;
+    } catch (e) {
+      // geçici ağ hatası — bir sonraki denemede tekrar sor
+    }
+  }
+  return null;
+};
+
+const generateReply = async (userText, filePayloads = [], convId = conversationIdRef.current) => {
   const placeholderId = Date.now();
   let timeoutId;
+  let afterId = null; // N-48: sunucunun ilk karesinden
   setMessages((prev) => [...prev, { id: placeholderId, type: "received", text: "" }]);
+
+  // N-48 — istemci beklemekten vazgeçti ya da akış yarıda koptu; sunucu
+  // (ignore_user_abort) cevabı kaydetmiş olabilir. Bulursa göster, yoksa
+  // açıklayıcı hata + Tekrar Dene. Coin sayacı sunucudan yeniden okunur
+  // (kayıt → düşmüş, iade → geri gelmiş).
+  const recoverSavedReply = async (fallbackText) => {
+    if (afterId === null) return false;
+    setMessages((prev) => prev.map((msg) =>
+      msg.id === placeholderId ? { ...msg, text: "Cevap bekleniyor…", error: false } : msg
+    ));
+    const saved = await pollSavedReply(afterId);
+    checkMessageAllowance(userId, botId);
+    setMessages((prev) => prev.map((msg) =>
+      msg.id === placeholderId
+        ? saved
+          ? { ...msg, text: saved.message, messageId: Number(saved.id), error: false, retryText: undefined }
+          : { ...msg, text: fallbackText, error: true, retryText: userText }
+        : msg
+    ));
+    return true;
+  };
 
   try {
     const controller = new AbortController();
-    // AI-004: sunucu tarafındaki cURL zaman aşımıyla aynı (20 sn). Eskiden
-    // istemci 15 sn'de kesiyor, sunucu 30 sn beklemeye devam ediyordu:
-    // kullanıcı hata görüyor, upstream isteği (ve faturası) sürüyordu.
-    timeoutId = setTimeout(() => controller.abort(), 20000);
+    timeoutId = setTimeout(() => controller.abort(), CHAT_REPLY_TIMEOUT_MS);
 
     // SEC-015 / COIN-001 / PAY-002: sistem talimatı artık burada KURULMUYOR.
     // İstemci yalnızca hangi botla konuştuğunu ve ne dediğini söylüyor;
@@ -656,6 +724,8 @@ const generateReply = async (userText, filePayloads = []) => {
         data: JSON.stringify({
           chatbot_id: botId,
           message: userText,
+          // N-50: sunucu geçmişi bu sohbetin başından kurar (doğrular).
+          ...(Number(convId) > 0 ? { conversation_id: Number(convId) } : {}),
           ...(filePayloads.length ? { files: filePayloads } : {}),
         }),
       }),
@@ -748,6 +818,7 @@ const generateReply = async (userText, filePayloads = []) => {
             // taşıyor — coin sayacı için ayrı bir istek atmaya gerek yok.
             if (typeof gData.remaining === "number" || gData.source) {
               if (typeof gData.remaining === "number") setCoinsRemaining(gData.remaining);
+              if (typeof gData.after_id === "number") afterId = gData.after_id;
               continue;
             }
             const textChunk = gData.candidates?.[0]?.content?.parts?.[0]?.text || "";
@@ -763,6 +834,13 @@ const generateReply = async (userText, filePayloads = []) => {
     }
 
     clearTimeout(timeoutId);
+
+    // N-48 — akış hata karesi olmadan ve metinsiz bittiyse bağlantı yolda
+    // kopmuş olabilir; sunucunun kaydettiği cevabı ara.
+    if (!fullText && !upstreamError &&
+        (await recoverSavedReply("Cevap alınamadı. Lütfen tekrar deneyin."))) {
+      return;
+    }
 
     if (fullText) {
       // N-30 — bot cevabını artık SUNUCU kaydediyor (generateReply sonunda
@@ -791,6 +869,8 @@ const generateReply = async (userText, filePayloads = []) => {
     const errorText = err.name === "AbortError"
       ? "Cevap çok gecikti. Lütfen tekrar deneyin."
       : "Bir hata oluştu. Lütfen tekrar deneyin.";
+    // N-48 — zaman aşımı/kopma: sunucu cevabı yine de kaydetmiş olabilir.
+    if (await recoverSavedReply(errorText)) return;
     setMessages((prev) => prev.map((msg) =>
       msg.id === placeholderId ? { ...msg, text: errorText, error: true, retryText: userText } : msg
     ));
@@ -973,13 +1053,34 @@ const handleRetryReply = (retryText) => {
               Paketini yükselt
             </Button>
           </div>
+        ) : canChat === false ? (
+          /* N-52 — erişimi olmayan ücretli bot: kullanıcı mesaj yazmadan önce
+             durumu görür (eskiden ancak gönderince 403 ile anlaşılıyordu). */
+          <div className="flex items-center justify-between gap-4 rounded-xl border border-amber-400/20 bg-luma-elevated px-5 py-4">
+            <div className="flex items-center gap-3">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-amber-500/15">
+                <Lock className="h-4 w-4 text-amber-300" />
+              </div>
+              <p className="text-body-sm leading-snug text-white/80">
+                Bu bot ücretli. Sohbet edebilmek için bu bota erişim satın almanız gerekiyor.
+                <br className="hidden sm:block" />
+                <span className="text-white/55">Ücretsiz herkese açık botları Keşfet&apos;te bulabilirsiniz.</span>
+              </p>
+            </div>
+            <Button
+              onClick={() => router.push("/dashboard/explore")}
+              className="h-auto shrink-0 px-5 py-2.5 text-body-sm"
+            >
+              Keşfet
+            </Button>
+          </div>
         ) : (
           <div className="space-y-2">
-            {typeof coinsRemaining === "number" && (
+            {typeof sharedCoins === "number" && (
               <div className="flex justify-center">
                 <span className="inline-flex items-center gap-1.5 rounded-full border border-white/[0.06] bg-white/[0.03] px-3 py-1 text-[11px] text-white/40">
                   <Lumacoin size={13} />
-                  Bugün kalan Lumacoin: <span className="font-semibold tabular-nums text-fuchsia-300/90">{coinsRemaining}</span>
+                  Bugün kalan Lumacoin: <span className="font-semibold tabular-nums text-fuchsia-300/90">{sharedCoins}</span>
                 </span>
               </div>
             )}

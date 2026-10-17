@@ -73,5 +73,15 @@ export function useAccountData(userId) {
     refetchBalance();
   }, [userId, refetchAccount, refetchBalance]);
 
-  return { account, refetchAccount, refetchBalance };
+  // N-50 — günlük coin TEK istemci kaynağı. Sohbet sayfası sunucudan aldığı
+  // her değeri (generatereply meta karesi, checkmessageallowance) buraya
+  // yazar; kenar çubuğu ve sohbet çipi aynı değeri okur. Eskiden kenar
+  // çubuğu sayfa açılışındaki değerde kalıyordu (7/10) ve çip güncel değeri
+  // gösteriyordu (5).
+  const setDailyCoinsRemaining = useCallback((n) => {
+    if (typeof n !== "number") return;
+    setAccount((prev) => (prev.dailyCoinsRemaining === n ? prev : { ...prev, dailyCoinsRemaining: n }));
+  }, []);
+
+  return { account, refetchAccount, refetchBalance, setDailyCoinsRemaining };
 }

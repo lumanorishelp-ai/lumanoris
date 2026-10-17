@@ -304,6 +304,16 @@ class ChatController {
         require_method('POST');
         $userId = AuthMiddleware::requireAuth();
         require_once __DIR__ . '/../../../functions/coin_engine.php';
+        require_once __DIR__ . '/../../../functions/gemini.php';
+        require_once __DIR__ . '/../../../functions/dialog_book.php';
+        require_once __DIR__ . '/../../../functions/chat_context.php';
+
+        // N-48 — istemci (zaman aşımı, sekme kapanması) bağlantıyı kesse de
+        // betik sürmeli: aksi hâlde bir sonraki echo'da PHP duruyor, cevap
+        // kaydedilmiyor ve düşülen coin iade edilmiyordu (canlı: 10 → 9).
+        // Süre sınırı cURL'ün (GEMINI_TIMEOUT) üstünde, istemcinin altında.
+        ignore_user_abort(true);
+        @set_time_limit(CHAT_PHP_TIME_LIMIT);
 
         $db = Database::getInstance();
 
@@ -354,7 +364,7 @@ class ChatController {
         }
 
         $bot = $db->selectSingle(
-            'style_prompt, LEFT(training_prompt, ?) AS training_prompt FROM chatbotlar WHERE id = ?',
+            'style_prompt, sohbet_basi_mesaj, LEFT(training_prompt, ?) AS training_prompt FROM chatbotlar WHERE id = ?',
             [self::MAX_TRAINING_CHARS, $chatbotId]
         );
         if (!$bot) {
@@ -421,8 +431,14 @@ class ChatController {
         $corpus  = (string) ($bot['training_prompt'] ?? '');
 
         // Talimat sunucuda kuruluyor — istemci artık bu metne dokunamıyor.
+        // N-50 — SOHBET satırı: geçmiş artık modele gidiyor; selamlama ve
+        // tanıtım her cevapta tekrarlanmasın. Müşterinin stil metnine
+        // dokunulmuyor; bu bizim şablonumuz.
         $systemInstruction = "GÖREV: Aşağıdaki [BİLGİ KAYNAĞI] kısmına %100 sadık kalarak cevap ver.\n"
-            . "Bilgi kaynağı dışına çıkma. [KİŞİLİK/STİL] direktiflerini uygula.\n\n"
+            . "Bilgi kaynağı dışına çıkma. [KİŞİLİK/STİL] direktiflerini uygula.\n"
+            . "SOHBET: Önceki mesajlar sana sırasıyla verilir; onları dikkate al ve gerektiğinde önceki "
+            . "mesajlara atıf yap. Selamlamayı ve kendini tanıtmayı yalnızca sohbetin ilk mesajında yap; "
+            . "sonraki cevaplarda tekrarlama.\n\n"
             . "[BİLGİ KAYNAĞI]:\n"
             . ($corpus !== '' ? $corpus : 'Bilgi kaynağı yok, kullanıcının sana sorduğu sorulara cevap ver.')
             . "\n\n[KİŞİLİK/STİL]:\n" . $style;
@@ -497,25 +513,33 @@ class ChatController {
             JsonResponse::error('Yapay zeka servisi yapılandırılmamış.', 500, AppConfig::ERR_SERVER);
         }
 
-        // Dosya, metin parçalarının ARDINDAN ekleniyor: talimat ve kullanıcı
-        // mesajı modele önce ulaşsın, dosya onların bağlamında okunsun.
-        $parts = [
-            ['text' => $systemInstruction],
-            ['text' => $message],
-        ];
-        foreach ($fileParts as $filePart) {
-            $parts[] = $filePart;
-        }
+        // N-50 — çok turlu istek: güncel sohbetin geçmişi (sunucudan, en
+        // fazla CHAT_HISTORY_MAX_MESSAGES) + bu mesaj. Talimat ayrı
+        // `systemInstruction` alanında; eskiden ilk kullanıcı parçasıydı ve
+        // geçmiş hiç gönderilmiyordu (her cevap sıfırdan, tekrar tekrar
+        // tanıtım). Dosyalar son kullanıcı turunda, metinden sonra.
+        $contents = chatBuildContents(
+            chatHistoryRows($db, $userId, $chatbotId, InputSanitizer::positiveInt($data['conversation_id'] ?? 0)),
+            (string) ($bot['sohbet_basi_mesaj'] ?? ''),
+            $message,
+            $fileParts
+        );
 
         $payload = json_encode([
-            'contents' => [[
-                'role'  => 'user',
-                'parts' => $parts,
-            ]],
+            'systemInstruction' => ['parts' => [['text' => $systemInstruction]]],
+            'contents'          => $contents,
+            'generationConfig'  => geminiGenerationConfig(),
         ]);
 
-        $url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:streamGenerateContent'
-             . '?alt=sse&key=' . urlencode($apiKey);
+        $url = geminiStreamUrl($apiKey);
+
+        // N-48 — istemci zaman aşımına uğrarsa sunucunun kaydettiği cevabı
+        // bulabilsin diye: bu andaki son mesaj kimliği. Cevap bundan büyük
+        // kimlikle kaydedilir; istemci getchat ile yeniden sorar.
+        $afterId = (int) ($db->selectSingle(
+            'MAX(id) AS m FROM chatbot_chats WHERE chatbot_id = ? AND user_id = ?',
+            [$chatbotId, $userId]
+        )['m'] ?? 0);
 
         header('Content-Type: text/event-stream');
         header('Cache-Control: no-cache');
@@ -528,6 +552,7 @@ class ChatController {
         echo 'data: ' . json_encode([
             'remaining' => $allowance['remaining'] ?? null,
             'source'    => $allowanceSource,
+            'after_id'  => $afterId,
         ], JSON_UNESCAPED_UNICODE) . "\n\n";
         @flush();
 
@@ -547,10 +572,11 @@ class ChatController {
             CURLOPT_POST           => true,
             CURLOPT_HTTPHEADER     => ['Content-Type: application/json'],
             CURLOPT_POSTFIELDS     => $payload,
-            // AI-004: istemcideki AbortController 15 sn'de kesiyordu, sunucu
-            // 30 sn bekliyordu — kullanıcı hatayı görüyor ama upstream isteği
-            // (ve faturası) devam ediyordu. İkisi de artık 20 sn.
-            CURLOPT_TIMEOUT        => 20,
+            // AI-004 / N-48: süre zinciri functions/gemini.php'de — cURL
+            // istemciden ÖNCE biter, kullanıcı zaman aşımı yerine anlamlı
+            // hata görür ve sunucu iade eder.
+            CURLOPT_CONNECTTIMEOUT => GEMINI_CONNECT_TIMEOUT,
+            CURLOPT_TIMEOUT        => GEMINI_TIMEOUT,
             CURLOPT_WRITEFUNCTION  => static function ($handle, string $chunk) use (&$httpStatus, &$errorBody, &$streamBody): int {
                 if ($httpStatus === 0) {
                     $httpStatus = (int) curl_getinfo($handle, CURLINFO_RESPONSE_CODE);
@@ -572,44 +598,47 @@ class ChatController {
         }
         curl_close($ch);
 
-        if ($curlError !== '' || $httpStatus === 0 || $httpStatus >= 400) {
-            // Log the real upstream reason (suspended key, quota, bad model
-            // name, network) — without this the failure was undiagnosable.
-            error_log(sprintf(
-                '[generatereply] Gemini call failed: http=%d curl=%s body=%s',
-                $httpStatus,
-                $curlError !== '' ? $curlError : '-',
-                $errorBody !== '' ? mb_substr($errorBody, 0, 500) : '-'
-            ));
+        // N-48 — kayıt/iade kararı tek yerde (chatReplyOutcome, testli):
+        // yalnızca eksiksiz ve boş olmayan cevap kaydedilir, coin düşmüş
+        // kalır; diğer her durumda (ağ, zaman aşımı, 4xx/5xx, 200 + boş
+        // akış) iade. Önceden 200 + boş akış ne kaydediliyor ne iade
+        // ediliyordu. N-30: cevabı istemci değil SUNUCU kaydediyor.
+        $replyText = $httpStatus >= 200 && $httpStatus < 300 && $curlError === '' ? geminiSseText($streamBody) : '';
+        $outcome   = chatReplyOutcome($httpStatus, $curlError, $replyText);
 
-            // AI-005: cevap üretilemedi — yakılan hakları geri ver. Dosya
-            // için düşülen ikinci hak da buraya dahil, kendi kaynağına.
-            refundMessage($db, $userId, $chatbotId, $allowanceSource);
-            foreach ($fileAllowanceSources as $source) {
-                refundMessage($db, $userId, $chatbotId, $source);
-            }
-
-            // Never leak the upstream body (it can echo the API key back) —
-            // send a stable code the client maps to its own wording.
-            echo "event: error\n";
-            echo 'data: ' . json_encode(
-                ['error' => ['code' => $httpStatus ?: 502, 'status' => 'UPSTREAM_ERROR', 'refunded' => true]],
-                JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
-            ) . "\n\n";
+        if ($outcome === 'save') {
+            // Kimlik son SSE karesiyle istemciye gidiyor; Diyalog Defteri
+            // kaydı bu kimliğe dayanıyor ve metni DB'den kopyalıyor.
+            $savedId = chatSaveBotReply($db, $userId, $chatbotId, $replyText);
+            echo "event: saved\n";
+            echo 'data: ' . json_encode(['saved' => ['message_id' => $savedId]]) . "\n\n";
             @flush();
-        } else {
-            // N-30 — bot cevabını SUNUCU kaydediyor (istemci addChat ile "bot"
-            // yazamaz). Kimlik son SSE karesiyle istemciye gidiyor; Diyalog
-            // Defteri kaydı bu kimliğe dayanıyor ve metni DB'den kopyalıyor.
-            require_once __DIR__ . '/../../../functions/dialog_book.php';
-            $replyText = geminiSseText($streamBody);
-            if ($replyText !== '') {
-                $savedId = chatSaveBotReply($db, $userId, $chatbotId, $replyText);
-                echo "event: saved\n";
-                echo 'data: ' . json_encode(['saved' => ['message_id' => $savedId]]) . "\n\n";
-                @flush();
-            }
+            exit;
         }
+
+        // Log the real upstream reason (suspended key, quota, bad model
+        // name, network) — without this the failure was undiagnosable.
+        // Ham gövde değil ayrıştırılmış özet: Google bazı hatalarda
+        // anahtarı gövdeye geri yazıyor; özet onu maskeliyor.
+        error_log('[gemini] generatereply hata: ' . ($httpStatus >= 200 && $httpStatus < 300 && $curlError === ''
+            ? 'http=' . $httpStatus . ' model=' . GEMINI_MODEL . ' boş cevap (metin yok)'
+            : geminiErrorSummary($httpStatus, $curlError, $errorBody, $apiKey)));
+
+        // AI-005: cevap üretilemedi — yakılan hakları geri ver. Dosya
+        // için düşülen ikinci hak da buraya dahil, kendi kaynağına.
+        refundMessage($db, $userId, $chatbotId, $allowanceSource);
+        foreach ($fileAllowanceSources as $source) {
+            refundMessage($db, $userId, $chatbotId, $source);
+        }
+
+        // Never leak the upstream body (it can echo the API key back) —
+        // send a stable code the client maps to its own wording.
+        echo "event: error\n";
+        echo 'data: ' . json_encode(
+            ['error' => ['code' => $httpStatus >= 400 ? $httpStatus : 502, 'status' => 'UPSTREAM_ERROR', 'refunded' => true]],
+            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+        ) . "\n\n";
+        @flush();
         exit;
     }
 }

@@ -839,6 +839,13 @@ one). `pending/` is never read in any mode. `migrate.php`'s destructive check ma
 `TRUNCATE` and `DROP` at the start of a line; it does not catch `UPDATE` (`013` and `015` update
 rows and were approved on 2026-10-06).
 
+`api/database/phpmyadmin/` holds copies of `007`–`017` for a manual import through cPanel
+phpMyAdmin, where the `cpses_…` session user gets `#1044 Access denied … to database
+'information_schema'` on the guarded blocks. These copies use no `information_schema` and no
+`PREPARE`. They are **not** idempotent: each `ADD COLUMN` / `ADD KEY` must run exactly once (check
+with the `SHOW COLUMNS` / `SHOW INDEX` line at the top of each file). They do not write
+`schema_migrations`; `migrate.php` never reads this directory.
+
 Six tables are created lazily at runtime with `CREATE TABLE IF NOT EXISTS` — everything else is
 assumed to exist:
 
@@ -1297,6 +1304,20 @@ from inside `api/`.
 `API_GOOGLE_GEMINI` is set in neither the process environment, `api/.env`, nor `api/admin/.env`.
 `AppConfig::googleGeminiApiKey()` checks all three, in that order, and returns an empty string when
 none of them has it.
+
+**Every bot answers "Yapay zeka servisine şu anda ulaşılamıyor"**
+Gemini rejected the call. Admin panel → **Sistem Durumu** (`/admin/sistemdurumu`) shows which file
+the key is read from (`api/.env` wins over `api/admin/.env`, so a stale `API_GOOGLE_GEMINI` in
+`api/.env` hides a new key saved through the API-integrations page), the model
+(`functions/gemini.php` → `GEMINI_MODEL`), and a **Gemini'yi test et** button (POST + CSRF) that
+sends one short request to the same endpoint and shows the HTTP code and Google's status/message —
+never the key. Every failure, from chat or from that button, is logged as one `[gemini] …` line
+(`http=… model=… status=… reason=… message=…`, key masked) to the PHP error log:
+`APP_LOG_FILE`, default `storage/logs/php-error.log` one level above the document root (on the cPanel
+host: `~/storage/logs/php-error.log`, next to the `api.lumanoris.com` folder — not an `error_log`
+file in the web root). `API_KEY_INVALID` = wrong/revoked key; `PERMISSION_DENIED` /
+`CONSUMER_SUSPENDED` = key or project suspended, or the Generative Language API disabled;
+`RESOURCE_EXHAUSTED` = quota/billing; `NOT_FOUND` = model retired.
 
 **Password-reset emails never arrive**
 Configure SMTP — either `SMTP_*` in `api/.env` or the admin panel's SMTP settings page, which writes

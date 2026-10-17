@@ -272,4 +272,92 @@ if (!function_exists('marketplaceApplicationSubmittedAt')) {
     }
 }
 
+
+echo "\n=== F) Bireysel satıcı API kapısı (N-51, rollback) ===\n\n";
+
+require_once __DIR__ . '/../functions/chatbot_limits.php';
+
+$u3 = $db->selectSingle(
+    "k.id FROM kullanicilar k
+     LEFT JOIN marketplace_applications m ON m.user_id = k.id
+     LEFT JOIN banka_bilgileri b ON b.user_id = k.id
+     LEFT JOIN user_plan_selection p ON p.user_id = k.id
+     WHERE m.id IS NULL AND b.id IS NULL AND p.user_id IS NULL ORDER BY k.id DESC LIMIT 1"
+);
+if (!$u3) {
+    echo "  (başvurusu, banka kaydı ve paketi olmayan kullanıcı yok — F/G atlandı)\n";
+    finish();
+}
+$u3 = (int) $u3['id'];
+
+$body = function (string $src, string $fn): string {
+    $p = strpos($src, "public static function $fn(");
+    if ($p === false) return '';
+    $q = strpos($src, 'public static function ', $p + 10);
+    return substr($src, $p, ($q === false ? strlen($src) : $q) - $p);
+};
+if (!function_exists('assertCompanySellerAllowed') || !function_exists('hasApprovedMarketplaceApplication')) {
+    check('assertCompanySellerAllowed / hasApprovedMarketplaceApplication tanımlı', false, 'yok');
+} else {
+    $denied = function (?string $bankType) use ($db, $u3): ?string {
+        try { assertCompanySellerAllowed($db, $u3, $bankType); return null; }
+        catch (PermissionException $e) { return $e->getMessage(); }
+    };
+    $conn->beginTransaction();
+    try {
+        $m = $denied('Kurumsal Hesap');
+        check('başvurusu yok → reddedilir (403)', $m !== null && str_contains($m, 'onaylanmış'), (string) $m);
+        submitMarketplaceApplication($db, $u3, $cleanOf($valid));
+        check('başvuru gönderilmiş ama onaysız → reddedilir', $denied('Kurumsal Hesap') !== null);
+        $appId = (int) getMarketplaceApplication($db, $u3)['id'];
+        reviewMarketplaceApplication($db, $appId, 'reviewed', null, null, 'selftest', null);
+        check('onaylı + "Bireysel Hesap" → reddedilir', ($m = $denied('Bireysel Hesap')) !== null && str_contains($m, 'Bireysel'), (string) $m);
+        check('onaylı + tür boş/bilinmiyor → reddedilir', $denied('') !== null && $denied('xyz') !== null);
+        check('onaylı + "Şahıs Şirketi" → izinli', $denied('Şahıs Şirketi') === null);
+        check('onaylı + "Kurumsal Hesap" → izinli', $denied('Kurumsal Hesap') === null);
+        check('onaylı + tür sorulmadan (null) → izinli', $denied(null) === null);
+        reviewMarketplaceApplication($db, $appId, 'rejected', 'Geri alındı (selftest).', null, 'selftest', null);
+        check('onay geri alınınca → yine reddedilir', $denied('Kurumsal Hesap') !== null);
+    } finally {
+        $conn->rollBack();
+    }
+
+    $wallet = (string) file_get_contents(__DIR__ . '/../src/Presentation/Controllers/WalletController.php');
+    $seller = (string) file_get_contents(__DIR__ . '/../src/Presentation/Controllers/SellerController.php');
+    check('saveBankInfo kapıyı çağırıyor', str_contains($body($wallet, 'saveBankInfo'), 'assertCompanySellerAllowed('));
+    check('SellerController::register kapıyı çağırıyor', str_contains($body($seller, 'register'), 'assertCompanySellerAllowed('));
+    check('SellerController::resubmit kapılı register üzerinden', str_contains($body($seller, 'resubmit'), 'self::register()') && str_contains($body($seller, 'register'), 'assertCompanySellerAllowed('));
+}
+
+echo "\n=== G) Sınırsız herkese açık bot = admin onaylı başvuru (madde 2, rollback) ===\n\n";
+$conn->beginTransaction();
+try {
+    $planLimit = getPublicBotLimit($db, $u3);
+    check('başvurusuz → plan limiti (ücretsiz 2)', $planLimit === 2, (string) $planLimit);
+    submitMarketplaceApplication($db, $u3, $cleanOf($valid));
+    check('gönderilmiş (onaysız) başvuru → sınırsız DEĞİL', !isUnlimitedBotLimit(getPublicBotLimit($db, $u3)));
+    $appId = (int) getMarketplaceApplication($db, $u3)['id'];
+    reviewMarketplaceApplication($db, $appId, 'reviewed', null, null, 'selftest', null);
+    check('admin onayı → herkese açık bot sınırsız', isUnlimitedBotLimit(getPublicBotLimit($db, $u3)));
+    check('admin onayı → bağımsız bot limiti plandan (1)', getIndependentBotLimit($db, $u3) === 1);
+    $botsBefore = countUserChatbots($db, $u3, 0);
+    reviewMarketplaceApplication($db, $appId, 'rejected', 'Onay geri alındı (selftest).', null, 'selftest', null);
+    check('onay geri alınınca → plan limitine döner', getPublicBotLimit($db, $u3) === 2);
+    check('onay geri alınınca → mevcut botlar silinmez', countUserChatbots($db, $u3, 0) === $botsBefore);
+} finally {
+    $conn->rollBack();
+}
+$limits = (string) file_get_contents(__DIR__ . '/../functions/chatbot_limits.php');
+check('getPublicBotLimit aktif satıcı şartına bakmıyor', !preg_match('/function getPublicBotLimit[\s\S]{0,200}isActiveMarketplaceSeller/', $limits));
+
+echo "\n=== H) Arayüz: erişimsiz ücretli bot uyarısı (N-52), yayındaki bot rozeti (N-53) ===\n\n";
+$web  = __DIR__ . '/../../web/src/app/dashboard';
+$chat = (string) @file_get_contents("$web/chat/page.jsx");
+$list = (string) @file_get_contents("$web/chatbots/page.jsx");
+$cbc  = (string) file_get_contents(__DIR__ . '/../src/Presentation/Controllers/ChatbotController.php');
+check('getchatbot yanıtı can_chat taşıyor (sunucunun erişim kararı)', str_contains($body($cbc, 'getChatbot'), "'can_chat'"));
+check('sohbet sayfası can_chat=false iken uyarı gösteriyor', str_contains($chat, 'canChat === false') && str_contains($chat, 'Bu bot ücretli'));
+check('sohbet sayfası erişim yokken karşılamayı kaydetmiyor', (bool) preg_match('/canChat[\s\S]{0,400}addchat\.php|addchat\.php[\s\S]{0,0}/', $chat) && str_contains($chat, 'if (canChat === false) return;'));
+check('rozet: fiyatsız herkese açık bot "Yayında"', str_contains($list, '"Yayında"'));
+check('"Aktif & Çalışır" sayacı yayındaki ücretsiz botu da sayıyor', (bool) preg_match('/const active = chatbots\.filter\([\s\S]{0,200}isLivePublic/', $list));
 finish();

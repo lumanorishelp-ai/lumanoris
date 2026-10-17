@@ -47,28 +47,19 @@ function getIndependentBotLimit(Database $db, int $userId): int {
 }
 
 /**
- * Madde 2 / GK-5 / GK-6 — onaylanmış (`active`) pazaryeri satıcısının
- * herkese açık bot hakkı sınırsız. Yalnızca herkese açık botlar için; bağımsız
- * bot limiti plandan gelmeye devam eder. Başvuru yapmış ama onaylanmamış
- * kullanıcı (pending/rejected) bu hakkı ALMAZ.
+ * Madde 2 — müşteri kararı (2026-10-17): sınırsız herkese açık bot hakkı,
+ * admin tarafından ONAYLANMIŞ pazaryeri başvurusu olan kullanıcıya. Önceki
+ * "aktif (Param) satıcı" şartı kaldırıldı (GK-5'in o kısmı geçersiz): ödeme
+ * altyapısı olmadan kimse aktif olamadığı için hak kimseye verilemiyordu.
  *
- * B1 açıkken hiçbir satıcı `active` olamıyor; yani bugün bu dal kimse için
- * çalışmıyor. Kural yine de sunucuda: B1 kapandığında ayrıca kod gerekmesin.
+ * Onay geri alınırsa (admin başvuruyu `rejected` yapar) limit plana döner.
+ * Bu kontrol yalnızca YENİ oluşturma/yayınlamada çalışır; mevcut herkese açık
+ * botlar silinmez, gizlenmez (GK-11 ile aynı ilke). Kullanıcı limitin
+ * üstündeyse yeni herkese açık bot açamaz, bağımsız botunu yayınlayamaz.
  */
-function isActiveMarketplaceSeller(Database $db, int $userId): bool {
-    try {
-        $row = $db->selectSingle('status FROM ' . AppConfig::TABLE_SELLERS . ' WHERE user_id = ?', [$userId]);
-    } catch (Throwable $e) {
-        // Tablo henüz oluşturulmamış bir kurulumda (ensureParamMarketplaceTables
-        // tembel çalışıyor) satıcı yok demektir.
-        error_log('[chatbot_limits] satıcı durumu okunamadı: ' . $e->getMessage());
-        return false;
-    }
-    return ($row['status'] ?? null) === 'active';
-}
-
 function getPublicBotLimit(Database $db, int $userId): int {
-    if (isActiveMarketplaceSeller($db, $userId)) {
+    require_once __DIR__ . '/marketplace_application.php';
+    if (hasApprovedMarketplaceApplication($db, $userId)) {
         return BOT_LIMIT_UNLIMITED;
     }
     return planBotLimit(getUserPlan($db, $userId), 'public_bot_limit', AppConfig::FREE_PUBLIC_BOT_LIMIT);

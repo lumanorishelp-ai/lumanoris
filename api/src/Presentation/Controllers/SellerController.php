@@ -12,6 +12,18 @@ class SellerController {
         }
 
         $db     = Database::getInstance();
+
+        // N-51 — bireysel satıcılık hiçbir yoldan açılmasın: onaylı şirket
+        // başvurusu yoksa ya da banka kaydındaki tür bireyselse 403. Param
+        // entegrasyonunun (bugün taslak) başarısız olmasına güvenilmiyor.
+        // resubmit() de buradan geçer.
+        require_once __DIR__ . '/../../../functions/marketplace_application.php';
+        try {
+            assertCompanySellerAllowed($db, $userId);
+        } catch (AppException $e) {
+            JsonResponse::fromException($e);
+        }
+
         $conn   = $db->getConnection();
 
         ensureParamMarketplaceTables($conn);
@@ -19,6 +31,11 @@ class SellerController {
         $bank = $db->selectSingle('* FROM banka_bilgileri WHERE user_id = ?', [$userId]);
         if (!$bank) {
             JsonResponse::error('Önce banka ve kimlik bilgilerinizi tamamlayın.', 422, AppConfig::ERR_VALIDATION);
+        }
+        try {
+            assertCompanySellerAllowed($db, $userId, (string) ($bank['account_type'] ?? ''));
+        } catch (AppException $e) {
+            JsonResponse::fromException($e);
         }
 
         $typeMap     = ['Bireysel Hesap' => 1, 'Şahıs Şirketi' => 2, 'Kurumsal Hesap' => 3];

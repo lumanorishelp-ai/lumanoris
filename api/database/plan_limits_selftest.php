@@ -77,14 +77,14 @@ try {
     finish();
 }
 
-// Plan seçmemiş (ya da süresi dolmuş) ve onaylı satıcı OLMAYAN bir kullanıcı
-// varsayılan plana düşer. Onaylı satıcının herkese açık hakkı sınırsız
-// (madde 2 / GK-6) — o ayrı kontrol ediliyor (A2).
+// Plan seçmemiş (ya da süresi dolmuş) ve ONAYLI pazaryeri başvurusu olmayan
+// bir kullanıcı varsayılan plana düşer. Onaylı başvurusu olanın herkese açık
+// hakkı sınırsız (madde 2, müşteri kararı 2026-10-17) — ayrı kontrol (A2).
 $noPlanUser = $db->selectSingle(
     "k.id FROM kullanicilar k
      LEFT JOIN user_plan_selection s ON s.user_id = k.id
-     LEFT JOIN param_marketplace_sellers pms ON pms.user_id = k.id AND pms.status = 'active'
-     WHERE s.user_id IS NULL AND pms.user_id IS NULL
+     LEFT JOIN marketplace_applications m ON m.user_id = k.id AND m.status = 'reviewed'
+     WHERE s.user_id IS NULL AND m.user_id IS NULL
      ORDER BY k.id LIMIT 1"
 );
 
@@ -102,20 +102,32 @@ if (!$noPlanUser) {
         (string) getDailyMessageLimit($db, $uid));
 }
 
-echo "\n=== A2) MADDE 2 — onaylı satıcıya sınırsız herkese açık hak (GK-5/GK-6) ===\n\n";
+echo "\n=== A2) MADDE 2 — admin onaylı başvuruya sınırsız herkese açık hak (müşteri kararı 2026-10-17, GK-6) ===\n\n";
 
-$activeSeller = $db->selectSingle("user_id FROM param_marketplace_sellers WHERE status = 'active' ORDER BY user_id LIMIT 1");
-if (!$activeSeller) {
-    echo "  (onaylı satıcı yok — B1 açıkken beklenen; kontrol atlandı)\n";
+// Müşteri: "pazaryeri kaydı bulunan kullanıcı" = admin tarafından ONAYLANMIŞ
+// başvuru (marketplace_applications.status = reviewed). Eski "aktif Param
+// satıcısı" şartı kaldırıldı. Ayrıntılı rollback testi: application_selftest G.
+$approved = $db->selectSingle("user_id FROM marketplace_applications WHERE status = 'reviewed' ORDER BY user_id LIMIT 1");
+if (!$approved) {
+    echo "  (onaylı başvuru yok — kontrol application_selftest G'de rollback ile yapılıyor)\n";
 } else {
-    $sid = (int) $activeSeller['user_id'];
-    check('onaylı satıcı: herkese açık hak sınırsız', isUnlimitedBotLimit(getPublicBotLimit($db, $sid)));
-    check('onaylı satıcı: bağımsız hak plandan (sınırsız değil)', !isUnlimitedBotLimit(getIndependentBotLimit($db, $sid)));
+    $sid = (int) $approved['user_id'];
+    check('onaylı başvuru: herkese açık hak sınırsız', isUnlimitedBotLimit(getPublicBotLimit($db, $sid)));
+    check('onaylı başvuru: bağımsız hak plandan (sınırsız değil)', !isUnlimitedBotLimit(getIndependentBotLimit($db, $sid)));
 }
-$unapproved = $db->selectSingle("user_id FROM param_marketplace_sellers WHERE status IN ('pending', 'rejected') ORDER BY user_id LIMIT 1");
+$unapproved = $db->selectSingle("user_id FROM marketplace_applications WHERE status IN ('submitted', 'rejected') ORDER BY user_id LIMIT 1");
 if ($unapproved) {
-    check('onaysız başvuru: herkese açık hak sınırsız DEĞİL',
+    check('onaysız/reddedilmiş başvuru: herkese açık hak sınırsız DEĞİL',
         !isUnlimitedBotLimit(getPublicBotLimit($db, (int) $unapproved['user_id'])));
+}
+$legacyOnly = $db->selectSingle(
+    "pms.user_id FROM param_marketplace_sellers pms
+     LEFT JOIN marketplace_applications m ON m.user_id = pms.user_id AND m.status = 'reviewed'
+     WHERE pms.status = 'active' AND m.user_id IS NULL ORDER BY pms.user_id LIMIT 1"
+);
+if ($legacyOnly) {
+    check('yalnızca eski aktif satıcı (onaylı başvurusuz): sınırsız DEĞİL',
+        !isUnlimitedBotLimit(getPublicBotLimit($db, (int) $legacyOnly['user_id'])));
 }
 
 echo "\n=== C) MADDE 11 + SINIRSIZ — özel yapma hakkı (GK-3, GK-17) ve NULL = sınırsız ===\n\n";

@@ -202,6 +202,45 @@ function hasMarketplaceRegistration(Database $db, int $userId): bool {
     return in_array($legacy['status'] ?? null, ['active', 'suspended'], true);
 }
 
+/**
+ * Madde 2 (müşteri kararı, 2026-10-17): "pazaryeri kaydı bulunan kullanıcı"
+ * = admin tarafından ONAYLANMIŞ (`reviewed`) başvurusu olan kullanıcı.
+ * Gönderilmiş ama incelenmemiş (`submitted`) ya da reddedilmiş başvuru sayılmaz.
+ * Onay geri alınırsa (admin → `rejected`) bu false döner; çağıranlar yalnızca
+ * YENİ işlemleri sınırlar, mevcut botlara dokunmaz.
+ */
+function hasApprovedMarketplaceApplication(Database $db, int $userId): bool {
+    if ($userId <= 0) return false;
+    $app = getMarketplaceApplication($db, $userId);
+    return $app !== null && ($app['status'] ?? '') === 'reviewed';
+}
+
+/** Eski Param alt üye işyeri akışında kabul edilen şirket hesap türleri. */
+const COMPANY_BANK_ACCOUNT_TYPES = ['Şahıs Şirketi', 'Kurumsal Hesap'];
+
+/**
+ * N-51 — eski satıcı/banka uçlarının kapısı (save_bank_info,
+ * submerchant_register, submerchant_resubmit). Bireysel satıcılık hiçbir
+ * yoldan açılmasın: Param entegrasyonunun yazılmamış olmasına güvenilmez.
+ *
+ * @param string|null $bankAccountType  istekte/kayıtta yazılan hesap türü;
+ *                                      null = tür bu işlemde söz konusu değil
+ * @throws PermissionException (403)
+ */
+function assertCompanySellerAllowed(Database $db, int $userId, ?string $bankAccountType = null): void {
+    if (!hasApprovedMarketplaceApplication($db, $userId)) {
+        throw new PermissionException(
+            'Pazaryeri satıcı işlemleri yalnızca onaylanmış bir şirket başvurusu olan hesaplara açıktır. '
+            . 'Önce Pazaryeri Başvurusu yapın; ekibimiz başvurunuzu onayladıktan sonra bu işlemi yapabilirsiniz.'
+        );
+    }
+    if ($bankAccountType !== null && !in_array(trim($bankAccountType), COMPANY_BANK_ACCOUNT_TYPES, true)) {
+        throw new PermissionException(
+            'Bireysel satıcı kaydı kabul edilmiyor; yalnızca şahıs şirketi ve kurumsal hesaplar pazaryerinde satış yapabilir.'
+        );
+    }
+}
+
 /** "TR** **** … 1326" — yalnızca son dört hane görünür. */
 function maskIban(?string $iban): ?string {
     if ($iban === null || $iban === '') return null;

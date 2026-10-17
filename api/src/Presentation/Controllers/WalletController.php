@@ -238,6 +238,20 @@ class WalletController {
 
         $db     = Database::getInstance();
 
+        // N-51 — bu uç yalnızca eski Param alt üye işyeri akışını besliyor
+        // (web/src, api/admin, router.php'de çağıranı yok). Bireysel satıcılık
+        // açılmasın: onaylı şirket başvurusu şart, hesap türü şahıs şirketi ya
+        // da kurumsal olmalı (istekte yoksa mevcut kayıttaki tür sınanır).
+        require_once __DIR__ . '/../../../functions/marketplace_application.php';
+        $typeToCheck = array_key_exists('account_type', $data)
+            ? (string) $data['account_type']
+            : ($db->selectSingle('account_type FROM banka_bilgileri WHERE user_id = ?', [$userId])['account_type'] ?? null);
+        try {
+            assertCompanySellerAllowed($db, $userId, $typeToCheck);
+        } catch (AppException $e) {
+            JsonResponse::fromException($e);
+        }
+
         // Whitelist matches the real banka_bilgileri schema (verified via live
         // DESCRIBE — the old list referenced columns like ad_soyad/sube_kodu/
         // hesap_no that don't exist, so every save silently dropped almost

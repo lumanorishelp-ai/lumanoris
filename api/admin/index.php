@@ -42,6 +42,7 @@ $adminRoutes = [
     '/admin/genelayar'          => 'genelayar.php',
     '/admin/iletisim'           => 'iletisim.php',
     '/admin/api'                => 'api.php',
+    '/admin/sistemdurumu'       => 'sistemdurumu.php',
     '/admin/chatbotkategoriler' => 'chatbotkategoriler.php',
     '/admin/kullanicilar'       => 'kullanicilar.php',
     '/admin/chatbotlar'         => 'chatbotlar.php',

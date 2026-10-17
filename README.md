@@ -1305,6 +1305,20 @@ from inside `api/`.
 `AppConfig::googleGeminiApiKey()` checks all three, in that order, and returns an empty string when
 none of them has it.
 
+**Every bot answers "Yapay zeka servisine şu anda ulaşılamıyor"**
+Gemini rejected the call. Admin panel → **Sistem Durumu** (`/admin/sistemdurumu`) shows which file
+the key is read from (`api/.env` wins over `api/admin/.env`, so a stale `API_GOOGLE_GEMINI` in
+`api/.env` hides a new key saved through the API-integrations page), the model
+(`functions/gemini.php` → `GEMINI_MODEL`), and a **Gemini'yi test et** button (POST + CSRF) that
+sends one short request to the same endpoint and shows the HTTP code and Google's status/message —
+never the key. Every failure, from chat or from that button, is logged as one `[gemini] …` line
+(`http=… model=… status=… reason=… message=…`, key masked) to the PHP error log:
+`APP_LOG_FILE`, default `storage/logs/php-error.log` one level above the document root (on the cPanel
+host: `~/storage/logs/php-error.log`, next to the `api.lumanoris.com` folder — not an `error_log`
+file in the web root). `API_KEY_INVALID` = wrong/revoked key; `PERMISSION_DENIED` /
+`CONSUMER_SUSPENDED` = key or project suspended, or the Generative Language API disabled;
+`RESOURCE_EXHAUSTED` = quota/billing; `NOT_FOUND` = model retired.
+
 **Password-reset emails never arrive**
 Configure SMTP — either `SMTP_*` in `api/.env` or the admin panel's SMTP settings page, which writes
 the `smtp_host` / `smtp_email` / `smtp_pass` / `smtp_name` rows in `global_vars`. Delivery is

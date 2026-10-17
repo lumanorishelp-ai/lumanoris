@@ -84,6 +84,12 @@
                         </button>
                     </li>
                     <li>
+                        <button class="d-block p-2 rounded <?= $currentPath === '/admin/sistemdurumu' ? $current_theme['active_color']. ' hover:'. $current_theme['active_color'] : 'hover:'.$current_theme['hover_color'].' active:'.$current_theme['active_color'] ?> <?= $current_theme['text_color'] ?> sidebar-button transition duration-250 ease-in-out"
+                                style="width: 100%; text-align: left; border: none; cursor: pointer;" onclick="window.location.href='/admin/sistemdurumu'">
+                            <i class="bi bi-activity me-1"></i> Sistem Durumu
+                        </button>
+                    </li>
+                    <li>
                         <button class="toggleButton mt-0 d-block p-2 rounded hover:<?= $current_theme['hover_color'] ?> active:<?= $current_theme['active_color'] ?> <?= $current_theme['text_color'] ?> sidebar-button transition duration-250 ease-in-out"
                         style="width: 100%; text-align: left; border: none; cursor: pointer;">
                             <div class="flex items-center justify-between w-full">

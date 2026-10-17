@@ -43,6 +43,9 @@ export default function Chat() {
   const [activeDialog, setActiveDialog] = useState({ input: "", output: "" });
   const [botLoadError, setBotLoadError] = useState(null);
   const [hasSubscription, setHasSubscription] = useState(false);
+  // N-52 — sunucunun sohbet erişimi kararı (getchatbot `can_chat`). false ise
+  // mesaj kutusu yerine kilitli uyarı; karşılama kaydı denenmez.
+  const [canChat, setCanChat] = useState(null);
   const [checkingSub, setCheckingSub] = useState(true);
   // Sohbet Luma Coini: mesaj hakkı tükendiğinde mesaj kutusunun yerini alan
   // "Sınır Aşıldı" bandı.
@@ -255,6 +258,9 @@ export default function Chat() {
           }));
           setComments(mapped);
         }
+        if (typeof data.can_chat === "boolean") {
+          setCanChat(data.can_chat);
+        }
         if (botData) {
           setBot(botData);
         }
@@ -401,6 +407,10 @@ export default function Chat() {
           };
           setMessages([initialMsg]);
 
+          // N-52 — erişim yoksa sunucu bu kaydı 403 ile reddediyordu (her
+          // ziyarette konsol hatası). Karşılama yalnızca gösterilir.
+          if (canChat === false) return;
+
           try {
             const botPayload = {
               chatbot_id: bot.id,
@@ -427,7 +437,7 @@ export default function Chat() {
     return () => {
       cancelled = true;
     };
-  }, [conversation, bot]); // bot'u da bağımlılığa ekledik
+  }, [conversation, bot, canChat]); // bot ve erişim (N-52) bağımlılıkta
 
   useEffect(() => {
     if (messagesEndRef.current) {
@@ -1041,6 +1051,27 @@ const handleRetryReply = (retryText) => {
               className="h-auto shrink-0 px-5 py-2.5 text-body-sm"
             >
               Paketini yükselt
+            </Button>
+          </div>
+        ) : canChat === false ? (
+          /* N-52 — erişimi olmayan ücretli bot: kullanıcı mesaj yazmadan önce
+             durumu görür (eskiden ancak gönderince 403 ile anlaşılıyordu). */
+          <div className="flex items-center justify-between gap-4 rounded-xl border border-amber-400/20 bg-luma-elevated px-5 py-4">
+            <div className="flex items-center gap-3">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-amber-500/15">
+                <Lock className="h-4 w-4 text-amber-300" />
+              </div>
+              <p className="text-body-sm leading-snug text-white/80">
+                Bu bot ücretli. Sohbet edebilmek için bu bota erişim satın almanız gerekiyor.
+                <br className="hidden sm:block" />
+                <span className="text-white/55">Ücretsiz herkese açık botları Keşfet&apos;te bulabilirsiniz.</span>
+              </p>
+            </div>
+            <Button
+              onClick={() => router.push("/dashboard/explore")}
+              className="h-auto shrink-0 px-5 py-2.5 text-body-sm"
+            >
+              Keşfet
             </Button>
           </div>
         ) : (

@@ -207,6 +207,11 @@ class ChatbotController {
         JsonResponse::success([
             'chatbot'  => $chatbot,
             'comments' => ['count' => count($comments), 'list' => $comments],
+            // N-52 — sohbet erişimi (generatereply'deki kontrolün aynısı):
+            // sahip/abone ya da ücretsiz herkese açık bot. İstemci, erişimi
+            // olmayan ücretli botta mesaj göndermeden önce uyarı gösterir.
+            // Oturumsuz: null (istemci girişe yönlendirir).
+            'can_chat' => $userId ? $repo->userHasAccess($id, (int) $userId, 'chat') : null,
         ]);
     }
 

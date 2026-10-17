@@ -141,17 +141,23 @@ function getUserPlan(Database $db, int $userId): array
         //
         // `expires_at IS NULL` = SÜRESİZ: sütun eklenmeden önce yazılmış
         // satırlar geriye dönük iptal edilmiyor.
+        //
+        // N-49 — açık COLLATE: canlıda plan_name unicode_ci, name_tr
+        // general_ci kaldı ve JOIN 1267 ile patlıyordu; getUserPlan ücretsiz
+        // plana düşüyordu (paket alan kullanıcı ücretsiz görünürdü). Açık
+        // COLLATE iki tarafın örtük collation'ından bağımsız çalışır (ikisi de
+        // utf8mb4). Kalıcı şema düzeltmesi: migrations/018.
         $plan = planSelectionHasExpiry($db)
             ? $db->selectSingle(
                 'p.* FROM user_plan_selection ups
-                 JOIN plans p ON p.name_tr = ups.plan_name
+                 JOIN plans p ON p.name_tr = ups.plan_name COLLATE utf8mb4_general_ci
                  WHERE ups.user_id = ?
                    AND (ups.expires_at IS NULL OR ups.expires_at > NOW())',
                 [$userId]
             )
             : $db->selectSingle(
                 'p.* FROM user_plan_selection ups
-                 JOIN plans p ON p.name_tr = ups.plan_name
+                 JOIN plans p ON p.name_tr = ups.plan_name COLLATE utf8mb4_general_ci
                  WHERE ups.user_id = ?',
                 [$userId]
             );

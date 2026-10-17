@@ -115,6 +115,7 @@ php api/database/application_selftest.php # pazaryeri başvurusu (Faz 5)
 php api/database/hoppa_selftest.php       # Hoppa paket ödemesi (Faz 7a); --e2e: test ortamında gerçek ödeme (dosya başlığına bakın)
 php api/database/migrate_selftest.php     # migration checksum satır sonundan bağımsız (N-25), salt okunur
 php api/database/gemini_selftest.php      # Gemini hata özeti anahtarı sızdırmıyor, model tek kaynakta (N-46), çevrimdışı
+php api/database/plan_collation_selftest.php # plan_name ↔ plans.name_tr collation (N-49), TEMPORARY tablo
 ```
 
 Bir değişiklik bunlardan birini bozuyorsa geri al ve nedenini raporla.

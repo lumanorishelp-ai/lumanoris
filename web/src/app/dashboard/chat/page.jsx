@@ -17,6 +17,16 @@ import { Button } from "@/shared/ui/button";
 import { Lumacoin } from "@/shared/ui/lumacoin";
 import { Lock, NotebookPen, RotateCcw } from "lucide-react";
 
+/* N-48 — süre zinciri (api/functions/gemini.php): sunucu cURL 30 sn'de,
+   PHP 45 sn'de biter; istemci 50 sn bekler, Vercel'in harici rewrite sınırı
+   (ilk bayt) 120 sn. Sunucu her zaman istemciden önce ya cevabı kaydeder ya da
+   hata karesi + coin iadesi gönderir. gemini_selftest E bu sırayı kilitler. */
+const CHAT_REPLY_TIMEOUT_MS = 50_000;
+/* İstemci yine de vazgeçerse (ağ, yavaş sunucu) sunucu cevabı kaydetmiş
+   olabilir: getchat ile birkaç kez yeniden sorulur. */
+const SAVED_REPLY_POLLS = 6;
+const SAVED_REPLY_POLL_MS = 4_000;
+
 export default function Chat() {
   const { userId } = useContext(UserContext);
   const [bot, setBot] = useState(null);
@@ -631,17 +641,55 @@ export default function Chat() {
 // bir hata oluştuğunda (AbortError dahil) "placeholderId is not defined"
 // ReferenceError'ı ile catch'in kendisinin patlamasına ve sahte
 // "yazıyor..." animasyonunun sonsuza kadar ekranda kalmasına yol açıyordu.
+// N-48 — sunucunun bu istek için kaydettiği cevabı ara: meta karesindeki
+// after_id'den büyük kimlikli son bot mesajı. Bulunamazsa null.
+const pollSavedReply = async (afterId) => {
+  for (let i = 0; i < SAVED_REPLY_POLLS; i++) {
+    await new Promise((r) => setTimeout(r, SAVED_REPLY_POLL_MS));
+    try {
+      const res = await fetch(`/api/chat/getchat.php?chatbot_id=${botId}&user_id=${userId}`);
+      const json = await res.json();
+      const found = (Array.isArray(json?.messages) ? json.messages : [])
+        .filter((m) => m.sent_by !== "user" && Number(m.id) > afterId)
+        .pop();
+      if (found) return found;
+    } catch (e) {
+      // geçici ağ hatası — bir sonraki denemede tekrar sor
+    }
+  }
+  return null;
+};
+
 const generateReply = async (userText, filePayloads = []) => {
   const placeholderId = Date.now();
   let timeoutId;
+  let afterId = null; // N-48: sunucunun ilk karesinden
   setMessages((prev) => [...prev, { id: placeholderId, type: "received", text: "" }]);
+
+  // N-48 — istemci beklemekten vazgeçti ya da akış yarıda koptu; sunucu
+  // (ignore_user_abort) cevabı kaydetmiş olabilir. Bulursa göster, yoksa
+  // açıklayıcı hata + Tekrar Dene. Coin sayacı sunucudan yeniden okunur
+  // (kayıt → düşmüş, iade → geri gelmiş).
+  const recoverSavedReply = async (fallbackText) => {
+    if (afterId === null) return false;
+    setMessages((prev) => prev.map((msg) =>
+      msg.id === placeholderId ? { ...msg, text: "Cevap bekleniyor…", error: false } : msg
+    ));
+    const saved = await pollSavedReply(afterId);
+    checkMessageAllowance(userId, botId);
+    setMessages((prev) => prev.map((msg) =>
+      msg.id === placeholderId
+        ? saved
+          ? { ...msg, text: saved.message, messageId: Number(saved.id), error: false, retryText: undefined }
+          : { ...msg, text: fallbackText, error: true, retryText: userText }
+        : msg
+    ));
+    return true;
+  };
 
   try {
     const controller = new AbortController();
-    // AI-004: sunucu tarafındaki cURL zaman aşımıyla aynı (20 sn). Eskiden
-    // istemci 15 sn'de kesiyor, sunucu 30 sn beklemeye devam ediyordu:
-    // kullanıcı hata görüyor, upstream isteği (ve faturası) sürüyordu.
-    timeoutId = setTimeout(() => controller.abort(), 20000);
+    timeoutId = setTimeout(() => controller.abort(), CHAT_REPLY_TIMEOUT_MS);
 
     // SEC-015 / COIN-001 / PAY-002: sistem talimatı artık burada KURULMUYOR.
     // İstemci yalnızca hangi botla konuştuğunu ve ne dediğini söylüyor;
@@ -748,6 +796,7 @@ const generateReply = async (userText, filePayloads = []) => {
             // taşıyor — coin sayacı için ayrı bir istek atmaya gerek yok.
             if (typeof gData.remaining === "number" || gData.source) {
               if (typeof gData.remaining === "number") setCoinsRemaining(gData.remaining);
+              if (typeof gData.after_id === "number") afterId = gData.after_id;
               continue;
             }
             const textChunk = gData.candidates?.[0]?.content?.parts?.[0]?.text || "";
@@ -763,6 +812,13 @@ const generateReply = async (userText, filePayloads = []) => {
     }
 
     clearTimeout(timeoutId);
+
+    // N-48 — akış hata karesi olmadan ve metinsiz bittiyse bağlantı yolda
+    // kopmuş olabilir; sunucunun kaydettiği cevabı ara.
+    if (!fullText && !upstreamError &&
+        (await recoverSavedReply("Cevap alınamadı. Lütfen tekrar deneyin."))) {
+      return;
+    }
 
     if (fullText) {
       // N-30 — bot cevabını artık SUNUCU kaydediyor (generateReply sonunda
@@ -791,6 +847,8 @@ const generateReply = async (userText, filePayloads = []) => {
     const errorText = err.name === "AbortError"
       ? "Cevap çok gecikti. Lütfen tekrar deneyin."
       : "Bir hata oluştu. Lütfen tekrar deneyin.";
+    // N-48 — zaman aşımı/kopma: sunucu cevabı yine de kaydetmiş olabilir.
+    if (await recoverSavedReply(errorText)) return;
     setMessages((prev) => prev.map((msg) =>
       msg.id === placeholderId ? { ...msg, text: errorText, error: true, retryText: userText } : msg
     ));

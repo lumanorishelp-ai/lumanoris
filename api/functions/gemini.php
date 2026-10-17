@@ -12,7 +12,53 @@
 
 require_once __DIR__ . '/env.php';
 
-const GEMINI_MODEL = 'gemini-3-flash-preview';
+/**
+ * N-48 — model ve düşünme seviyesi (ölçüm 2026-10-17, 5 mesaj, yerel):
+ *   gemini-3-flash-preview (varsayılan düşünme)  ort. 8,9 sn · en yüksek 9,6
+ *   gemini-3-flash-preview + minimal              ort. 8,6 sn · en yüksek 12,4
+ *   gemini-3.8-flash + low                        ort. 4,1 sn · en yüksek 4,9
+ *   gemini-3.5-flash-lite + low                   ort. 1,4 sn · en yüksek 1,6
+ * 3-flash-preview'da düşünmeyi kısmak süreyi değiştirmedi; gecikme modelin
+ * kendisinde. Kararlı (önizleme olmayan) en yeni Flash seçildi: yarı süre,
+ * tam model kalitesi. Daha da hızlı gerekirse 'gemini-3.5-flash-lite' — eğitim
+ * metni uzun botlarda cevap kalitesi düşebilir.
+ */
+const GEMINI_MODEL = 'gemini-3.8-flash';
+const GEMINI_THINKING_LEVEL = 'low';
+
+/**
+ * Süre zinciri (N-48). Her halka bir sonrakinden önce biter, böylece
+ * kullanıcı anlamlı bir hata görür ve sunucu her durumda kaydeder ya da iade eder:
+ *   cURL bağlantı 5 sn, toplam 30 sn
+ *   → PHP set_time_limit 45 sn (ignore_user_abort açık)
+ *   → arayüz CHAT_REPLY_TIMEOUT_MS 50 sn (web/src/app/dashboard/chat/page.jsx)
+ *   → Vercel harici rewrite: ilk bayta kadar 120 sn (ilk SSE karesi hemen gider)
+ * gemini_selftest E bölümü bu sırayı kilitler.
+ */
+const GEMINI_CONNECT_TIMEOUT = 5;
+const GEMINI_TIMEOUT = 30;
+const CHAT_PHP_TIME_LIMIT = 45;
+
+/** İstek gövdesine eklenen üretim ayarı (sohbet için düşük düşünme). */
+function geminiGenerationConfig(): array
+{
+    return ['thinkingConfig' => ['thinkingLevel' => GEMINI_THINKING_LEVEL]];
+}
+
+/**
+ * Coin kararı (N-48): yalnızca eksiksiz ve boş olmayan bir cevap kaydedilir
+ * ve coin düşmüş kalır. Ağ hatası, cURL zaman aşımı (yarım metin dahil),
+ * Google 4xx/5xx ya da 200 ile boş akış → iade.
+ *
+ * @return 'save'|'refund'
+ */
+function chatReplyOutcome(int $http, string $curlError, string $replyText): string
+{
+    if ($curlError !== '' || $http < 200 || $http >= 300) {
+        return 'refund';
+    }
+    return trim($replyText) === '' ? 'refund' : 'save';
+}
 
 function geminiStreamUrl(string $apiKey): string
 {
@@ -102,8 +148,12 @@ function geminiProbe(string $apiKey, int $timeout = 15): array
     curl_setopt_array($ch, [
         CURLOPT_POST           => true,
         CURLOPT_HTTPHEADER     => ['Content-Type: application/json'],
-        CURLOPT_POSTFIELDS     => json_encode(['contents' => [['role' => 'user', 'parts' => [['text' => 'Yalnızca "tamam" yaz.']]]]]),
+        CURLOPT_POSTFIELDS     => json_encode([
+            'contents'         => [['role' => 'user', 'parts' => [['text' => 'Yalnızca "tamam" yaz.']]]],
+            'generationConfig' => geminiGenerationConfig(),
+        ]),
         CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_CONNECTTIMEOUT => GEMINI_CONNECT_TIMEOUT,
         CURLOPT_TIMEOUT        => $timeout,
     ]);
     $body = (string) curl_exec($ch);

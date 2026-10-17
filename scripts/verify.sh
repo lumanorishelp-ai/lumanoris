@@ -54,6 +54,7 @@ step access_selftest selftest access_selftest.php
 step application_selftest selftest application_selftest.php
 step hoppa_selftest selftest hoppa_selftest.php
 step migrate_selftest selftest migrate_selftest.php
+step gemini_selftest selftest gemini_selftest.php
 
 if [ ${#failed[@]} -eq 0 ]; then
   echo "DOĞRULAMA: GEÇTİ"

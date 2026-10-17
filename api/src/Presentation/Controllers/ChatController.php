@@ -514,8 +514,8 @@ class ChatController {
             ]],
         ]);
 
-        $url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:streamGenerateContent'
-             . '?alt=sse&key=' . urlencode($apiKey);
+        require_once __DIR__ . '/../../../functions/gemini.php';
+        $url = geminiStreamUrl($apiKey);
 
         header('Content-Type: text/event-stream');
         header('Cache-Control: no-cache');
@@ -575,12 +575,9 @@ class ChatController {
         if ($curlError !== '' || $httpStatus === 0 || $httpStatus >= 400) {
             // Log the real upstream reason (suspended key, quota, bad model
             // name, network) — without this the failure was undiagnosable.
-            error_log(sprintf(
-                '[generatereply] Gemini call failed: http=%d curl=%s body=%s',
-                $httpStatus,
-                $curlError !== '' ? $curlError : '-',
-                $errorBody !== '' ? mb_substr($errorBody, 0, 500) : '-'
-            ));
+            // Ham gövde değil ayrıştırılmış özet: Google bazı hatalarda
+            // anahtarı gövdeye geri yazıyor; özet onu maskeliyor.
+            error_log('[gemini] generatereply hata: ' . geminiErrorSummary($httpStatus, $curlError, $errorBody, $apiKey));
 
             // AI-005: cevap üretilemedi — yakılan hakları geri ver. Dosya
             // için düşülen ikinci hak da buraya dahil, kendi kaynağına.

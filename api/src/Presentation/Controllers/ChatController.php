@@ -306,6 +306,7 @@ class ChatController {
         require_once __DIR__ . '/../../../functions/coin_engine.php';
         require_once __DIR__ . '/../../../functions/gemini.php';
         require_once __DIR__ . '/../../../functions/dialog_book.php';
+        require_once __DIR__ . '/../../../functions/chat_context.php';
 
         // N-48 — istemci (zaman aşımı, sekme kapanması) bağlantıyı kesse de
         // betik sürmeli: aksi hâlde bir sonraki echo'da PHP duruyor, cevap
@@ -363,7 +364,7 @@ class ChatController {
         }
 
         $bot = $db->selectSingle(
-            'style_prompt, LEFT(training_prompt, ?) AS training_prompt FROM chatbotlar WHERE id = ?',
+            'style_prompt, sohbet_basi_mesaj, LEFT(training_prompt, ?) AS training_prompt FROM chatbotlar WHERE id = ?',
             [self::MAX_TRAINING_CHARS, $chatbotId]
         );
         if (!$bot) {
@@ -430,8 +431,14 @@ class ChatController {
         $corpus  = (string) ($bot['training_prompt'] ?? '');
 
         // Talimat sunucuda kuruluyor — istemci artık bu metne dokunamıyor.
+        // N-50 — SOHBET satırı: geçmiş artık modele gidiyor; selamlama ve
+        // tanıtım her cevapta tekrarlanmasın. Müşterinin stil metnine
+        // dokunulmuyor; bu bizim şablonumuz.
         $systemInstruction = "GÖREV: Aşağıdaki [BİLGİ KAYNAĞI] kısmına %100 sadık kalarak cevap ver.\n"
-            . "Bilgi kaynağı dışına çıkma. [KİŞİLİK/STİL] direktiflerini uygula.\n\n"
+            . "Bilgi kaynağı dışına çıkma. [KİŞİLİK/STİL] direktiflerini uygula.\n"
+            . "SOHBET: Önceki mesajlar sana sırasıyla verilir; onları dikkate al ve gerektiğinde önceki "
+            . "mesajlara atıf yap. Selamlamayı ve kendini tanıtmayı yalnızca sohbetin ilk mesajında yap; "
+            . "sonraki cevaplarda tekrarlama.\n\n"
             . "[BİLGİ KAYNAĞI]:\n"
             . ($corpus !== '' ? $corpus : 'Bilgi kaynağı yok, kullanıcının sana sorduğu sorulara cevap ver.')
             . "\n\n[KİŞİLİK/STİL]:\n" . $style;
@@ -506,22 +513,22 @@ class ChatController {
             JsonResponse::error('Yapay zeka servisi yapılandırılmamış.', 500, AppConfig::ERR_SERVER);
         }
 
-        // Dosya, metin parçalarının ARDINDAN ekleniyor: talimat ve kullanıcı
-        // mesajı modele önce ulaşsın, dosya onların bağlamında okunsun.
-        $parts = [
-            ['text' => $systemInstruction],
-            ['text' => $message],
-        ];
-        foreach ($fileParts as $filePart) {
-            $parts[] = $filePart;
-        }
+        // N-50 — çok turlu istek: güncel sohbetin geçmişi (sunucudan, en
+        // fazla CHAT_HISTORY_MAX_MESSAGES) + bu mesaj. Talimat ayrı
+        // `systemInstruction` alanında; eskiden ilk kullanıcı parçasıydı ve
+        // geçmiş hiç gönderilmiyordu (her cevap sıfırdan, tekrar tekrar
+        // tanıtım). Dosyalar son kullanıcı turunda, metinden sonra.
+        $contents = chatBuildContents(
+            chatHistoryRows($db, $userId, $chatbotId, InputSanitizer::positiveInt($data['conversation_id'] ?? 0)),
+            (string) ($bot['sohbet_basi_mesaj'] ?? ''),
+            $message,
+            $fileParts
+        );
 
         $payload = json_encode([
-            'contents' => [[
-                'role'  => 'user',
-                'parts' => $parts,
-            ]],
-            'generationConfig' => geminiGenerationConfig(),
+            'systemInstruction' => ['parts' => [['text' => $systemInstruction]]],
+            'contents'          => $contents,
+            'generationConfig'  => geminiGenerationConfig(),
         ]);
 
         $url = geminiStreamUrl($apiKey);

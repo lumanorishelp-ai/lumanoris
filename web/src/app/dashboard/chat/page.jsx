@@ -28,7 +28,7 @@ const SAVED_REPLY_POLLS = 6;
 const SAVED_REPLY_POLL_MS = 4_000;
 
 export default function Chat() {
-  const { userId } = useContext(UserContext);
+  const { userId, account: sharedAccount, setDailyCoinsRemaining } = useContext(UserContext) || {};
   const [bot, setBot] = useState(null);
   const [botId, setBotId] = useState(0);
   const [comments, setComments] = useState(null);
@@ -47,8 +47,18 @@ export default function Chat() {
   // Sohbet Luma Coini: mesaj hakkı tükendiğinde mesaj kutusunun yerini alan
   // "Sınır Aşıldı" bandı.
   const [limitReached, setLimitReached] = useState(false);
-  const [coinsRemaining, setCoinsRemaining] = useState(null);
+  const [coinsRemaining, setLocalCoinsRemaining] = useState(null);
   const [retryAt, setRetryAt] = useState(null);
+  // N-50 — sunucudan gelen her coin değeri hem bu sayfanın mantığına hem de
+  // layout'taki paylaşılan hesaba yazılır; kenar çubuğu ve çip aynı değeri
+  // gösterir (tek istemci kaynağı: useAccountData).
+  const setCoinsRemaining = useCallback((n) => {
+    if (typeof n !== "number") return;
+    setLocalCoinsRemaining(n);
+    setDailyCoinsRemaining?.(n);
+  }, [setDailyCoinsRemaining]);
+  // Çip paylaşılan değeri okur; hesap henüz yüklenmediyse yerel değer.
+  const sharedCoins = sharedAccount?.id != null ? sharedAccount.dailyCoinsRemaining : coinsRemaining;
 
   const checkMessageAllowance = useCallback(async (uId, bId) => {
       if (!uId || !bId) return;
@@ -62,7 +72,7 @@ export default function Chat() {
       } catch (err) {
           console.error("Mesaj hakkı sorgulama hatası:", err);
       }
-  }, []);
+  }, [setCoinsRemaining]);
 
   useEffect(() => {
       if (userId && botId) {
@@ -625,7 +635,7 @@ export default function Chat() {
     }
   }
 
-  await generateReply(data.text, filePayloads);
+  await generateReply(data.text, filePayloads, currentConvId);
 
   if (isNewConversation) {
     setConversationId(currentConvId);
@@ -660,7 +670,7 @@ const pollSavedReply = async (afterId) => {
   return null;
 };
 
-const generateReply = async (userText, filePayloads = []) => {
+const generateReply = async (userText, filePayloads = [], convId = conversationIdRef.current) => {
   const placeholderId = Date.now();
   let timeoutId;
   let afterId = null; // N-48: sunucunun ilk karesinden
@@ -704,6 +714,8 @@ const generateReply = async (userText, filePayloads = []) => {
         data: JSON.stringify({
           chatbot_id: botId,
           message: userText,
+          // N-50: sunucu geçmişi bu sohbetin başından kurar (doğrular).
+          ...(Number(convId) > 0 ? { conversation_id: Number(convId) } : {}),
           ...(filePayloads.length ? { files: filePayloads } : {}),
         }),
       }),
@@ -1033,11 +1045,11 @@ const handleRetryReply = (retryText) => {
           </div>
         ) : (
           <div className="space-y-2">
-            {typeof coinsRemaining === "number" && (
+            {typeof sharedCoins === "number" && (
               <div className="flex justify-center">
                 <span className="inline-flex items-center gap-1.5 rounded-full border border-white/[0.06] bg-white/[0.03] px-3 py-1 text-[11px] text-white/40">
                   <Lumacoin size={13} />
-                  Bugün kalan Lumacoin: <span className="font-semibold tabular-nums text-fuchsia-300/90">{coinsRemaining}</span>
+                  Bugün kalan Lumacoin: <span className="font-semibold tabular-nums text-fuchsia-300/90">{sharedCoins}</span>
                 </span>
               </div>
             )}

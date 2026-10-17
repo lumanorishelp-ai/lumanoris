@@ -103,4 +103,69 @@ check('düşünme seviyesi sohbet için düşük', in_array(geminiGenerationConf
 check('meta karesi after_id taşıyor (yeniden sorgulama için)', str_contains($ctl, "'after_id'"));
 check('arayüz zaman aşımında kaydedilmiş cevabı getchat ile yeniden soruyor', str_contains($page, 'pollSavedReply(') && str_contains($page, 'afterId'));
 
+echo "\n=== F) Sohbet geçmişi Gemini'ye gidiyor (N-50) ===\n\n";
+$ctxLib = __DIR__ . '/../functions/chat_context.php';
+if (is_file($ctxLib)) {
+    require_once $ctxLib;
+}
+if (!function_exists('chatBuildContents')) {
+    check('functions/chat_context.php: chatBuildContents', false, 'tanımlı değil');
+    finish();
+}
+$greet = 'Merhaba! Ben LUMANORIS AI. Sana nasıl yardımcı olabilirim?';
+$rows = [
+    ['sent_by' => 'bot',  'message' => $greet],                      // karşılama (sohbet başı)
+    ['sent_by' => 'user', 'message' => 'naber'],
+    ['sent_by' => 'bot',  'message' => 'İyiyim, sen nasılsın?'],
+    ['sent_by' => 'user', 'message' => 'gelmedi senden bir haber'],  // istemcinin addchat'i önce yazdıysa
+];
+$c = chatBuildContents($rows, $greet, 'gelmedi senden bir haber');
+$roles = array_column($c, 'role');
+check('roller sırayla user/model/user', $roles === ['user', 'model', 'user'], implode(',', $roles));
+check('karşılama metni geçmişe girmiyor', !str_contains(json_encode($c, JSON_UNESCAPED_UNICODE), 'Sana nasıl yardımcı'));
+check('önceki bot cevabı model turu olarak gidiyor', ($c[1]['parts'][0]['text'] ?? '') === 'İyiyim, sen nasılsın?');
+check('güncel mesaj son turda, tek kez', ($c[2]['parts'][0]['text'] ?? '') === 'gelmedi senden bir haber'
+    && substr_count(json_encode($c, JSON_UNESCAPED_UNICODE), 'gelmedi senden bir haber') === 1);
+
+// istemcinin addchat'i henüz yazmadıysa (yarış): güncel mesaj yine sonda
+$c = chatBuildContents(array_slice($rows, 0, 3), $greet, 'gelmedi senden bir haber');
+check('kullanıcı mesajı henüz kayıtta yokken de sonda', array_column($c, 'role') === ['user', 'model', 'user']
+    && $c[2]['parts'][0]['text'] === 'gelmedi senden bir haber');
+
+// karşılama kullanıcı sorusundan SONRA kaydedilmişse (AUDIT adayı) — yine atlanır
+$c = chatBuildContents([['sent_by' => 'user', 'message' => 'selam'], ['sent_by' => 'bot', 'message' => $greet]], $greet, 'nasılsın');
+check('soru sonrası kaydedilmiş karşılama da atlanıyor; ardışık user birleşiyor', array_column($c, 'role') === ['user']
+    && count($c[0]['parts']) === 2);
+
+// model ile başlayan geçmiş: ilk tur user olmalı
+$c = chatBuildContents([['sent_by' => 'bot', 'message' => 'eski cevap'], ['sent_by' => 'user', 'message' => 'a']], '', 'b');
+check('model ile başlayan geçmiş: baştaki model turu atılıyor', ($c[0]['role'] ?? '') === 'user');
+
+// dosya parçaları son kullanıcı turunda
+$c = chatBuildContents([], $greet, 'bu dosyada ne var?', [['inline_data' => ['mime_type' => 'application/pdf', 'data' => 'QQ==']]]);
+check('dosya son turda, metinden sonra', count($c) === 1 && isset($c[0]['parts'][1]['inline_data']));
+
+// sınırlar
+$many = [];
+for ($i = 0; $i < 60; $i++) {
+    $many[] = ['sent_by' => $i % 2 ? 'bot' : 'user', 'message' => "m$i " . str_repeat('x', 900)];
+}
+$c = chatBuildContents($many, '', 'son');
+$msgs = 0; $chars = 0;
+foreach ($c as $turn) foreach ($turn['parts'] as $p) { $msgs++; $chars += mb_strlen($p['text'] ?? ''); }
+check('en fazla CHAT_HISTORY_MAX_MESSAGES geçmiş mesajı + güncel', $msgs <= CHAT_HISTORY_MAX_MESSAGES + 1, "parça=$msgs");
+check('geçmiş CHAT_HISTORY_MAX_CHARS sınırında', $chars <= CHAT_HISTORY_MAX_CHARS + mb_strlen('son'), "karakter=$chars");
+check('en yeni mesajlar korunuyor (en eskiler atılıyor)', str_contains(json_encode($c), 'm59 ') && !str_contains(json_encode($c), '"m0 '));
+
+$ctl = (string) file_get_contents(__DIR__ . '/../src/Presentation/Controllers/ChatController.php');
+check('ChatController geçmişi chatBuildContents ile kuruyor', str_contains($ctl, 'chatBuildContents('));
+check('ChatController sistem talimatını systemInstruction alanında gönderiyor', str_contains($ctl, "'systemInstruction'"));
+check('talimat: tanıtım yalnızca ilk mesajda', str_contains($ctl, 'yalnızca sohbetin ilk mesajında'));
+
+echo "\n=== G) Coin tek kaynaktan (N-50) ===\n\n";
+$layout = (string) file_get_contents(__DIR__ . '/../../web/src/app/dashboard/layout.jsx');
+check('layout coin ayarlayıcısını UserContext ile paylaşıyor', str_contains($layout, 'setDailyCoinsRemaining') && str_contains($layout, 'UserContext.Provider'));
+check('sohbet sayfası sunucudan gelen coin değerini paylaşılan bağlama yazıyor', str_contains($page, 'setDailyCoinsRemaining?.('));
+check('sohbet çipi paylaşılan değeri gösteriyor', str_contains($page, 'sharedCoins'));
+
 finish();

@@ -85,3 +85,6 @@ docs/verification/2026-10/
 
 # Canlı arka uç için elle hazırlanan zip paketleri (deploy/backend-*.zip) — commit edilmez
 deploy/
+
+# Müşteri gereksinim kontrolü ekran görüntüleri (yerel; yalnızca rapor commit edilir)
+docs/verification/musteri-kontrol/

@@ -231,6 +231,8 @@ const KB_MAX_PDF_MB = 5;
    ilgili parçalar gider (N-60, sözcük kökü eşleşmesi — vektör arama yok). */
 const KB_MAX_CHARS = 60000;
 const KB_MAX_PDF_BYTES = KB_MAX_PDF_MB * 1024 * 1024;
+/* N-62 — api/src/Shared/Utilities/DocumentText.php ile ELLE senkron. */
+const KB_FILE_EXTENSIONS = ["pdf", "docx", "txt"];
 
 /* Sekmeler tek kaynakta: hem üstteki sekme çubuğu hem alttaki "Devam Et"
    gezinmesi bu diziden besleniyor. Liste JSX'in içinde satır içi duruyordu;
@@ -350,7 +352,7 @@ function ChatbotForm({
   // asarsa sohbette yalnizca soruyla ilgili parcalar gider — N-60,
   // chat_context.php chatSelectCorpus; bkz. KB_MAX_CHARS) -------------
   // Backend zaten hazirdi ve hic cagrilmiyordu:
-  //   POST /api/training/readpdf.php            -> PDF metni cikarir
+  //   POST /api/training/readdocument.php       -> PDF / DOCX / TXT metni (N-62)
   //   POST /api/training/readurl.php            -> sayfa metni cikarir (yeni)
   //   POST /api/training/update_training_chunk.php -> training_prompt'a ekler
   const [kbSources, setKbSources] = useState([]);
@@ -433,19 +435,28 @@ function ChatbotForm({
     await refreshCorpus();
   };
 
-  const handleKbPdf = async (file) => {
+  // N-62 — PDF, DOCX ve TXT. Tür sunucuda dosya imzasından da doğrulanıyor;
+  // buradaki kontrol yalnızca boşuna yükleme yapılmasını önlüyor.
+  const handleKbFile = async (file) => {
     if (!file) return;
     setKbError(null);
-    if (file.type !== "application/pdf") {
-      setKbError("Yalnızca PDF dosyası yükleyebilirsiniz.");
+    const ext = (file.name.split(".").pop() || "").toLowerCase();
+    if (ext === "doc") {
+      setKbError('Eski Word biçimi (.doc) desteklenmiyor. Dosyayı Word\'de "Farklı Kaydet → .docx" ile kaydedip yükleyin.');
+      return;
+    }
+    if (!KB_FILE_EXTENSIONS.includes(ext)) {
+      setKbError(`Bu dosya türü desteklenmiyor${ext ? ` (.${ext})` : ""}. PDF, DOCX veya TXT yükleyin.`);
       return;
     }
     if (file.size > KB_MAX_PDF_BYTES) {
-      setKbError(`PDF çok büyük (maks. ${KB_MAX_PDF_MB} MB).`);
+      setKbError(
+        `Dosya çok büyük: ${(Math.ceil((file.size / 1048576) * 10) / 10).toLocaleString("tr-TR")} MB (en fazla ${KB_MAX_PDF_MB} MB).`,
+      );
       return;
     }
 
-    setKbBusy("PDF okunuyor...");
+    setKbBusy("Belge okunuyor...");
     try {
       const base64Data = await new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -454,10 +465,10 @@ function ChatbotForm({
         reader.readAsDataURL(file);
       });
 
-      const res = await fetch("/api/training/readpdf.php", {
+      const res = await fetch("/api/training/readdocument.php", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ base64Data }),
+        body: JSON.stringify({ base64Data, filename: file.name }),
         credentials: "include",
       });
 
@@ -475,17 +486,17 @@ function ChatbotForm({
       } catch {
         throw new Error(
           res.status === 413
-            ? "PDF, sunucunun kabul ettiği istek boyutunu aşıyor. Daha küçük bir dosya deneyin."
+            ? "Dosya, sunucunun kabul ettiği istek boyutunu aşıyor. Daha küçük bir dosya deneyin."
             : `Sunucu beklenmeyen bir yanıt döndürdü (HTTP ${res.status}). Dosya çok büyük olabilir.`,
         );
       }
       if (!data?.success)
-        throw new Error(data?.message || "PDF ayrıştırılamadı.");
+        throw new Error(data?.message || "Belge okunamadı.");
 
       setKbBusy("Bilgi bankasına ekleniyor...");
-      await appendToCorpus(data.text, file.name, "pdf");
+      await appendToCorpus(data.text, file.name, "file");
     } catch (err) {
-      setKbError(err.message || "PDF eklenemedi.");
+      setKbError(err.message || "Belge eklenemedi.");
     } finally {
       setKbBusy("");
       if (kbFileRef.current) kbFileRef.current.value = "";
@@ -999,7 +1010,7 @@ function ChatbotForm({
                     <FileText className="h-5 w-5" />
                   </span>
                   <span className="block text-xs font-semibold text-white">
-                    Doküman veya PDF Yükleyin
+                    Belge yükleyin: PDF, DOCX veya TXT
                   </span>
                   <span className="block text-caption text-zinc-500">
                     Sıkça sorulan sorular, kataloglar veya şirket içi kılavuzlar
@@ -1009,9 +1020,9 @@ function ChatbotForm({
                 <input
                   ref={kbFileRef}
                   type="file"
-                  accept="application/pdf"
+                  accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain"
                   className="hidden"
-                  onChange={(e) => handleKbPdf(e.target.files?.[0])}
+                  onChange={(e) => handleKbFile(e.target.files?.[0])}
                 />
 
                 {/* URL */}

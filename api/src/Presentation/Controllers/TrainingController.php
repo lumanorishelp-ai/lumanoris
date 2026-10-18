@@ -331,116 +331,82 @@ class TrainingController {
         return $v4 !== [] ? $v4 : $ips;
     }
 
-    // Cap on the decoded PDF size this endpoint will parse. Was previously
-    // reachable with no session and no size limit at all — anyone on the
-    // internet could submit arbitrarily large/malformed PDFs and burn server
-    // CPU/memory in Smalot\PdfParser (DoS).
-    //
-    // 2026-10-05 (S21 kararı): 15 MB → 5 MB. 15 MB arayüzde vaat ediliyordu
-    // ama base64 ile ~20 MB istek gövdesi demekti; varsayılan
-    // post_max_size=8M'de fiili sınır ~6 MB'tı (L-01). 5 MB ≈ 6,7 MB gövde,
-    // 8M'nin altında kalıyor. Arayüzdeki sınır (create/page.jsx →
-    // KB_MAX_PDF_BYTES) bununla ELLE senkron. Artırılacaksa sunucu
-    // post_max_size'ı ile birlikte.
-    private const MAX_PDF_BYTES = 5 * 1024 * 1024;
+    // Belge boyut tavanı: DocumentText::MAX_BYTES (5 MB). Geçmiş:
+    // eskiden oturumsuz ve sınırsızdı (DoS); 2026-10-05 (S21) 15 MB → 5 MB,
+    // çünkü base64 ~%33 büyütüyor ve post_max_size=8M'de fiili sınır ~6 MB'tı
+    // (L-01). Arayüzdeki KB_MAX_PDF_MB bununla ELLE senkron; artırılacaksa
+    // sunucu post_max_size'ı ile birlikte.
 
     /**
-     * PDF metnini çıkarır.
-     *
-     * Bu uçta HİÇBİR loglama yoktu: canlıda başarısız olduğunda geriye
-     * yalnızca istemcideki genel mesaj kalıyor, nedenini öğrenmenin bir yolu
-     * bulunmuyordu. Aşağıdaki her başarısızlık dalı artık gerçek nedeni
-     * error log'a yazıyor ve istemciye birbirinden AYIRT EDİLEBİLİR bir mesaj
-     * dönüyor — "çalışmıyor" ile "şu yüzden çalışmıyor" arasındaki fark.
+     * N-62 — PDF, DOCX ve TXT'den metin (Bilgi Bankası → Belge yükle).
+     * İstek: {base64Data, filename}. Hata: Türkçe mesaj + `reason`
+     * (too_large / unsupported / doc_legacy / encrypted / scanned / corrupt / empty).
+     */
+    public static function readDocument(): void {
+        self::handleDocumentUpload('belge');
+    }
+
+    /**
+     * Geriye dönük: eski istemciler (açık kalmış sekme) yalnızca PDF ve
+     * filename'siz gönderiyor. Aynı işleyici; tür imzadan belirleniyor.
      */
     public static function readPdf(): void {
+        self::handleDocumentUpload('belge.pdf');
+    }
+
+    private static function handleDocumentUpload(string $defaultName): void {
         require_method('POST');
         $userId = AuthMiddleware::requireAuth();
-        // PDF parsing is CPU- and disk-heavy; it had no ceiling at all.
+        // Belge ayrıştırma CPU/disk ağır; anahtar eski uçla ortak (aynı kota).
         checkRateLimit(Database::getInstance(), 'readpdf:' . $userId, 10, 300);
-        // N-56 — `vendor/` git'te değil; canlıda autoload dosyası hiç yoktu ve
-        // `require_once` \Error fırlatıp sunucu yolunu kullanıcıya gösteriyordu.
-        // Dosya yok / sınıf yok (eski vendor) ayrıntısı loga, kullanıcıya 503.
+        // N-56 — vendor eksikse ham PHP hatası yerine anlaşılır 503.
         VendorAutoload::requireOrFail(
             'readpdf',
             VendorAutoload::PDF_CLASSES,
             'Belge okuma bileşeni sunucuda şu an kullanılamıyor. Sorun kayda geçti; '
-            . 'lütfen daha sonra tekrar deneyin ya da içeriği metin olarak yapıştırın.'
+            . 'lütfen daha sonra tekrar deneyin ya da içeriği "Metin ekle" ile yapıştırın.'
         );
 
         $raw      = file_get_contents('php://input');
         $declared = (int) ($_SERVER['CONTENT_LENGTH'] ?? 0);
 
-        // Gövde sunucunun kabul ettiğinden büyükse PHP onu ATAR: php://input
-        // boş gelir ama Content-Length yerinde durur. Eskiden bu durum
-        // "base64Data eksik." diye raporlanıyordu — kullanıcı arayüzdeki
-        // "maks. 15 MB" yazısını okuduktan sonra bu mesajı görünce hatayı
-        // kendi dosyasında arıyordu. Asıl sınır şu: base64 veriyi ~%33
-        // büyüttüğü için 15 MB'lık bir PDF ~20 MB'lık istek gövdesi demek;
-        // post_max_size varsayılanı 8M olan bir sunucuda bu asla geçmez.
-        // Mesaj artık sunucunun GERÇEK sınırını söylüyor.
+        // Gövde post_max_size'ı aşarsa PHP onu ATAR: php://input boş gelir ama
+        // Content-Length yerinde durur. Mesaj sunucunun GERÇEK sınırını söylüyor.
         if ($raw === '' && $declared > 0) {
             $limit = (string) ini_get('post_max_size');
-            error_log("[readpdf] istek gövdesi alınamadı: content_length={$declared}, post_max_size={$limit}");
+            error_log("[readdocument] istek gövdesi alınamadı: content_length={$declared}, post_max_size={$limit}");
             JsonResponse::error(
-                "PDF, sunucunun kabul ettiği istek boyutunu aşıyor (sunucu sınırı: {$limit}). "
-                . 'Base64 kodlama dosyayı yaklaşık üçte bir büyüttüğü için sığabilecek PDF bundan '
-                . 'küçüktür. Daha küçük bir PDF deneyin.',
+                "Dosya, sunucunun kabul ettiği istek boyutunu aşıyor (sunucu sınırı: {$limit}). "
+                . 'Yükleme sırasında dosya yaklaşık üçte bir büyüdüğü için sığabilecek dosya bundan küçüktür. '
+                . 'Daha küçük bir dosya deneyin.',
                 413,
-                AppConfig::ERR_VALIDATION
+                AppConfig::ERR_VALIDATION,
+                ['reason' => 'too_large']
             );
         }
 
         $input = json_decode($raw, true);
         if (!isset($input['base64Data'])) {
-            error_log('[readpdf] base64Data alanı yok. gövde uzunluğu=' . strlen($raw));
-            JsonResponse::error('base64Data eksik.', 400, AppConfig::ERR_VALIDATION);
+            error_log('[readdocument] base64Data alanı yok. gövde uzunluğu=' . strlen($raw));
+            JsonResponse::error('Dosya verisi eksik.', 400, AppConfig::ERR_VALIDATION);
+        }
+        $bytes = base64_decode((string) $input['base64Data'], true);
+        if ($bytes === false) {
+            JsonResponse::error('Dosya verisi okunamadı (geçersiz kodlama).', 400, AppConfig::ERR_VALIDATION, ['reason' => 'corrupt']);
+        }
+        $name = basename(str_replace('\\', '/', (string) ($input['filename'] ?? ''))) ?: $defaultName;
+
+        $r = DocumentText::read($name, $bytes);
+        if (!$r['ok']) {
+            error_log(sprintf('[readdocument] %s tür=%s ad=%s boyut=%d', $r['reason'], $r['type'] ?: '-', $name, strlen($bytes)));
+            $status = match ($r['reason']) {
+                'too_large'               => 413,
+                'unsupported', 'doc_legacy' => 415,
+                default                   => 422,
+            };
+            JsonResponse::error($r['message'], $status, AppConfig::ERR_VALIDATION, ['reason' => $r['reason']]);
         }
 
-        $pdfBytes = base64_decode($input['base64Data'], true);
-        if ($pdfBytes === false) {
-            JsonResponse::error('Geçersiz base64 verisi.', 400, AppConfig::ERR_VALIDATION);
-        }
-        if (strlen($pdfBytes) > self::MAX_PDF_BYTES) {
-            JsonResponse::error(
-                sprintf('PDF dosyası çok büyük (maks. %d MB).', self::MAX_PDF_BYTES / 1024 / 1024),
-                413,
-                AppConfig::ERR_VALIDATION
-            );
-        }
-
-        $tmpFile = tempnam(sys_get_temp_dir(), 'pdf');
-        if ($tmpFile === false) {
-            error_log('[readpdf] geçici dosya oluşturulamadı. sys_get_temp_dir=' . sys_get_temp_dir());
-            JsonResponse::error('Sunucuda geçici dosya oluşturulamadı.', 500, AppConfig::ERR_UNAVAILABLE);
-        }
-
-        // JsonResponse `exit` çağırdığı için `finally` ÇALIŞMAZ; geçici dosya
-        // bu yüzden yanıt üretilmeden önce, tek bir yerde siliniyor. Eski
-        // kodda \Error yoluyla çıkışta dosya diskte kalıyordu.
-        $text  = null;
-        $error = null;
-        try {
-            if (file_put_contents($tmpFile, $pdfBytes) === false) {
-                throw new \RuntimeException('geçici dosyaya yazılamadı: ' . $tmpFile);
-            }
-            $text = (new \Smalot\PdfParser\Parser())->parseFile($tmpFile)->getText();
-        } catch (\Throwable $e) {
-            // \Exception değil \Throwable: kütüphane bozuk girdide \Error de
-            // fırlatabiliyor ve o hâlde eski kod 500'e düşüyordu.
-            $error = $e;
-        }
-        @unlink($tmpFile);
-
-        if ($error !== null) {
-            error_log('[readpdf] ' . get_class($error) . ': ' . $error->getMessage());
-            JsonResponse::error(
-                'PDF ayrıştırılamadı. Dosya bozuk olabilir ya da yalnızca taranmış görüntü içeriyor olabilir.',
-                400,
-                AppConfig::ERR_VALIDATION
-            );
-        }
-
-        JsonResponse::success(['text' => $text]);
+        JsonResponse::success(['text' => $r['text'], 'type' => $r['type'], 'chars' => mb_strlen($r['text'])]);
     }
 }

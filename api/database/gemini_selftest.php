@@ -160,7 +160,16 @@ check('en yeni mesajlar korunuyor (en eskiler atılıyor)', str_contains(json_en
 $ctl = (string) file_get_contents(__DIR__ . '/../src/Presentation/Controllers/ChatController.php');
 check('ChatController geçmişi chatBuildContents ile kuruyor', str_contains($ctl, 'chatBuildContents('));
 check('ChatController sistem talimatını systemInstruction alanında gönderiyor', str_contains($ctl, "'systemInstruction'"));
-check('talimat: tanıtım yalnızca ilk mesajda', str_contains($ctl, 'yalnızca sohbetin ilk mesajında'));
+// N-54 — canlı: "naber" / "gelmedi senden bir haber" cevapları "Merhaba! Ben
+// LUMANORIS AI, … resmi yapay zeka asistanıyım" ile başlıyordu. Karşılama
+// mesajı botu zaten tanıtıyor; cevaplar hiç tanıtım/selamlama ile başlamamalı
+// ve bu kural persona metninden SONRA gelmeli (model sondaki metne daha çok uyuyor).
+$sysPos   = strpos($ctl, '[KİŞİLİK/STİL]');
+$rulesPos = strpos($ctl, '[SOHBET KURALLARI]');
+check('talimat: kendini tanıtma yasak (kullanıcı sormadıkça)', str_contains($ctl, 'Kendini tanıtma'));
+check('talimat: cevaba selamlamayla başlama', str_contains($ctl, 'selamlamayla başlama'));
+check('talimat: sohbet kuralları persona/stil metninden sonra', $sysPos !== false && $rulesPos !== false && $rulesPos > $sysPos);
+check('eski "yalnızca ilk mesajda tanıt" kuralı kalmadı', !str_contains($ctl, 'yalnızca sohbetin ilk mesajında'));
 
 echo "\n=== G) Coin tek kaynaktan (N-50) ===\n\n";
 $layout = (string) file_get_contents(__DIR__ . '/../../web/src/app/dashboard/layout.jsx');

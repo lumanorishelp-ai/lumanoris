@@ -431,17 +431,24 @@ class ChatController {
         $corpus  = (string) ($bot['training_prompt'] ?? '');
 
         // Talimat sunucuda kuruluyor — istemci artık bu metne dokunamıyor.
-        // N-50 — SOHBET satırı: geçmiş artık modele gidiyor; selamlama ve
-        // tanıtım her cevapta tekrarlanmasın. Müşterinin stil metnine
-        // dokunulmuyor; bu bizim şablonumuz.
+        // N-54 — canlıda cevaplar "Merhaba! Ben LUMANORIS AI, … resmi yapay
+        // zeka asistanıyım" ile başlıyordu (N-50'deki "yalnızca ilk mesajda
+        // tanıt" kuralı hem ilk cevaba izin veriyordu hem de persona metninden
+        // önce geldiği için zayıf kalıyordu). Botu karşılama mesajı zaten
+        // tanıtıyor; cevaplar hiç tanıtım/selamlama ile başlamaz. Kurallar
+        // persona/stil metninin SONUNDA: model sondaki talimata daha çok uyuyor.
+        // Müşterinin stil metnine dokunulmuyor; bu bizim şablonumuz.
         $systemInstruction = "GÖREV: Aşağıdaki [BİLGİ KAYNAĞI] kısmına %100 sadık kalarak cevap ver.\n"
-            . "Bilgi kaynağı dışına çıkma. [KİŞİLİK/STİL] direktiflerini uygula.\n"
-            . "SOHBET: Önceki mesajlar sana sırasıyla verilir; onları dikkate al ve gerektiğinde önceki "
-            . "mesajlara atıf yap. Selamlamayı ve kendini tanıtmayı yalnızca sohbetin ilk mesajında yap; "
-            . "sonraki cevaplarda tekrarlama.\n\n"
+            . "Bilgi kaynağı dışına çıkma. [KİŞİLİK/STİL] direktiflerini uygula.\n\n"
             . "[BİLGİ KAYNAĞI]:\n"
             . ($corpus !== '' ? $corpus : 'Bilgi kaynağı yok, kullanıcının sana sorduğu sorulara cevap ver.')
-            . "\n\n[KİŞİLİK/STİL]:\n" . $style;
+            . "\n\n[KİŞİLİK/STİL]:\n" . $style
+            . "\n\n[SOHBET KURALLARI] (yukarıdaki her şeyden önceliklidir):\n"
+            . "- Kullanıcı seni zaten tanıyor; karşılama mesajı gösterildi. Kendini tanıtma: adını, kim olduğunu "
+            . "ya da rolünü yalnızca kullanıcı açıkça sorarsa söyle.\n"
+            . "- Cevaba selamlamayla başlama (\"Merhaba\", \"Merhabalar\", \"Ben …\" gibi); doğrudan konuya gir. "
+            . "Kullanıcı yalnızca selam verir ya da hâl hatır sorarsa kısa ve doğal bir karşılık ver.\n"
+            . "- Önceki mesajlar sana sırasıyla verilir; onları dikkate al ve gerektiğinde önceki mesajlara atıf yap.";
 
         // AI-005 — mesaj hakkı SUNUCUDA tüketiliyor. İstemci bu adımı
         // atlayamıyor; ayrıca upstream hata verirse aşağıda iade ediliyor.

@@ -5,6 +5,7 @@ import { UserContext } from "@/shared/contexts/UserContext";
 import PricingPageHeader from "./components/PricingPageHeader";
 import PricingLoadingState from "./components/PricingLoadingState";
 import PricingCard from "./components/PricingCard";
+import SubscriptionCard from "./components/SubscriptionCard";
 import EnterpriseContactFooter from "./components/EnterpriseContactFooter";
 import StatusBanner from "./components/StatusBanner";
 import PlanPaymentModal from "@/features/payment/PlanPaymentModal";
@@ -92,6 +93,20 @@ export default function PricingPlans() {
 
     fetchPlans();
   }, []);
+
+  // N-63 — "Aboneliğim" (paket kartlarıyla aynı kaynak: getUserSubscription).
+  const [subscription, setSubscription] = useState(null);
+  useEffect(() => {
+    if (!userId) return;
+    fetch("/api/wallet/getmysubscription.php", { credentials: "include" })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d?.success) setSubscription(d.subscription);
+      })
+      .catch(() => {
+        /* kart gösterilmez; paket kartları yine çalışır */
+      });
+  }, [userId, paymentResult]);
 
   /**
    * "₺1.299,00" → 1299. Katalog fiyatı sunucudan biçimlendirilmiş metin
@@ -274,6 +289,14 @@ export default function PricingPlans() {
               Tebrikler! "{upgradedPlan}" paketi başarıyla etkinleştirildi.
             </StatusBanner>
           )}
+
+          <SubscriptionCard
+            sub={subscription}
+            onRebuy={(name) => {
+              const i = plansData.findIndex((p) => p.title === name);
+              if (i >= 0) handleChoosePlan(plansData[i], i);
+            }}
+          />
 
           {/* Pricing Cards Grid */}
           <div className="grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-4 pt-4">

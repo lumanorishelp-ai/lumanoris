@@ -219,3 +219,77 @@ function getDailyMessageLimit(Database $db, int $userId): int
 {
     return (int) getUserPlan($db, $userId)['daily_message_limit'];
 }
+
+/**
+ * N-63 — "Aboneliğim": görüntüleme ve paket sayfası (getPricing) aynı
+ * kaynaktan okur. Etkin plan kuralı getUserPlan() ile aynı: ücretli paket
+ * `expires_at` geçmişse etkin değildir; `expires_at IS NULL` süresizdir.
+ *
+ * @return array{state: string, plan: string, is_paid: bool, started_at: ?string,
+ *   expires_at: ?string, days_left: ?int, last_paid_plan: ?string, expired_at: ?string,
+ *   history: array<int, array{order_id: string, plan: string, amount: float, status: string, status_label: string, created_at: string}>}
+ */
+function getUserSubscription(Database $db, int $userId, bool $fresh = false): array
+{
+    static $cache = [];
+    if (!$fresh && isset($cache[$userId])) {
+        return $cache[$userId];
+    }
+
+    $default = $db->selectSingle('name_tr FROM plans WHERE is_default = 1 ORDER BY sort_order LIMIT 1');
+    $freeName = (string) ($default['name_tr'] ?? AppConfig::FREE_PLAN_NAME);
+    $out = [
+        'state' => 'free', 'plan' => $freeName, 'is_paid' => false,
+        'started_at' => null, 'expires_at' => null, 'days_left' => null,
+        'last_paid_plan' => null, 'expired_at' => null, 'history' => [],
+    ];
+
+    $row = $db->selectSingle(
+        'ups.plan_name, ups.selected_at, ' . (planSelectionHasExpiry($db) ? 'ups.expires_at' : 'NULL AS expires_at') . ',
+                p.monthly_price, p.name_tr,
+                ' . (planSelectionHasExpiry($db) ? '(ups.expires_at IS NULL OR ups.expires_at > NOW())' : '1') . ' AS is_live,
+                ' . (planSelectionHasExpiry($db) ? 'TIMESTAMPDIFF(SECOND, NOW(), ups.expires_at)' : 'NULL') . ' AS secs_left
+           FROM user_plan_selection ups
+           LEFT JOIN plans p ON p.name_tr = ups.plan_name COLLATE utf8mb4_general_ci
+          WHERE ups.user_id = ?',
+        [$userId]
+    );
+
+    if ($row && $row['name_tr'] !== null) {
+        $isPaid = (float) ($row['monthly_price'] ?? 0) > 0;
+        if ((int) $row['is_live'] === 1) {
+            $out['plan']       = (string) $row['name_tr'];
+            $out['is_paid']    = $isPaid;
+            $out['state']      = $isPaid ? 'active' : 'free';
+            $out['started_at'] = $isPaid ? (string) $row['selected_at'] : null;
+            $out['expires_at'] = $isPaid && $row['expires_at'] !== null ? (string) $row['expires_at'] : null;
+            $out['days_left']  = $out['expires_at'] !== null ? (int) ceil(((int) $row['secs_left']) / 86400) : null;
+        } elseif ($isPaid) {
+            $out['state']          = 'expired';
+            $out['last_paid_plan'] = (string) $row['name_tr'];
+            $out['expired_at']     = (string) $row['expires_at'];
+        }
+    }
+
+    // Ödeme geçmişi: yalnızca paket siparişleri (PLN-); ham sağlayıcı yanıtı dönmez.
+    $labels = ['paid' => 'Ödendi', 'refunded' => 'İade edildi', 'partial_refund' => 'Kısmi iade',
+               'hoppa_failed' => 'Başarısız', 'hoppa_pending' => 'Bekliyor', 'hoppa_expired' => 'Tamamlanmadı'];
+    foreach ($db->selectMulti(
+        "order_id, status, amount, items_json, created_at FROM param_marketplace_payments
+          WHERE user_id = ? AND order_id LIKE 'PLN-%' AND status IN ('paid', 'refunded', 'partial_refund', 'hoppa_failed')
+          ORDER BY id DESC LIMIT 20",
+        [$userId]
+    ) ?: [] as $p) {
+        $items = json_decode((string) $p['items_json'], true);
+        $out['history'][] = [
+            'order_id'     => (string) $p['order_id'],
+            'plan'         => (string) ($items[0]['plan_name'] ?? ''),
+            'amount'       => round((float) $p['amount'], 2),
+            'status'       => (string) $p['status'],
+            'status_label' => $labels[$p['status']] ?? (string) $p['status'],
+            'created_at'   => (string) $p['created_at'],
+        ];
+    }
+
+    return $cache[$userId] = $out;
+}

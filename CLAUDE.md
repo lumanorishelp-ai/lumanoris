@@ -121,6 +121,7 @@ php api/database/vendor_selftest.php         # vendor eksik/eski → anlaşılı
 php api/database/hoppa_diag_selftest.php     # Hoppa bağlantı testi sınıflaması + hata kodu → Türkçe mesaj (N-57), çevrimdışı
 php api/database/readurl_selftest.php        # URL okuma: hata sınıfları, içerik çıkarma, karakter kodlaması (N-61), çevrimdışı
 php api/database/document_selftest.php       # belge: PDF/DOCX/TXT, şifreli/taranmış/.doc/boyut mesajları (N-62), çevrimdışı
+php api/database/subscription_selftest.php   # Aboneliğim: plan/durum/tarih/geçmiş tek kaynaktan (N-63), TRANSACTION+ROLLBACK
 node --test web/src/shared/lib/image-url.test.mjs # tek görsel URL üreticisi + baş harf yer tutucu (N-58)
 node --test web/src/features/chat/reply-errors.test.mjs # sohbet hata türü → kullanıcı metni (N-59)
 ```

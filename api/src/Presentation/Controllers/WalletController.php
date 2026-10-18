@@ -375,6 +375,17 @@ class WalletController {
      * Kullanıcının mevcut planı da işaretleniyor: `is_current`. Eskiden
      * "Mevcut Paket" etiketi Ücretsiz plana sabitlenmişti.
      */
+    /**
+     * GET /api/wallet/getmysubscription.php — N-63 "Aboneliğim" (salt okunur):
+     * etkin paket, durum (free/active/expired), başlangıç, bitiş, kalan gün,
+     * paket ödeme geçmişi. Tek kaynak: functions/plans.php → getUserSubscription.
+     */
+    public static function getMySubscription(): void {
+        $userId = AuthMiddleware::requireAuth();
+        require_once __DIR__ . '/../../../functions/plans.php';
+        JsonResponse::success(['subscription' => getUserSubscription(Database::getInstance(), $userId)]);
+    }
+
     public static function getPricing(): void {
         $userId = AuthMiddleware::optionalAuth();
         $db     = Database::getInstance();
@@ -383,12 +394,15 @@ class WalletController {
         $catalog = getPlanCatalog($db);
 
         if ($catalog !== []) {
-            $currentPlan = $userId > 0 ? getUserPlanName($db, $userId) : 'Ücretsiz';
+            // N-63 — mevcut paket ve bitişi "Aboneliğim" ile aynı kaynaktan.
+            $sub         = $userId > 0 ? getUserSubscription($db, $userId) : null;
+            $currentPlan = $sub['plan'] ?? 'Ücretsiz';
             $badges      = ['Altın' => 'Önerilen'];
             $output      = [];
 
             foreach ($catalog as $p) {
-                $isCurrent = ($p['name_tr'] === $currentPlan);
+                $isCurrent  = ($p['name_tr'] === $currentPlan);
+                $activePaid = $isCurrent && ($sub['is_paid'] ?? false);
                 $price     = (float) ($p['monthly_price'] ?? 0);
 
                 $output[] = [
@@ -401,10 +415,13 @@ class WalletController {
                         : null,
                     'description'   => $p['description_tr'] ?? '',
                     'features'      => $p['features'] ?? [],
-                    'buttonText'    => $isCurrent ? 'Mevcut Paket' : 'Bu Paketi Seç',
+                    'buttonText'    => $activePaid ? 'Mevcut paketiniz' : ($isCurrent ? 'Mevcut Paket' : 'Bu Paketi Seç'),
                     'buttonType'    => ($p['name_tr'] === 'Altın') ? 'primary' : 'default',
                     'badge'         => $badges[$p['name_tr']] ?? null,
                     'is_current'    => $isCurrent,
+                    // N-63 — aktif ücretli paketin bitişi (süresizse null).
+                    'current_expires_at' => $activePaid ? ($sub['expires_at'] ?? null) : null,
+                    'is_active_paid'     => $activePaid,
                     // Pazarlama metni yerine gerçek kotalar — istemci
                     // isterse "3 bot / 50 mesaj" diye gösterebilir.
                     // Migration 012: bot limitleri NULL = sınırsız. `(int)`

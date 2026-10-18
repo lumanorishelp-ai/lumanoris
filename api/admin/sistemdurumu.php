@@ -77,10 +77,52 @@ $okBad = static fn(bool $ok, string $bad) => $ok ? '<span class="text-emerald-60
                 <dt class="text-gray-500"><?= $h($prefix) ?>MERCHANT / KEY</dt><dd><?= $hoppaCreds ? 'dolu' : '<span class="text-rose-600">eksik</span>' ?></dd>
                 <dt class="text-gray-500">Ödeme durumu</dt><dd class="font-semibold"><?= $provider === 'none' ? 'Kapalı' : ($hoppaCreds ? 'Açık (' . $h($hoppaMode) . ')' : '<span class="text-rose-600">Seçili ama kimlik bilgisi eksik → kapalı</span>') ?></dd>
             </dl>
+            <div class="mt-4 flex items-center gap-3">
+                <button type="button" id="hoppaTestBtn" class="bg-indigo-600 text-white font-semibold px-5 py-2 rounded-lg hover:bg-indigo-700 transition">Hoppa bağlantı testi</button>
+                <span id="hoppaTestBusy" class="text-sm text-gray-500 hidden">Test ediliyor…</span>
+            </div>
+            <p class="mt-2 text-xs text-gray-500">Ödeme başlatmaz, para hareketi yoktur: var olmayan bir sipariş numarasıyla Hoppa'ya "işlem sorgula" isteği atar ve seçili moddaki MERCHANT / MERCHANT_KEY'in kabul edilip edilmediğini gösterir.</p>
+            <div id="hoppaTestResult" class="hidden">
+            <dl class="mt-4 grid grid-cols-1 sm:grid-cols-[220px_1fr] gap-y-2 text-sm">
+                <dt class="text-gray-500">Sonuç</dt><dd id="htOk" class="font-semibold"></dd>
+                <dt class="text-gray-500">Açıklama</dt><dd id="htExplain" class="break-words"></dd>
+                <dt class="text-gray-500">Mod / adres</dt><dd id="htMode" class="font-mono"></dd>
+                <dt class="text-gray-500">Hoppa durumu / kodu</dt><dd id="htStatus" class="font-mono"></dd>
+                <dt class="text-gray-500">Hoppa mesajı</dt><dd id="htMessage" class="break-words"></dd>
+                <dt class="text-gray-500">Süre</dt><dd id="htMs" class="font-mono"></dd>
+            </dl>
+            </div>
         </section>
     </div>
 </main>
 <script>
+    document.getElementById('hoppaTestBtn').addEventListener('click', async () => {
+        const btn = document.getElementById('hoppaTestBtn');
+        const busy = document.getElementById('hoppaTestBusy');
+        btn.disabled = true; busy.classList.remove('hidden');
+        const set = (id, v) => { document.getElementById(id).textContent = v || '—'; };
+        try {
+            const body = new FormData();
+            body.append('test', 'hoppa');
+            const res = await fetch('/admin/ajax/sistemdurumu.php', { method: 'POST', body });
+            const r = await res.json();
+            if (!r.success) throw new Error(r.message || 'İstek başarısız');
+            const t = r.hoppa;
+            set('htOk', t.ok ? 'Kimlik bilgileri kabul edildi' : 'Hata (' + t.kind + ')');
+            document.getElementById('htOk').className = 'font-semibold ' + (t.ok ? 'text-emerald-600' : 'text-rose-600');
+            set('htExplain', t.explain);
+            set('htMode', t.mode + ' · ' + t.base_url);
+            set('htStatus', [t.status, t.code].filter(Boolean).join(' · '));
+            set('htMessage', t.message);
+            set('htMs', t.ms + ' ms');
+            document.getElementById('hoppaTestResult').classList.remove('hidden');
+        } catch (e) {
+            new Notification({ text: 'Test yapılamadı: ' + e.message, type: 'error', position: 'top-right' });
+        } finally {
+            btn.disabled = false; busy.classList.add('hidden');
+        }
+    });
+
     document.getElementById('geminiTestBtn').addEventListener('click', async () => {
         const btn = document.getElementById('geminiTestBtn');
         const busy = document.getElementById('geminiTestBusy');

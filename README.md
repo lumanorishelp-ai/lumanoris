@@ -584,6 +584,35 @@ minute. Delete the cron job after `ozet.log` shows the result. For the next run 
 that file needs it) after `deploy-backend.sh`. Without `.git`, the script copies `api/` with `tar`,
 excluding `.env*`, `vendor/` and `_restoretest.php`.
 
+#### Manual zip package (includes `vendor/`) — N-56
+
+Neither route above ships `vendor/` (it is not in git), and the host has no terminal to run
+`composer install`. On 2026-10-18 the live `api.lumanoris.com/vendor/` (dated 2026-08-24) lacked a
+usable `autoload.php`, so PDF upload failed with `Failed opening required …/vendor/autoload.php`.
+Code updates are therefore shipped as a zip built locally:
+
+```bash
+bash scripts/build-backend-zip.sh 2026-10-18-A     # → deploy/backend-2026-10-18-A.zip
+```
+
+- Contents: tracked files under `api/` at **HEAD** (`git archive`; uncommitted changes are listed as
+  a warning and left out), plus `vendor/` and `admin/vendor/` from a clean
+  `composer install --no-dev --optimize-autoloader` of the committed `composer.lock` files.
+- `api/composer.json` runs `Google\Task\Composer::cleanup` and keeps only the `Oauth2` service:
+  `google/apiclient-services` is ~36,000 files and the code only calls `Google_Client::verifyIdToken`.
+  `vendor/` is ~500 files instead of ~36,000.
+- The script **stops without producing a zip** if the package contains `.env` / `.env.*`, any file
+  under `assets/`, `uploads/` or `storage/` other than `.htaccess`, a nested `*.zip`, a known key
+  pattern (`functions/secret_scan.php`, vendor included), a locked package that does not support
+  PHP 8.2 (the host runs `ea-php82`), or a missing `vendor/autoload.php` / `admin/vendor/autoload.php`.
+- Upload: cPanel File Manager → `api.lumanoris.com` → Upload → Extract, overwriting. Extracting only
+  adds and replaces files; it never deletes `.env`, `admin/.env`, `assets/` uploads or logs. Do not
+  delete the directory before extracting.
+- Check afterwards: Admin → **Sistem Durumu** → "Sunucu bileşenleri" shows PDF reading, Google login
+  and admin vendor as installed, and `APP_DEBUG` as `false`. Missing components log a `[vendor]` line
+  (path, missing class, fix) to the PHP error log; users get a 503 with a plain message
+  (`VendorAutoload::requireOrFail`).
+
 ## API
 
 ### Conventions

@@ -22,7 +22,13 @@ $hoppaMode   = strtolower(trim((string) env_get('HOPPA_MODE', 'test')));
 $prefix      = $hoppaMode === 'live' ? 'HOPPA_LIVE_' : 'HOPPA_TEST_';
 $hoppaCreds  = trim((string) env_get($prefix . 'MERCHANT', '')) !== '' && trim((string) env_get($prefix . 'MERCHANT_KEY', '')) !== '';
 $keySource   = geminiKeySource();
+// N-56 — belge yükleme ve Google girişi api/vendor/'e bağlı; eksikse burada görünsün.
+$vendorPdf    = VendorAutoload::load('sistemdurumu', VendorAutoload::PDF_CLASSES);
+$vendorGoogle = $vendorPdf && class_exists('Google_Client');
+$adminVendor  = is_file(__DIR__ . '/vendor/autoload.php');
+$appDebug     = env_bool('APP_DEBUG', false);
 $h = static fn($v) => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
+$okBad = static fn(bool $ok, string $bad) => $ok ? '<span class="text-emerald-600">kurulu</span>' : '<span class="text-rose-600">' . $bad . '</span>';
 ?>
 <main class="bg-gray-50 p-6 min-h-screen">
     <div class="max-w-screen-xl mx-auto space-y-6">
@@ -48,6 +54,18 @@ $h = static fn($v) => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
                 <dt class="text-gray-500">Google mesajı</dt><dd id="gtMessage" class="break-words"></dd>
             </dl>
             </div>
+        </section>
+
+        <section class="bg-white rounded-lg shadow-sm border border-gray-200 p-5">
+            <h2 class="font-semibold text-gray-800 mb-3">Sunucu bileşenleri</h2>
+            <dl class="grid grid-cols-1 sm:grid-cols-[220px_1fr] gap-y-2 text-sm">
+                <dt class="text-gray-500">PHP sürümü</dt><dd class="font-mono"><?= $h(PHP_VERSION) ?></dd>
+                <dt class="text-gray-500">Belge (PDF) okuma — api/vendor</dt><dd><?= $okBad($vendorPdf, 'eksik → belge yükleme çalışmaz') ?></dd>
+                <dt class="text-gray-500">Google ile giriş — api/vendor</dt><dd><?= $okBad($vendorGoogle, 'eksik → Google girişi çalışmaz') ?></dd>
+                <dt class="text-gray-500">Admin paneli — admin/vendor</dt><dd><?= $okBad($adminVendor, 'eksik → API Entegrasyonları sayfası çalışmaz') ?></dd>
+                <dt class="text-gray-500">APP_DEBUG</dt><dd><?= $appDebug ? '<span class="text-rose-600 font-semibold">true — hata ayrıntıları (sunucu yolları) kullanıcıya gösteriliyor; canlıda false olmalı</span>' : '<span class="text-emerald-600">false</span>' ?></dd>
+            </dl>
+            <p class="mt-2 text-xs text-gray-500">Eksik bileşenin ayrıntısı (yol, eksik sınıf) hata logunda <code>[vendor]</code> satırlarındadır. Çözüm: vendor/ içeren deploy paketini yükleyin (README → Backend deploy).</p>
         </section>
 
         <section class="bg-white rounded-lg shadow-sm border border-gray-200 p-5">

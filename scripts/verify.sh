@@ -57,6 +57,7 @@ step migrate_selftest selftest migrate_selftest.php
 step gemini_selftest selftest gemini_selftest.php
 step plan_collation_selftest selftest plan_collation_selftest.php
 step secret_scan_selftest selftest secret_scan_selftest.php
+step vendor_selftest selftest vendor_selftest.php
 
 if [ ${#failed[@]} -eq 0 ]; then
   echo "DOĞRULAMA: GEÇTİ"

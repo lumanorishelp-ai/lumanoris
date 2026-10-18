@@ -297,22 +297,15 @@ class TrainingController {
         $userId = AuthMiddleware::requireAuth();
         // PDF parsing is CPU- and disk-heavy; it had no ceiling at all.
         checkRateLimit(Database::getInstance(), 'readpdf:' . $userId, 10, 300);
-        require_once __DIR__ . '/../../../vendor/autoload.php';
-
-        // Bağımlılık gerçekten kurulu mu? `vendor/` sürüm kontrolünde DEĞİL
-        // (.gitignore), yani dağıtımda `composer install` çalışmadıysa ya da
-        // eski bir vendor kopyası taşındıysa autoload dosyası VAR ama sınıf
-        // YOKTUR. O hâlde `new Parser()` bir \Error fırlatır; aşağıdaki eski
-        // `catch (\Exception)` bunu yakalamıyordu, istek gerekçesi hiçbir
-        // yere yazılmadan 500'e düşüyordu.
-        if (!class_exists(\Smalot\PdfParser\Parser::class)) {
-            error_log('[readpdf] smalot/pdfparser kurulu değil — api/ dizininde "composer install" gerekiyor.');
-            JsonResponse::error(
-                'PDF okuma bileşeni sunucuda kurulu değil. Lütfen yöneticiye bildirin.',
-                503,
-                AppConfig::ERR_UNAVAILABLE
-            );
-        }
+        // N-56 — `vendor/` git'te değil; canlıda autoload dosyası hiç yoktu ve
+        // `require_once` \Error fırlatıp sunucu yolunu kullanıcıya gösteriyordu.
+        // Dosya yok / sınıf yok (eski vendor) ayrıntısı loga, kullanıcıya 503.
+        VendorAutoload::requireOrFail(
+            'readpdf',
+            VendorAutoload::PDF_CLASSES,
+            'Belge okuma bileşeni sunucuda şu an kullanılamıyor. Sorun kayda geçti; '
+            . 'lütfen daha sonra tekrar deneyin ya da içeriği metin olarak yapıştırın.'
+        );
 
         $raw      = file_get_contents('php://input');
         $declared = (int) ($_SERVER['CONTENT_LENGTH'] ?? 0);

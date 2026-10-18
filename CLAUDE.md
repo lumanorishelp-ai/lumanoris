@@ -117,6 +117,7 @@ php api/database/migrate_selftest.php     # migration checksum satır sonundan b
 php api/database/gemini_selftest.php      # Gemini hata özeti anahtarı sızdırmıyor, model tek kaynakta (N-46), çevrimdışı
 php api/database/plan_collation_selftest.php # plan_name ↔ plans.name_tr collation (N-49), TEMPORARY tablo
 php api/database/secret_scan_selftest.php    # .env örneklerinde gerçek anahtar/değer yok (N-55), çevrimdışı
+php api/database/vendor_selftest.php         # vendor eksik/eski → anlaşılır 503; lock PHP 8.2 uyumlu (N-56), çevrimdışı
 ```
 
 Bir değişiklik bunlardan birini bozuyorsa geri al ve nedenini raporla.

@@ -428,7 +428,21 @@ class ChatController {
 
         $message = mb_substr((string) $message, 0, self::MAX_MESSAGE_CHARS);
         $style   = mb_substr((string) ($bot['style_prompt'] ?? ''), 0, self::MAX_STYLE_CHARS);
-        $corpus  = (string) ($bot['training_prompt'] ?? '');
+
+        // N-50 geçmişi; N-60 — takip sorusu ("peki örnek?") için önceki
+        // kullanıcı mesajı bilgi bankası seçiminde de kullanılıyor.
+        $historyRows = chatHistoryRows($db, $userId, $chatbotId, InputSanitizer::positiveInt($data['conversation_id'] ?? 0));
+        $prevUser    = '';
+        foreach (array_reverse($historyRows) as $r) {
+            if (($r['sent_by'] ?? '') === 'user' && trim((string) $r['message']) !== trim($message)) {
+                $prevUser = (string) $r['message'];
+                break;
+            }
+        }
+        // N-60 — bilgi bankası CHAT_CORPUS_BUDGET'ı aşıyorsa yalnızca soruyla
+        // ilgili parçalar (+ giriş) gidiyor; her mesajda 60.000 karakterin
+        // tamamı gönderilmiyor.
+        $corpus = chatSelectCorpus((string) ($bot['training_prompt'] ?? ''), $message, $prevUser);
 
         // Talimat sunucuda kuruluyor — istemci artık bu metne dokunamıyor.
         // N-54 — canlıda cevaplar "Merhaba! Ben LUMANORIS AI, … resmi yapay
@@ -448,7 +462,15 @@ class ChatController {
             . "ya da rolünü yalnızca kullanıcı açıkça sorarsa söyle.\n"
             . "- Cevaba selamlamayla başlama (\"Merhaba\", \"Merhabalar\", \"Ben …\" gibi); doğrudan konuya gir. "
             . "Kullanıcı yalnızca selam verir ya da hâl hatır sorarsa kısa ve doğal bir karşılık ver.\n"
-            . "- Önceki mesajlar sana sırasıyla verilir; onları dikkate al ve gerektiğinde önceki mesajlara atıf yap.";
+            . "- Önceki mesajlar sana sırasıyla verilir; onları dikkate al ve gerektiğinde önceki mesajlara atıf yap.\n"
+            // N-60 — müşteri görseli 06: Aristoteles botu Aristoteles'e tenasüh
+            // (ruh göçü) inancı atfetti; Aristoteles bunu reddeder. Model
+            // ayarı (temperature) 3.8 Flash'ta kullanımdan kaldırıldı; doğruluk
+            // talimatla yönetiliyor.
+            . "- Emin olmadığın bilgiyi uydurma. Bilgi kaynağında olmayan bir olgudan emin değilsen bunu açıkça söyle; "
+            . "tarih, sayı, alıntı ve isim uydurma.\n"
+            . "- Gerçek bir kişiyi canlandırıyorsan, o kişiye ait olmayan görüşleri ona atfetme; başka düşünürlerin "
+            . "görüşlerini kendi görüşün gibi sunma.";
 
         // AI-005 — mesaj hakkı SUNUCUDA tüketiliyor. İstemci bu adımı
         // atlayamıyor; ayrıca upstream hata verirse aşağıda iade ediliyor.
@@ -526,7 +548,7 @@ class ChatController {
         // geçmiş hiç gönderilmiyordu (her cevap sıfırdan, tekrar tekrar
         // tanıtım). Dosyalar son kullanıcı turunda, metinden sonra.
         $contents = chatBuildContents(
-            chatHistoryRows($db, $userId, $chatbotId, InputSanitizer::positiveInt($data['conversation_id'] ?? 0)),
+            $historyRows,
             (string) ($bot['sohbet_basi_mesaj'] ?? ''),
             $message,
             $fileParts

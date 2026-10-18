@@ -218,6 +218,46 @@ check('ChatController: hata karesi tür (kind) taşıyor', str_contains($ctl, "'
 check('ChatController: iade kararı yine chatReplyOutcome ile (N-48)', str_contains($ctl, 'chatReplyOutcome('));
 check('arayüz: tür → mesaj eşlemesi tek yerde (chatFailureText)', str_contains($page, 'chatFailureText('));
 
+echo "\n=== J) Bağlam boyutu ve olgusal doğruluk (N-60) ===\n\n";
+if (!function_exists('chatSelectCorpus') || !defined('CHAT_CORPUS_BUDGET')) {
+    check('functions/chat_context.php: chatSelectCorpus, CHAT_CORPUS_BUDGET', false, 'tanımlı değil');
+} else {
+    $small = "Kısa bir bilgi bankası.\n\nİkinci paragraf.";
+    check('bütçe altındaki metin aynen döner', chatSelectCorpus($small, 'herhangi') === $small);
+
+    $topics = ['astronomi gezegen yörünge', 'mutfak tarif hamur', 'futbol kaleci penaltı', 'mantık kıyas önerme',
+               'botanik yaprak fotosentez', 'denizcilik gemi liman', 'müzik nota akor', 'kimya molekül bağ'];
+    $sections = [];
+    for ($i = 0; $i < 40; $i++) {
+        $t = $topics[$i % count($topics)];
+        $sections[] = "BÖLÜM $i — " . ($i === 0 ? 'Giriş: bu botun tanıtımı. ' : '')
+            . str_repeat("Bu bölüm $t konusunu anlatır ve ayrıntı verir. ", 30);
+    }
+    $sections[23] = 'BÖLÜM 23 — Aristoteles mantığında kıyas, iki öncülden bir sonuç çıkaran akıl yürütmedir. '
+        . str_repeat('Mantık tarihinde kıyasın yeri büyüktür ve önermeler sınıflanır. ', 30);
+    $big = implode("\n\n", $sections);
+    $sel = chatSelectCorpus($big, "Aristoteles'in mantığındaki kıyas nedir?");
+    check('büyük metin bütçeye iniyor', mb_strlen($sel) <= CHAT_CORPUS_BUDGET && mb_strlen($big) > CHAT_CORPUS_BUDGET,
+        mb_strlen($big) . ' → ' . mb_strlen($sel));
+    check('soruyla ilgili bölüm seçildi (Türkçe ek: mantığındaki → mantık)', str_contains($sel, 'BÖLÜM 23 —'));
+    check('giriş bölümü her zaman korunuyor', str_contains($sel, 'BÖLÜM 0 —'));
+    check('ilgisiz bölüm (futbol) seçilmedi', !str_contains($sel, 'futbol kaleci'));
+    $p0 = strpos($sel, 'BÖLÜM 0 —'); $p23 = strpos($sel, 'BÖLÜM 23 —');
+    check('özgün sıra korunuyor', $p0 !== false && $p23 !== false && $p0 < $p23);
+    check('atlanan yerler işaretli', str_contains($sel, '[…]'));
+    $none = chatSelectCorpus($big, 'xyzqw qwerty');
+    check('hiç eşleşme yoksa baştan kesilir (eski davranış), bütçede', str_starts_with($none, 'BÖLÜM 0 —') && mb_strlen($none) <= CHAT_CORPUS_BUDGET);
+    $follow = chatSelectCorpus($big, 'peki örnek verir misin?', 'Aristoteles mantığında kıyas nedir?');
+    check('takip sorusu: önceki kullanıcı mesajı da bağlam sayılıyor', str_contains($follow, 'BÖLÜM 23 —'));
+    $oneBlock = str_repeat('Tek parça çok uzun bir metin, paragraf yok. ', 2000);
+    check('paragrafsız dev metin de bütçeye iniyor', mb_strlen(chatSelectCorpus($oneBlock, 'metin')) <= CHAT_CORPUS_BUDGET);
+}
+check('ChatController: bilgi kaynağı chatSelectCorpus ile', str_contains($ctl, 'chatSelectCorpus('));
+check('talimat: emin olmadığın bilgiyi uydurma', str_contains($ctl, 'uydurma'));
+check('talimat: kişiye ait olmayan görüşü ona atfetme', str_contains($ctl, 'atfetme'));
+check('istek temperature/topP/topK göndermiyor (3.8 Flash\'ta kullanımdan kaldırıldı)',
+    !preg_match('/[\'"](temperature|topP|topK|top_p|top_k)[\'"]/', $ctl . json_encode(geminiGenerationConfig())));
+
 echo "\n=== I) Son 24 saat hata sayımı (admin Sistem Durumu) ===\n\n";
 $now = strtotime('2026-10-18 12:00:00 UTC');
 $lines = [

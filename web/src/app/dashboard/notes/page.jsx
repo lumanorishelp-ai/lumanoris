@@ -6,6 +6,7 @@ import { UserContext } from "@/shared/contexts/UserContext";
 import CategoryFilter from "@/widgets/CategoryFilter";
 import { copyText } from "@/shared/lib/clipboard";
 import { toast } from "@/shared/hooks/use-toast";
+import { EntityAvatar } from "@/shared/ui/entity-image";
 import {
   Dialog,
   DialogContentBare,
@@ -36,14 +37,6 @@ import {
 
 // Only loaded once the user opens the report dialog.
 const ReportModal = dynamic(() => import("@/features/moderation/ReportModal"), { ssr: false });
-
-const resolveAvatarSrc = (seed) => {
-  return {
-    src:
-      seed ||
-      `https://api.dicebear.com/7.x/shapes/svg?seed=${encodeURIComponent(seed || "default")}&backgroundColor=111122,1a1a2e,16213e`,
-  };
-};
 
 const cn = (...classes) => classes.filter(Boolean).join(" ");
 
@@ -76,10 +69,10 @@ function DialogueModal({ isOpen, onClose, selectedHistory, onShare }) {
                 görselle birlikte bir bakışta anlaşılıyor. Fotoğraf yoksa
                 eski ikona düşüyoruz — kırık bir <img> göstermek yerine. */}
             {selectedHistory.chatbot_profil_fotografi ? (
-              <img
-                src={resolveAvatarSrc(selectedHistory.chatbot_profil_fotografi).src}
-                alt=""
-                className="h-10 w-10 shrink-0 rounded-2xl object-cover ring-1 ring-fuchsia-500/20"
+              <EntityAvatar
+                src={selectedHistory.chatbot_profil_fotografi}
+                name={selectedHistory.chatbot_isim}
+                className="h-10 w-10 rounded-2xl text-sm ring-1 ring-fuchsia-500/20"
               />
             ) : (
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-fuchsia-500/10 border border-fuchsia-500/20 text-fuchsia-400">
@@ -568,13 +561,10 @@ export default function DialoguePage() {
                 {/* Footer info & Actions */}
                 <div className="flex items-center justify-between pt-4 mt-4 border-t border-white/5">
                   <div className="flex items-center gap-3 min-w-0">
-                    <img
-                      src={
-                        card.chatbot_profil_fotografi ||
-                        resolveAvatarSrc(null).src
-                      }
-                      alt=""
-                      className="h-8 w-8 shrink-0 rounded-full object-cover ring-2 ring-fuchsia-500/20"
+                    <EntityAvatar
+                      src={card.chatbot_profil_fotografi}
+                      name={card.chatbot_isim}
+                      className="h-8 w-8 rounded-full text-xs ring-2 ring-fuchsia-500/20"
                     />
                     <div className="min-w-0">
                       <p className="truncate text-xs font-semibold text-white/90">

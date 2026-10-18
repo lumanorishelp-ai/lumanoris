@@ -30,6 +30,7 @@ import {
   UserCheck,
 } from "lucide-react";
 import { FilterPopover2026 } from "@/shared/ui/filter-popover";
+import { EntityAvatar, EntityCover } from "@/shared/ui/entity-image";
 import { toast } from "@/shared/hooks/use-toast";
 
 // Safe router hook for interactive preview environments
@@ -48,22 +49,6 @@ function cn(...classes) {
   return classes.filter(Boolean).join(" ");
 }
 
-// Image fallback and path normalizer
-function resolveImg(path, kind = "cover") {
-  if (path) {
-    if (
-      path.startsWith("http") ||
-      path.startsWith("data:") ||
-      path.startsWith("/")
-    ) {
-      return path;
-    }
-    return "/" + path;
-  }
-  return kind === "avatar"
-    ? "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80"
-    : "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800&auto=format&fit=crop&q=80";
-}
 
 function LoadingSkeleton() {
   return (
@@ -135,11 +120,7 @@ function UnfollowModal({ bot, isOpen, onClose, onConfirm }) {
           </div>
   
           <div className="p-3.5 rounded-xl bg-zinc-950/60 border border-white/5 flex items-center gap-3">
-            <img
-              src={resolveImg(bot.profil_fotografi, "avatar")}
-              alt=""
-              className="w-10 h-10 rounded-lg object-cover border border-white/10"
-            />
+            <EntityAvatar src={bot.profil_fotografi} name={bot?.isim} className="w-10 h-10 rounded-lg border border-white/10 text-sm" />
             <div>
               <p className="text-xs font-bold text-white">{bot.isim}</p>
               <p className="text-caption text-zinc-500">
@@ -183,11 +164,7 @@ function BotQuickDetailModal({ bot, isOpen, onClose, router }) {
   
           <div className="flex items-start justify-between border-b border-white/[0.08] pb-4">
             <div className="flex items-center gap-3">
-              <img
-                src={resolveImg(bot.profil_fotografi, "avatar")}
-                alt=""
-                className="w-12 h-12 rounded-xl object-cover border border-white/10"
-              />
+              <EntityAvatar src={bot.profil_fotografi} name={bot?.isim} className="w-12 h-12 rounded-xl border border-white/10 text-sm" />
               <div>
                 <div className="flex items-center gap-2">
                   <h3 className="text-base font-bold text-white">{bot.isim}</h3>
@@ -214,11 +191,7 @@ function BotQuickDetailModal({ bot, isOpen, onClose, router }) {
   
           {/* Cover Banner */}
           <div className="relative aspect-[21/9] w-full rounded-xl overflow-hidden bg-zinc-950 border border-white/5">
-            <img
-              src={resolveImg(bot.kapak_fotografi)}
-              alt=""
-              className="w-full h-full object-cover"
-            />
+            <EntityCover src={bot.kapak_fotografi} className="w-full h-full" />
             <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-zinc-950/30 to-transparent" />
           </div>
   
@@ -656,11 +629,7 @@ export default function Following() {
                 <div>
                   <div className="relative aspect-[16/9] w-full bg-zinc-950">
                     <div className="absolute inset-0 overflow-hidden">
-                      <img
-                        src={resolveImg(bot.kapak_fotografi)}
-                        alt={bot.isim}
-                        className="h-full w-full object-cover transition-transform duration-700 ease-out group-hover:scale-105"
-                      />
+                      <EntityCover src={bot.kapak_fotografi} className="h-full w-full transition-transform duration-700 ease-out group-hover:scale-105" />
                       <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-zinc-950/30 to-transparent" />
                     </div>
 
@@ -680,11 +649,7 @@ export default function Following() {
                         overflow-hidden wrapper above so its -bottom-4 overlap
                         isn't clipped by it. */}
                     <div className="absolute -bottom-4 left-4 z-10 h-10 w-10 overflow-hidden rounded-xl border-2 border-zinc-900 bg-zinc-950 shadow-lg">
-                      <img
-                        src={resolveImg(bot.profil_fotografi, "avatar")}
-                        alt=""
-                        className="h-full w-full object-cover"
-                      />
+                      <EntityAvatar src={bot.profil_fotografi} name={bot?.isim} className="h-full w-full text-sm" />
                     </div>
                   </div>
 
@@ -750,11 +715,7 @@ export default function Following() {
                 className="group rounded-2xl border border-white/[0.08] bg-zinc-900/60 p-4 hover:border-violet-500/40 hover:bg-zinc-900/90 transition-all duration-200 cursor-pointer flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4"
               >
                 <div className="flex items-center gap-4">
-                  <img
-                    src={resolveImg(bot.profil_fotografi, "avatar")}
-                    alt=""
-                    className="w-12 h-12 rounded-xl object-cover border border-white/10 shrink-0"
-                  />
+                  <EntityAvatar src={bot.profil_fotografi} name={bot?.isim} className="w-12 h-12 rounded-xl border border-white/10 shrink-0 text-sm" />
                   <div>
                     <div className="flex items-center gap-2">
                       <h4

@@ -119,6 +119,7 @@ php api/database/plan_collation_selftest.php # plan_name ↔ plans.name_tr colla
 php api/database/secret_scan_selftest.php    # .env örneklerinde gerçek anahtar/değer yok (N-55), çevrimdışı
 php api/database/vendor_selftest.php         # vendor eksik/eski → anlaşılır 503; lock PHP 8.2 uyumlu (N-56), çevrimdışı
 php api/database/hoppa_diag_selftest.php     # Hoppa bağlantı testi sınıflaması + hata kodu → Türkçe mesaj (N-57), çevrimdışı
+node --test web/src/shared/lib/image-url.test.mjs # tek görsel URL üreticisi + baş harf yer tutucu (N-58)
 ```
 
 Bir değişiklik bunlardan birini bozuyorsa geri al ve nedenini raporla.

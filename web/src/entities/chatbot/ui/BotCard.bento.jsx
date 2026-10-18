@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import CategoryBadge from "@/shared/ui/category-badge";
 import { resolveCategory } from "@/shared/lib/categories";
+import { EntityAvatar, EntityCover } from "@/shared/ui/entity-image";
 
 const AddToListModal = dynamic(() => import("@/features/lists/AddToListModal"), { ssr: false });
 
@@ -26,15 +27,6 @@ function formatCompactNumber(n) {
   return String(num);
 }
 
-function resolveAvatarSrc(src) {
-  if (!src || src === "default" || src === "0") {
-    return "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80";
-  }
-  if (src.startsWith("http://") || src.startsWith("https://") || src.startsWith("/")) {
-    return src;
-  }
-  return `/uploads/avatars/${src}`;
-}
 
 /**
  * Pazaryeri bot karti. Anasayfa ve Kesfet ayni karti kullanir — daha once
@@ -113,14 +105,9 @@ export default function BotCard({
 
       {/* Cover Image Header */}
       <div className="relative aspect-[16/10] w-full overflow-hidden bg-zinc-950">
-        <img
+        <EntityCover
           src={bot.image}
-          alt={bot.title}
-          className="h-full w-full object-cover transition-transform duration-700 ease-out group-hover:scale-105"
-          onError={(e) => {
-            e.currentTarget.src =
-              "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800&auto=format&fit=crop&q=80";
-          }}
+          className="h-full w-full transition-transform duration-700 ease-out group-hover:scale-105"
         />
         <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-zinc-950/30 to-transparent" />
 
@@ -204,14 +191,10 @@ export default function BotCard({
       <div className="flex flex-1 flex-col p-5">
         {/* Author Details */}
         <div className="flex items-center gap-2 mb-2">
-          <img
-            src={resolveAvatarSrc(bot.avatar)}
-            alt={bot.author}
-            className="h-5 w-5 rounded-full object-cover border border-white/20 shadow-sm"
-            onError={(e) => {
-              e.currentTarget.src =
-                "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80";
-            }}
+          <EntityAvatar
+            src={bot.avatar}
+            name={bot.title}
+            className="h-5 w-5 rounded-full border border-white/20 text-[9px] shadow-sm"
           />
           <span className="text-xs font-medium text-zinc-300 truncate">
             {bot.author}

@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { useRouter } from "next/navigation";
 import { requireLogin } from "@/shared/lib/auth-guard";
 import { resolveCategory } from "@/shared/lib/categories";
+import { EntityAvatar, EntityCover } from "@/shared/ui/entity-image";
 import {
   Sparkles,
   MessageSquare,
@@ -53,33 +54,6 @@ function formatTime(dateString) {
   return `${diffDays} gün önce`;
 }
 
-function resolveCoverSrc(src) {
-  if (!src || src === "default" || src === "0") {
-    return "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800&auto=format&fit=crop&q=80";
-  }
-  if (
-    src.startsWith("http://") ||
-    src.startsWith("https://") ||
-    src.startsWith("/")
-  ) {
-    return src;
-  }
-  return `/uploads/covers/${src}`;
-}
-
-function resolveAvatarSrc(src) {
-  if (!src || src === "default" || src === "0") {
-    return "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80";
-  }
-  if (
-    src.startsWith("http://") ||
-    src.startsWith("https://") ||
-    src.startsWith("/")
-  ) {
-    return src;
-  }
-  return `/uploads/avatars/${src}`;
-}
 
 import BentoBotCard from "@/entities/chatbot/ui/BotCard.bento";
 
@@ -104,14 +78,9 @@ function CompactBotCard({ bot, onOpenDetails }) {
     >
       <div className="flex items-center gap-3 min-w-0">
         <div className="h-12 w-12 shrink-0 overflow-hidden rounded-xl border border-white/10 bg-zinc-950">
-          <img
+          <EntityCover
             src={bot.image}
-            alt={bot.title}
-            className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-110"
-            onError={(e) => {
-              e.currentTarget.src =
-                "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800&auto=format&fit=crop&q=80";
-            }}
+            className="h-full w-full transition-transform duration-300 group-hover:scale-110"
           />
         </div>
         <div className="min-w-0">
@@ -160,14 +129,9 @@ function ListBotCard({ bot, onOpenDetails }) {
     >
       <div className="flex items-center gap-4 w-full sm:w-auto flex-1 min-w-0">
         <div className="h-16 w-16 sm:h-20 sm:w-20 shrink-0 overflow-hidden rounded-xl border border-white/10 bg-zinc-950">
-          <img
+          <EntityCover
             src={bot.image}
-            alt={bot.title}
-            className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-110"
-            onError={(e) => {
-              e.currentTarget.src =
-                "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800&auto=format&fit=crop&q=80";
-            }}
+            className="h-full w-full transition-transform duration-500 group-hover:scale-110"
           />
         </div>
 
@@ -261,19 +225,15 @@ function BotDetailModal2026({ bot, onClose }) {
 
           {/* Modal Hero Banner */}
           <div className="relative -mx-6 -mt-6 sm:-mx-8 sm:-mt-8 mb-6 h-48 overflow-hidden bg-zinc-900">
-            <img
-              src={bot.image}
-              alt={bot.title}
-              className="h-full w-full object-cover"
-            />
+            <EntityCover src={bot.image} className="h-full w-full" />
             <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-zinc-950/40 to-transparent" />
 
             <div className="absolute bottom-4 left-6 sm:left-8 right-6 flex items-end justify-between">
               <div className="flex items-center gap-3.5">
-                <img
-                  src={resolveAvatarSrc(bot.avatar)}
-                  alt={bot.author}
-                  className="h-12 w-12 rounded-2xl border-2 border-white/20 object-cover shadow-xl"
+                <EntityAvatar
+                  src={bot.avatar}
+                  name={bot.title}
+                  className="h-12 w-12 rounded-2xl border-2 border-white/20 text-base shadow-xl"
                 />
                 <div>
                   <h2 className="text-xl font-extrabold text-white sm:text-2xl">
@@ -641,10 +601,10 @@ function NewChatHero({
                     </>
                   ) : bot ? (
                     <>
-                      <img
-                        src={resolveAvatarSrc(bot.avatar)}
-                        alt=""
-                        className="h-6 w-6 rounded-full object-cover"
+                      <EntityAvatar
+                        src={bot.avatar}
+                        name={bot.title}
+                        className="h-6 w-6 rounded-full text-[10px]"
                       />
                       <span className="max-w-[150px] truncate text-xs font-medium text-zinc-200 sm:max-w-[260px]">
                         {bot.title}
@@ -686,10 +646,10 @@ function NewChatHero({
                         {pickerBots.map((item) => {
                           const isCurrent = Number(bot?.id) === Number(item.id);
                           const avatar = (
-                            <img
-                              src={resolveAvatarSrc(item.avatar)}
-                              alt=""
-                              className="h-7 w-7 shrink-0 rounded-full object-cover"
+                            <EntityAvatar
+                              src={item.avatar}
+                              name={item.title}
+                              className="h-7 w-7 rounded-full text-[11px]"
                             />
                           );
 
@@ -901,7 +861,7 @@ export function MainDashboard2026() {
               time: formatTime(bot.yayimlanma_tarih),
               publishedAt: bot.yayimlanma_tarih,
               avatar: bot.profil_fotografi,
-              image: resolveCoverSrc(bot.kapak_fotografi),
+              image: bot.kapak_fotografi,
               kategori_id: bot.kategori_id,
               followers: bot.toplam_follows,
               likes: bot.toplam_likes,

@@ -42,7 +42,7 @@ export default function ProfilePopup({ user, onLogout }) {
             <div className="flex w-full items-center gap-3">
                 <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-full bg-gradient-luma ring-2 ring-fuchsia-400/20">
                     {profileImage ? (
-                        <img src={profileImage} alt="avatar" className="h-full w-full object-cover" />
+                        <img src={profileImage} alt="" className="h-full w-full object-cover" />
                     ) : null}
                 </div>
                 <div className="min-w-0">

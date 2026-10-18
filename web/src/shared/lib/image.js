@@ -1,5 +1,6 @@
 import avatarFallback from "@/images/avatar-bot.jpg";
 import coverFallback from "@/images/bot-image.png";
+import { imageUrl } from "./image-url.mjs";
 
 /**
  * next/image's <Image> throws a hard render error when `src` is
@@ -38,13 +39,9 @@ import coverFallback from "@/images/bot-image.png";
  * dokunulmuyor.
  */
 export function normalizeImagePath(value) {
-    if (typeof value !== "string") return "";
-    const src = value.trim();
-    if (!src) return "";
-    if (/^(https?:)?\/\//i.test(src) || src.startsWith("data:") || src.startsWith("blob:")) {
-        return src;
-    }
-    return src.startsWith("/") ? src : `/${src}`;
+    // N-58 — tek üretici: image-url.mjs (ham base64, bozuk eski biçimler,
+    // "default"/"0" gibi boş değerler de burada çözülüyor).
+    return imageUrl(value);
 }
 
 export function resolveAvatarSrc(value) {

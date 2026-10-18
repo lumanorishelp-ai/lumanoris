@@ -27,6 +27,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { toast } from "@/shared/hooks/use-toast";
+import { EntityAvatar } from "@/shared/ui/entity-image";
 
 function formatCompactNumber(n) {
   const num = Number(n) || 0;
@@ -38,12 +39,6 @@ function formatCompactNumber(n) {
   return String(num);
 }
 
-function resolveAvatarSrc(src) {
-  if (!src)
-    return "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?q=80&w=200&auto=format&fit=crop";
-  if (src.startsWith("http://") || src.startsWith("https://")) return src;
-  return src.startsWith("/") ? src : `/${src}`;
-}
 
 function DeleteConfirmModal({
   isOpen,
@@ -265,12 +260,10 @@ function ListDetailModal({ isOpen, onClose, list, onRemoveBot }) {
                   className="flex items-center justify-between p-3.5 rounded-2xl bg-zinc-900/60 border border-zinc-800/80 hover:border-zinc-700 transition-all"
                 >
                   <div className="flex items-center gap-3 min-w-0">
-                    <img
-                      src={resolveAvatarSrc(
-                        bot.profil_fotografi || bot.avatar || bot.image,
-                      )}
-                      alt=""
-                      className="w-10 h-10 rounded-xl object-cover border border-white/10 shrink-0"
+                    <EntityAvatar
+                      src={bot.profil_fotografi || bot.avatar || bot.image}
+                      name={bot.isim || bot.title}
+                      className="w-10 h-10 rounded-xl border border-white/10 text-sm"
                     />
                     <div className="min-w-0">
                       <h5 className="text-xs font-bold text-white truncate">
@@ -401,12 +394,10 @@ function ListCardItem({ list, onDelete, onViewDetail }) {
                   key={bot.id || idx}
                   className="relative group/bot flex-shrink-0"
                 >
-                  <img
-                    src={resolveAvatarSrc(
-                      bot.profil_fotografi || bot.avatar || bot.image,
-                    )}
-                    alt=""
-                    className="h-8 w-8 rounded-xl object-cover border border-zinc-700/80 shadow-md transition-transform group-hover/bot:scale-110"
+                  <EntityAvatar
+                    src={bot.profil_fotografi || bot.avatar || bot.image}
+                    name={bot.isim || bot.title}
+                    className="h-8 w-8 rounded-xl border border-zinc-700/80 text-xs shadow-md transition-transform group-hover/bot:scale-110"
                   />
                 </div>
               ))

@@ -10,7 +10,8 @@ import CategoryBadge from '@/shared/ui/category-badge';
 import { cn } from '@/lib/utils';
 import { toast } from '@/shared/hooks/use-toast';
 import { requireLogin } from '@/shared/lib/auth-guard';
-import { resolveAvatarSrc, normalizeImagePath } from '@/shared/lib/image';
+import { normalizeImagePath } from '@/shared/lib/image';
+import { EntityAvatar } from '@/shared/ui/entity-image';
 import { useAbortableEffect, isAbortError } from '@/shared/hooks/useAbortableEffect';
 
 // Only loaded once the user actually opens one of these — this card renders
@@ -340,7 +341,6 @@ export default function ProfileCard({bot, comments}) {
         }
     };
 
-    const avatarSrc = profile.image || resolveAvatarSrc(null);
     // Faz 4 / GK-2 — ücretsiz herkese açık bot: herkes sohbet eder, satın
     // alınmaz (sunucu addToCart'ta da reddediyor). Rozet gösterilir,
     // "Sepete Ekle" gizlenir.
@@ -433,7 +433,7 @@ export default function ProfileCard({bot, comments}) {
                         className="group -m-1.5 flex min-w-0 items-center gap-3 rounded-xl p-1.5 text-left transition-colors hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                     >
                         <div className="h-10 w-10 shrink-0 overflow-hidden rounded-full ring-1 ring-fuchsia-400/25">
-                            <img src={avatarSrc} alt="" className="h-full w-full object-cover" />
+                            <EntityAvatar src={profile.image} name={profile.title} className="h-full w-full text-sm" />
                         </div>
                         <div className="min-w-0">
                             <p className="flex items-center gap-1 truncate font-display text-body font-bold text-white">
@@ -500,7 +500,7 @@ export default function ProfileCard({bot, comments}) {
                     <DialogHeader>
                         <div className="flex items-center gap-3.5">
                             <div className="h-14 w-14 shrink-0 overflow-hidden rounded-2xl ring-2 ring-fuchsia-400/20">
-                                <img src={avatarSrc} alt="" className="h-full w-full object-cover" />
+                                <EntityAvatar src={profile.image} name={profile.title} className="h-full w-full text-lg" />
                             </div>
                             <div className="min-w-0">
                                 <DialogTitle className="truncate">{profile.title}</DialogTitle>

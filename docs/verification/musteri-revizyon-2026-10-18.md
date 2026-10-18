@@ -49,8 +49,8 @@ Durum: **Faz A tamamlandı** (A2'nin ödeme yoluna bağlanması onay bekliyor). 
 
 | Alt başlık | İstenen | Yapılan | Kanıt | Canlıda doğrulandı mı |
 |---|---|---|---|---|
-| A2 · gerçek hata | Hoppa'nın döndürdüğü hatayı bul | Bu metin yalnızca Hoppa başarısız döndüğünde ya da Hoppa'ya ulaşılamadığında üretiliyor. Gerçek neden log'a yazılmıyordu, ama canlı DB'de duruyor (aşağıdaki sorgu 2.1). **En güçlü aday:** BLOCKERS B3. Anahtar Hoppa'da yenilendiyse ve `.env`'de eski `HOPPA_LIVE_MERCHANT_KEY` duruyorsa Hoppa `AUTHENTICATION_ERROR` döner | AUDIT N-57 | **Hayır.** Sizden sorgu 2.1 sonucu ve bağlantı testi gerekiyor |
-| A2 · olasılıklar | merchant, IP/alan adı, BACK_URL, tutar, uç adres | Hoppa dokümanında IP ya da alan adı tanımı şartı **yok**. `APP_PUBLIC_URL` hatalı olsaydı mesaj "Ödeme altyapısı hazırlanıyor" olurdu, yani BACK_URL sorunu değil. Tutar biçimi `149.00` test ortamında çalıştı. Canlı uç adres `posservice.esnekpos.com` | Kod + doküman | — |
+| A2 · gerçek hata | Hoppa'nın döndürdüğü hatayı bul | **Kesin neden (canlı, 2026-10-18):** Hoppa sunucumuzun çıkış IP'sini tanımıyor. Canlıdaki 6 başarısız denemenin hepsinde ve bağlantı testinde aynı mesaj: "Bu IP adresinden işlem yapma yetkiniz bulunmamaktadır. IP: 45.143.99.2" (`AUTHENTICATION_ERROR`, başlatmada kod 102, sorguda 100). Kimlik bilgileri, kod, tutar ve adres doğru. Faz A'daki "en güçlü aday: anahtar yenilendi" tahmini **yanlıştı** | Sorgu 2.1 sonucu (6 satır), Sistem Durumu → Hoppa bağlantı testi | **Evet** (neden) · ödeme IP tanımından sonra denenecek |
+| A2 · olasılıklar | merchant, IP/alan adı, BACK_URL, tutar, uç adres | Hoppa'nın yayımlanan dokümanında IP tanımı geçmiyor, ama canlı hesapta **IP kısıtı açık**. Faz A raporundaki "IP şartı yok" ifadesi pratikte yanlış çıktı. `APP_PUBLIC_URL` sorunu olsaydı mesaj "Ödeme altyapısı hazırlanıyor" olurdu. Tutar biçimi test ortamında çalıştı. Canlı uç adres `posservice.esnekpos.com` | Kod + doküman + canlı yanıt | Evet |
 | A2 · bağlantı testi | Ödeme başlatmayan zararsız çağrı | Admin → Sistem Durumu → "Hoppa bağlantı testi": var olmayan referansla ProcessQuery. Test ortamında geçerli kimlik 400 "Referans bulunamadı", uydurma kimlik `AUTHENTICATION_ERROR` döndü, yani ikisi ayırt edilebiliyor | Yerel, gerçek `_guard` + CSRF yolundan: 546 ms "kimlik kabul edildi" | Hayır, zip bekliyor |
 | A2 · Türkçe mesajlar | Kod → anlaşılır mesaj | `hoppaUserMessage`: dokümandaki 100–206 ve 34 kodları, "51-Limit Yetersiz" biçimli banka reddi. Kimlik sorunu kullanıcıya "bakımda" diye gider, ayrıntı log'a yazılır | `hoppa_diag_selftest` (40) | — |
 | A2 · ödeme yoluna bağlama | | **Onay bekliyor:** `docs/proposals/n57-hoppa-hata-mesajlari.patch` (WalletController hata dalı + `hoppaReturn` neden kodu + paket sayfası) | `git apply --check` temiz | — |
@@ -212,9 +212,10 @@ Arka uç: deploy/backend-2026-10-18-A.zip (sha256 fb29677b…)
 - Ayrıca geliştirme ortamı için ayrı bir anahtar kullanılmalı; şu an testler de aynı sınırdan harcıyor.
 
 **Ödeme sayfasına geçilemiyor.**
-- Bunun nedeni Hoppa'nın verdiği cevapta. Kodumuz isteği doğru biçimde gönderiyor (test ortamında ödeme alındı).
-- En olası neden, canlı Hoppa anahtarının yenilenmiş ve sunucuya yeni anahtarın girilmemiş olması ya da canlı üye işyeri hesabının henüz aktif edilmemiş olması.
-- Yönetim panelindeki "Hoppa bağlantı testi" bunu tek tıkla gösteriyor. Hesap aktivasyonu gerekiyorsa Hoppa ile görüşülmeli (destek@esnekpos.com · 0212 235 66 00).
+- Kesin neden bulundu: Hoppa, sitemizin sunucusunun internet adresini (IP: 45.143.99.2) tanımıyor ve bu adresten gelen ödeme isteklerini reddediyor. Ödeme bilgileri ve yazılım doğru.
+- Çözüm: Hoppa panelinde izinli IP listesine bu adresin eklenmesi. Panelde bu ayar yoksa Hoppa destekten istenmeli (destek@esnekpos.com · 0212 235 66 00).
+- Ekleme yapıldıktan sonra yönetim panelindeki "Hoppa bağlantı testi" "Kimlik bilgileri kabul edildi" gösterecek.
+- Hosting firması sunucu adresini değiştirirse bu tanımın yenilenmesi gerekir.
 
 **Hata ekranında sunucu yolu görünüyordu.**
 - Sunucudaki bir ayar (`APP_DEBUG`) geliştirici modunda bırakılmıştı. Kapatılması tek satırlık bir sunucu ayarı.

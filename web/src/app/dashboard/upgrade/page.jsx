@@ -23,6 +23,14 @@ import PlanPaymentModal from "@/features/payment/PlanPaymentModal";
  */
 const initialPlanData = [];
 
+// api/functions/hoppa_diagnostics.php → hoppaFailureReason() ile ELLE senkron.
+const PAYMENT_FAIL_REASONS = {
+  limit: "Kartınız reddedildi: limit yetersiz",
+  kart: "Kartınız bankanız tarafından reddedildi",
+  "3d": "3D Secure doğrulaması tamamlanamadı",
+  guvenlik: "İşlem güvenlik nedeniyle reddedildi",
+};
+
 export default function PricingPlans() {
   const { userId } = useContext(UserContext);
   const [selectedPlan, setSelectedPlan] = useState(null);
@@ -42,13 +50,18 @@ export default function PricingPlans() {
   // ile yönlendiriyor (WalletController::hoppaReturn). Sonuç sunucuda
   // ProcessQuery ile kesinleşmiş durumda; burada yalnızca gösteriliyor.
   const [paymentResult, setPaymentResult] = useState(null);
+  // N-57 — başarısız dönüşte sunucunun eklediği izinli neden kodu
+  // (hoppaFailureReason). Bilinmeyen değer genel metne düşer.
+  const [failReason, setFailReason] = useState(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const result = params.get("odeme");
     if (["paid", "failed", "pending"].includes(result)) {
       setPaymentResult(result);
+      setFailReason(params.get("neden"));
       params.delete("odeme");
+      params.delete("neden");
       const query = params.toString();
       window.history.replaceState(null, "", window.location.pathname + (query ? `?${query}` : ""));
     }
@@ -248,7 +261,7 @@ export default function PricingPlans() {
           )}
           {paymentResult === "failed" && (
             <StatusBanner variant="error">
-              Ödeme tamamlanamadı ve paketiniz değişmedi. Dilerseniz tekrar deneyebilirsiniz.
+              {PAYMENT_FAIL_REASONS[failReason] ?? "Ödeme tamamlanamadı"} ve paketiniz değişmedi. Dilerseniz tekrar deneyebilirsiniz.
             </StatusBanner>
           )}
           {paymentResult === "pending" && (

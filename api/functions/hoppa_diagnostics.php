@@ -44,6 +44,15 @@ function hoppaProbeClassify(array $query): array {
         return $out(true, 'auth_ok', 'Kimlik bilgileri kabul edildi; Hoppa sorgu servisi yanıt verdi. '
             . 'Ödeme yine başlatılamıyorsa nedeni php-error.log\'daki [upgradePlan] satırında.');
     }
+    // Canlı 2026-10-18: "Bu IP adresinden işlem yapma yetkiniz bulunmamaktadır.
+    // IP: …" (100/102, AUTHENTICATION_ERROR). Kimlik doğru; sunucunun çıkış
+    // IP'si Hoppa'nın izinli listesinde değil.
+    if (preg_match('/IP adres/iu', $msg)) {
+        $ip = preg_match('/IP:\s*([0-9a-f.:]+)/i', $msg, $m) ? $m[1] : 'bilinmiyor';
+        return $out(false, 'ip', "Hoppa bu sunucunun IP adresini ($ip) tanımıyor; kimlik bilgileri sorun değil. "
+            . "Hoppa panelinde (pos.esnekpos.com) izinli IP listesine $ip eklenmeli ya da Hoppa destekten istenmeli "
+            . '(destek@esnekpos.com). Hosting IP\'si değişirse tanım yenilenmeli.');
+    }
     if ($status === 'AUTHENTICATION_ERROR' || $code === '102') {
         return $out(false, 'auth', 'Hoppa kimlik bilgilerini REDDETTİ. .env\'deki MERCHANT_KEY / MERCHANT seçili HOPPA_MODE ile '
             . 'eşleşmiyor ya da Hoppa anahtarı yeniledi (canlı modda HOPPA_LIVE_*). Hoppa panelindeki güncel değerlerle karşılaştırın.');

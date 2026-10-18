@@ -685,10 +685,18 @@ class WalletController {
         ], 'order_id = ?', [$orderId]);
 
         if (!$res['success']) {
-            error_log(sprintf('[upgradePlan] Hoppa ödeme başlatılamadı order=%s code=%s', $orderId, (string) ($res['error_code'] ?? '')));
+            // N-57 — log satırı Hoppa'nın gerçek yanıtını taşımıyordu (yalnızca
+            // kod), kullanıcı her nedende aynı genel mesajı görüyordu. `raw`
+            // HoppaGateway::redact() sonrası: anahtar ve kişisel alan yok.
+            require_once __DIR__ . '/../../../functions/hoppa_diagnostics.php';
+            $raw  = (array) ($res['raw'] ?? []);
+            $code = (string) ($res['error_code'] ?? '');
+            error_log(sprintf('[upgradePlan] Hoppa ödeme başlatılamadı order=%s mode=%s code=%s %s',
+                $orderId, $gateway->isTest() ? 'test' : 'live', $code, hoppaLogSummary($raw)));
             return [
                 'success' => false,
-                'message' => 'Ödeme başlatılamadı. Lütfen biraz sonra tekrar deneyin.',
+                'message' => hoppaUserMessage($code, (string) ($raw['STATUS'] ?? ''),
+                    (string) (($raw['RETURN_MESSAGE_TR'] ?? '') ?: ($raw['RETURN_MESSAGE'] ?? ''))),
                 'http'    => 502,
                 'code'    => AppConfig::ERR_PAYMENT,
             ];
@@ -854,6 +862,12 @@ class WalletController {
         }
 
         $result = self::finalizeHostedPlanPayment($db, $gateway, $orderId);
+        if ($result['state'] === 'failed') {
+            // N-57 — nedeni izinli kısa kodla taşı (serbest metin değil).
+            require_once __DIR__ . '/../../../functions/hoppa_diagnostics.php';
+            error_log(sprintf('[hoppaReturn] ödeme başarısız order=%s neden=%s', $orderId, $result['message'] ?: '-'));
+            $back('failed&neden=' . hoppaFailureReason((string) $result['message']));
+        }
         $back(match ($result['state']) {
             'paid'                => 'paid',
             'failed', 'not_found' => 'failed',

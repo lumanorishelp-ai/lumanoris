@@ -48,6 +48,17 @@ $r = hoppaProbeClassify($q(['STATUS' => 'AUTHENTICATION_ERROR', 'RETURN_CODE' =>
 check('AUTHENTICATION_ERROR (test ortamında kod 100) → kimlik reddedildi', $r['ok'] === false && $r['kind'] === 'auth', json_encode($r, JSON_UNESCAPED_UNICODE));
 check('kimlik reddi açıklaması MERCHANT_KEY ve moddan söz ediyor', str_contains($r['explain'], 'MERCHANT_KEY') && str_contains($r['explain'], 'HOPPA_MODE'));
 
+// Canlı (2026-10-18): bağlantı testi 100, ödeme başlatma 102 — ikisinde de aynı metin.
+// Kimlik DOĞRU; Hoppa sunucumuzun çıkış IP'sini tanımıyor. "Anahtarı karşılaştır"
+// demek yanlış yönlendiriyordu.
+$ipMsg = 'Bu IP adresinden işlem yapma yetkiniz bulunmamaktadır. IP: 45.143.99.2';
+$r = hoppaProbeClassify($q(['STATUS' => 'AUTHENTICATION_ERROR', 'RETURN_CODE' => '100', 'RETURN_MESSAGE' => $ipMsg]));
+check('IP reddi (AUTHENTICATION_ERROR + "IP adresinden") → ip, kimlik değil', $r['ok'] === false && $r['kind'] === 'ip', json_encode($r, JSON_UNESCAPED_UNICODE));
+check('IP reddi açıklaması IP\'yi ve Hoppa panelini söylüyor, anahtar karşılaştırması istemiyor',
+    str_contains($r['explain'], '45.143.99.2') && str_contains($r['explain'], 'IP') && !str_contains($r['explain'], 'MERCHANT_KEY'), $r['explain']);
+check('IP reddi kullanıcıya "bakımda"', str_contains(hoppaUserMessage('102', 'AUTHENTICATION_ERROR', $ipMsg), 'bakımda'));
+check('IP reddi kullanıcı mesajında IP yok', !str_contains(hoppaUserMessage('102', 'AUTHENTICATION_ERROR', $ipMsg), '45.143'));
+
 $r = hoppaProbeClassify($q(['STATUS' => 'ERROR', 'RETURN_CODE' => '102', 'RETURN_MESSAGE' => 'x']));
 check('kod 102 → kimlik reddedildi', $r['kind'] === 'auth');
 

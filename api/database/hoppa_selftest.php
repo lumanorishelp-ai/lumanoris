@@ -75,8 +75,13 @@ final class FakeHostedGateway implements PaymentGatewayInterface
 
     public function isConfigured(): bool { return true; }
     public function isTest(): bool { return true; }
+    /** Doluysa startHostedPayment bunu döner (N-57: başarısız başlatma). */
+    public ?array $startResult = null;
     public function startHostedPayment(array $order): array
     {
+        if ($this->startResult !== null) {
+            return $this->startResult;
+        }
         return ['success' => true, 'redirect_url' => 'https://postest.esnekpos.com/Pages/CommonPaymentNew.aspx?hash=fake',
                 'provider_ref' => '1', 'message' => '', 'error_code' => null, 'raw' => []];
     }
@@ -210,6 +215,16 @@ try {
     check('APP_PUBLIC_URL yoksa ödeme başlatılmıyor (503)', WalletController::startHostedPlanPayment($db, $fake, $uid, $plan, '')['http'] === 503);
     $live = new HoppaGateway('live', 'M', 'K');
     check('canlı modda http APP_PUBLIC_URL reddedilir', WalletController::startHostedPlanPayment($db, $live, $uid, $plan, 'http://ornek.com')['http'] === 503);
+
+    // N-57 — canlıdaki gerçek başlatma hatası (2026-10-18): IP izinli değil.
+    $fake->startResult = ['success' => false, 'redirect_url' => null, 'provider_ref' => null, 'message' => 'Bu IP adresinden işlem yapma yetkiniz bulunmamaktadır. IP: 45.143.99.2',
+        'error_code' => '102', 'raw' => ['STATUS' => 'AUTHENTICATION_ERROR', 'RETURN_CODE' => '102', 'RETURN_MESSAGE' => 'Bu IP adresinden işlem yapma yetkiniz bulunmamaktadır. IP: 45.143.99.2']];
+    $bad = WalletController::startHostedPlanPayment($db, $fake, $uid, $plan, 'http://localhost:3000');
+    check('başlatma hatası: 502, kullanıcıya "bakımda" (IP/kimlik ayrıntısı yok)', !$bad['success'] && $bad['http'] === 502
+        && str_contains($bad['message'], 'bakımda') && !str_contains($bad['message'], 'IP'), json_encode($bad, JSON_UNESCAPED_UNICODE));
+    $fake->startResult = ['success' => false, 'redirect_url' => null, 'provider_ref' => null, 'message' => 'x', 'error_code' => 'TRANSPORT', 'raw' => ['__transport_error' => 'timeout']];
+    check('başlatma hatası: ağ → "ulaşılamıyor"', str_contains(WalletController::startHostedPlanPayment($db, $fake, $uid, $plan, 'http://localhost:3000')['message'], 'ulaşılamıyor'));
+    $fake->startResult = null;
 
     $s = WalletController::startHostedPlanPayment($db, $fake, $uid, $plan, 'http://localhost:3000');
     $o = $s['order_id'] ?? '';

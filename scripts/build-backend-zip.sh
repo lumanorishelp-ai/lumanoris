@@ -63,7 +63,9 @@ for dir in "$STAGE" "$STAGE/admin"; do
     *"There is no installed package"*) echo "  PHP $PHP_TARGET uyumlu: ${dir#$STAGE}/ ($(ls "$dir/vendor" | wc -l | tr -d ' ') üst dizin)" ;;
     *) echo "$wn"; die "PHP $PHP_TARGET ile uyumsuz paket var: ${dir#$STAGE}/" ;;
   esac
-  rm -f "$dir/vendor/composer/installed.json.bak" 2>/dev/null
+  # Paket belgeleri canlıda gereksiz; firebase/php-jwt README'sindeki örnek
+  # "BEGIN … PRIVATE KEY" blokları anahtar taramasını haklı olarak durduruyordu.
+  find "$dir/vendor" -type f -iname '*.md' -delete
 done
 
 echo "== denetimler"

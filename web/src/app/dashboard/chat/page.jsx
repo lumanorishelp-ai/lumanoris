@@ -5,6 +5,7 @@ import ProfileCard from "@/entities/user/ui/ProfileCard";
 import React, { useState, useRef, useEffect, useCallback, useContext } from "react";
 import { UserContext } from "@/shared/contexts/UserContext";
 import { EntityAvatar } from "@/shared/ui/entity-image";
+import { chatFailureText } from "@/features/chat/reply-errors.mjs";
 import { useSearchParams } from "next/navigation";
 
 // Only loaded when the user actually opens one of these modals, instead of
@@ -847,11 +848,8 @@ const generateReply = async (userText, filePayloads = [], convId = conversationI
     // Stream finished without throwing but produced no content. If the server
     // told us why (upstream 4xx/5xx), say so instead of the generic wording —
     // a suspended key and a transient outage need different user action.
-    const failureText = upstreamError
-      ? (upstreamError.code === 429
-          ? "Yapay zeka servisi şu anda yoğun. Lütfen biraz sonra tekrar deneyin."
-          : "Yapay zeka servisine şu anda ulaşılamıyor. Sorun sürerse yöneticinize bildirin.")
-      : "Şu anda cevap veremiyorum.";
+    // N-59 — tür (yoğun / kota / zaman aşımı / …) → metin tek yerde.
+    const failureText = chatFailureText(upstreamError);
 
     setMessages((prev) => prev.map((msg) =>
       msg.id === placeholderId

@@ -97,7 +97,9 @@ if (defined('GEMINI_TIMEOUT') && defined('CHAT_PHP_TIME_LIMIT')) {
 }
 check('ChatController: ignore_user_abort(true) — istemci kesse de kaydet/iade et', str_contains($ctl, 'ignore_user_abort(true)'));
 check('ChatController: set_time_limit(CHAT_PHP_TIME_LIMIT)', str_contains($ctl, 'set_time_limit(CHAT_PHP_TIME_LIMIT)'));
-check('ChatController: cURL süreleri sabitlerden', str_contains($ctl, 'CURLOPT_TIMEOUT        => GEMINI_TIMEOUT') && str_contains($ctl, 'CURLOPT_CONNECTTIMEOUT => GEMINI_CONNECT_TIMEOUT'));
+// N-59: ilk deneme GEMINI_TIMEOUT ile; ikinci deneme süresi geminiRetryPlan'dan
+// (PHP sınırının ≥5 sn altında biter — H bölümü).
+check('ChatController: cURL süreleri sabitlerden (ilk deneme GEMINI_TIMEOUT)', str_contains($ctl, '$runAttempt(GEMINI_TIMEOUT)') && str_contains($ctl, 'CURLOPT_CONNECTTIMEOUT => GEMINI_CONNECT_TIMEOUT'));
 check('ChatController: düşünme ayarı istekte (generationConfig)', str_contains($ctl, 'geminiGenerationConfig()'));
 check('düşünme seviyesi sohbet için düşük', in_array(geminiGenerationConfig()['thinkingConfig']['thinkingLevel'] ?? '', ['minimal', 'low'], true));
 check('meta karesi after_id taşıyor (yeniden sorgulama için)', str_contains($ctl, "'after_id'"));
@@ -176,5 +178,66 @@ $layout = (string) file_get_contents(__DIR__ . '/../../web/src/app/dashboard/lay
 check('layout coin ayarlayıcısını UserContext ile paylaşıyor', str_contains($layout, 'setDailyCoinsRemaining') && str_contains($layout, 'UserContext.Provider'));
 check('sohbet sayfası sunucudan gelen coin değerini paylaşılan bağlama yazıyor', str_contains($page, 'setDailyCoinsRemaining?.('));
 check('sohbet çipi paylaşılan değeri gösteriyor', str_contains($page, 'sharedCoins'));
+
+echo "\n=== H) Hata türü ve tek otomatik yeniden deneme (N-59) ===\n\n";
+if (!function_exists('geminiFailureKind') || !function_exists('geminiRetryPlan') || !function_exists('geminiErrorStats')) {
+    check('functions/gemini.php: geminiFailureKind, geminiRetryPlan, geminiErrorStats', false, 'tanımlı değil');
+    finish();
+}
+// Gövdeler Google'ın gerçek biçiminde (BLOCKERS B4, 2026-10-18 canlı gözlem).
+$b503 = '[{"error":{"code":503,"message":"This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.","status":"UNAVAILABLE"}}]';
+$b429min = '[{"error":{"code":429,"message":"Resource has been exhausted (e.g. check quota).","status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"2s"}]}}]';
+$b429day = '[{"error":{"code":429,"message":"You exceeded your current quota, please check your plan and billing details.","status":"RESOURCE_EXHAUSTED","details":[{"@type":"type.googleapis.com/google.rpc.QuotaFailure","violations":[{"quotaId":"GenerateRequestsPerDayPerProjectPerModel-FreeTier"}]},{"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"53s"}]}}]';
+$b403 = '{"error":{"code":403,"message":"API key not valid","status":"PERMISSION_DENIED"}}';
+
+check('503 UNAVAILABLE → busy', geminiFailureKind(503, '', $b503) === 'busy');
+check('429 dakikalık → busy', geminiFailureKind(429, '', $b429min) === 'busy');
+check('429 günlük kota → quota', geminiFailureKind(429, '', $b429day) === 'quota');
+check('500 / 502 / 504 → unavailable', geminiFailureKind(500, '', '') === 'unavailable' && geminiFailureKind(502, '', '') === 'unavailable' && geminiFailureKind(504, '', '') === 'unavailable');
+check('cURL zaman aşımı → timeout', geminiFailureKind(0, 'Operation timed out after 30001 milliseconds with 0 bytes received', '') === 'timeout');
+check('cURL bağlantı hatası → network', geminiFailureKind(0, 'Could not resolve host: generativelanguage.googleapis.com', '') === 'network');
+check('400/403/404 → config (yöneticiye)', geminiFailureKind(403, '', $b403) === 'config' && geminiFailureKind(404, '', '') === 'config' && geminiFailureKind(400, '', '') === 'config');
+check('200 + boş metin → empty', geminiFailureKind(200, '', '') === 'empty');
+
+$p = geminiRetryPlan(503, '', $b503, 1.2, false);
+check('503, akış başlamadı, 1,2 sn geçti → tekrar dene (~1 sn bekle)', $p['retry'] && $p['delay_ms'] >= 500 && $p['delay_ms'] <= 2000, json_encode($p));
+check('ikinci denemenin zaman aşımı PHP sınırının ≥5 sn altında biter', $p['retry'] && 1.2 + $p['delay_ms'] / 1000 + $p['timeout'] <= CHAT_PHP_TIME_LIMIT - 5 && $p['timeout'] >= 10, json_encode($p));
+$p = geminiRetryPlan(429, '', $b429min, 0.4, false);
+check('429 retryDelay=2s → 2 sn bekleyip tekrar', $p['retry'] && $p['delay_ms'] === 2000, json_encode($p));
+check('429 günlük kota (retryDelay=53s) → tekrar DENEME (boşa istek)', !geminiRetryPlan(429, '', $b429day, 0.4, false)['retry']);
+check('akış başladıysa (metin gönderildi) → tekrar deneme yok', !geminiRetryPlan(503, '', $b503, 1.0, true)['retry']);
+check('ilk deneme uzun sürdüyse (12 sn) → bütçe yok', !geminiRetryPlan(503, '', $b503, 12.0, false)['retry']);
+check('cURL zaman aşımı (30 sn) → tekrar yok', !geminiRetryPlan(0, 'Operation timed out after 30001 milliseconds', '', 30.0, false)['retry']);
+check('bağlantı hatası, hızlı → tekrar', geminiRetryPlan(0, 'Could not resolve host: x', '', 0.1, false)['retry']);
+check('403 anahtar → tekrar yok', !geminiRetryPlan(403, '', $b403, 0.3, false)['retry']);
+check('200 boş → tekrar yok (güvenlik engeli olabilir)', !geminiRetryPlan(200, '', '', 3.0, false)['retry']);
+
+check('ChatController: yeniden deneme planı geminiRetryPlan ile', str_contains($ctl, 'geminiRetryPlan('));
+check('ChatController: cURL toplam süresi plandan (sabit değil, bütçeli)', str_contains($ctl, 'CURLOPT_TIMEOUT        => $timeout'));
+check('ChatController: hata karesi tür (kind) taşıyor', str_contains($ctl, "'kind'"));
+check('ChatController: iade kararı yine chatReplyOutcome ile (N-48)', str_contains($ctl, 'chatReplyOutcome('));
+check('arayüz: tür → mesaj eşlemesi tek yerde (chatFailureText)', str_contains($page, 'chatFailureText('));
+
+echo "\n=== I) Son 24 saat hata sayımı (admin Sistem Durumu) ===\n\n";
+$now = strtotime('2026-10-18 12:00:00 UTC');
+$lines = [
+    '[18-Oct-2026 11:50:00 UTC] [gemini] generatereply hata: http=503 model=x status=UNAVAILABLE message=high demand deneme=1/2',
+    '[18-Oct-2026 11:50:02 UTC] [gemini] tekrar deneme başarılı: ilk=http=503',
+    '[18-Oct-2026 10:00:00 UTC] [gemini] generatereply hata: http=429 model=x status=RESOURCE_EXHAUSTED tür=quota deneme=1/1',
+    '[18-Oct-2026 09:00:00 UTC] [gemini] generatereply hata: http=0 model=x curl=Operation timed out after 30001 milliseconds',
+    '[18-Oct-2026 08:00:00 UTC] [gemini] generatereply hata: http=200 model=x boş cevap (metin yok)',
+    '[18-Oct-2026 07:00:00 UTC] [gemini] admin test hata: http=403 model=x status=PERMISSION_DENIED',
+    '[16-Oct-2026 07:00:00 UTC] [gemini] generatereply hata: http=503 model=x status=UNAVAILABLE',
+    '[18-Oct-2026 11:00:00 UTC] [readpdf] başka bir satır',
+    // N-59 öncesi (tür= yok) canlı satır biçimi: 429 "exceeded your current quota" → kota
+    '[18-Oct-2026 06:40:55 UTC] [gemini] generatereply hata: http=429 model=x status=RESOURCE_EXHAUSTED message=You exceeded your current quota, please check your plan and billing details.',
+];
+$s = geminiErrorStats($lines, $now);
+check('24 saat dışı satır sayılmıyor', $s['total'] === 6, json_encode($s, JSON_UNESCAPED_UNICODE));
+check('türler: busy 1, quota 2 (biri eski etiketsiz satır), timeout 1, empty 1, config 1', ($s['by_kind']['busy'] ?? 0) === 1 && ($s['by_kind']['quota'] ?? 0) === 2
+    && ($s['by_kind']['timeout'] ?? 0) === 1 && ($s['by_kind']['empty'] ?? 0) === 1 && ($s['by_kind']['config'] ?? 0) === 1, json_encode($s['by_kind']));
+check('tekrar denemeyle kurtarılan sayılıyor', $s['recovered'] === 1);
+check('son hata zamanı', $s['last'] === '18-Oct-2026 11:50:00 UTC', (string) $s['last']);
+check('anahtar/ham gövde döndürmüyor (yalnızca sayılar ve zaman)', !str_contains(json_encode($s), 'high demand'));
 
 finish();

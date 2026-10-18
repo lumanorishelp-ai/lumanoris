@@ -60,6 +60,7 @@ step secret_scan_selftest selftest secret_scan_selftest.php
 step vendor_selftest selftest vendor_selftest.php
 step hoppa_diag_selftest selftest hoppa_diag_selftest.php
 step image_url_test node --test "$ROOT/web/src/shared/lib/image-url.test.mjs"
+step reply_errors_test node --test "$ROOT/web/src/features/chat/reply-errors.test.mjs"
 
 if [ ${#failed[@]} -eq 0 ]; then
   echo "DOĞRULAMA: GEÇTİ"

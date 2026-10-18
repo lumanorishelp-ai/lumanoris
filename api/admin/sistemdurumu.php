@@ -27,6 +27,17 @@ $vendorPdf    = VendorAutoload::load('sistemdurumu', VendorAutoload::PDF_CLASSES
 $vendorGoogle = $vendorPdf && class_exists('Google_Client');
 $adminVendor  = is_file(__DIR__ . '/vendor/autoload.php');
 $appDebug     = env_bool('APP_DEBUG', false);
+// N-59 — son 24 saatte sohbetin Gemini hataları (log'un son 4 MB'ı; yalnızca sayılar).
+$geminiStats  = geminiErrorStats(geminiLogTail((string) ini_get('error_log')), time());
+$kindLabels   = [
+    'busy'        => 'Yoğunluk (503 / 429 dakikalık)',
+    'quota'       => 'Kota doldu (429 günlük — faturalandırma)',
+    'timeout'     => 'Zaman aşımı',
+    'unavailable' => 'Google sunucu hatası (5xx)',
+    'network'     => 'Ağ / DNS',
+    'config'      => 'Anahtar / model (4xx — yönetici)',
+    'empty'       => 'Boş cevap (güvenlik filtresi olabilir)',
+];
 $h = static fn($v) => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
 $okBad = static fn(bool $ok, string $bad) => $ok ? '<span class="text-emerald-600">kurulu</span>' : '<span class="text-rose-600">' . $bad . '</span>';
 ?>
@@ -41,6 +52,16 @@ $okBad = static fn(bool $ok, string $bad) => $ok ? '<span class="text-emerald-60
                 <dt class="text-gray-500">Anahtar kaynağı</dt><dd class="font-mono"><?= $h($keySource) ?></dd>
             </dl>
             <p class="mt-2 text-xs text-gray-500">Uygulama önce <code>api/.env</code> içindeki <code>API_GOOGLE_GEMINI</code> satırını okur; yoksa <code>api/admin/.env</code>. "API Entegrasyonları" sayfası <code>api/admin/.env</code>'ye yazar.</p>
+            <h3 class="mt-5 mb-2 text-sm font-semibold text-gray-700">Son 24 saat — sohbet hataları</h3>
+            <dl class="grid grid-cols-1 sm:grid-cols-[220px_1fr] gap-y-2 text-sm">
+                <dt class="text-gray-500">Toplam başarısız istek</dt><dd class="font-mono"><?= (int) $geminiStats['total'] ?></dd>
+                <dt class="text-gray-500">Otomatik tekrarla kurtarılan</dt><dd class="font-mono"><?= (int) $geminiStats['recovered'] ?></dd>
+                <?php foreach ($geminiStats['by_kind'] as $kind => $n): ?>
+                <dt class="text-gray-500"><?= $h($kindLabels[$kind] ?? $kind) ?></dt><dd class="font-mono"><?= (int) $n ?></dd>
+                <?php endforeach; ?>
+                <dt class="text-gray-500">Son hata</dt><dd class="font-mono"><?= $h($geminiStats['last'] ?? '—') ?></dd>
+            </dl>
+            <p class="mt-2 text-xs text-gray-500">Kaynak: PHP hata logundaki <code>[gemini]</code> satırları (son 4 MB). Kullanıcı her başarısız istekte LumaCoin'ini geri alır. "Kota doldu" sürekli artıyorsa Google AI Studio'da faturalandırma (ücretli katman) gerekir.</p>
             <div class="mt-4 flex items-center gap-3">
                 <button type="button" id="geminiTestBtn" class="bg-indigo-600 text-white font-semibold px-5 py-2 rounded-lg hover:bg-indigo-700 transition">Gemini'yi test et</button>
                 <span id="geminiTestBusy" class="text-sm text-gray-500 hidden">Test ediliyor…</span>

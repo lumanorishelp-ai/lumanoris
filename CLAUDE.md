@@ -120,6 +120,7 @@ php api/database/secret_scan_selftest.php    # .env örneklerinde gerçek anahta
 php api/database/vendor_selftest.php         # vendor eksik/eski → anlaşılır 503; lock PHP 8.2 uyumlu (N-56), çevrimdışı
 php api/database/hoppa_diag_selftest.php     # Hoppa bağlantı testi sınıflaması + hata kodu → Türkçe mesaj (N-57), çevrimdışı
 node --test web/src/shared/lib/image-url.test.mjs # tek görsel URL üreticisi + baş harf yer tutucu (N-58)
+node --test web/src/features/chat/reply-errors.test.mjs # sohbet hata türü → kullanıcı metni (N-59)
 ```
 
 Bir değişiklik bunlardan birini bozuyorsa geri al ve nedenini raporla.

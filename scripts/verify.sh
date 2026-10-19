@@ -62,6 +62,7 @@ step hoppa_diag_selftest selftest hoppa_diag_selftest.php
 step readurl_selftest selftest readurl_selftest.php
 step document_selftest selftest document_selftest.php
 step subscription_selftest selftest subscription_selftest.php
+step draft_selftest selftest draft_selftest.php
 step image_url_test node --test "$ROOT/web/src/shared/lib/image-url.test.mjs"
 step reply_errors_test node --test "$ROOT/web/src/features/chat/reply-errors.test.mjs"
 step plan_badge_test node --test "$ROOT/web/src/shared/lib/plan-badge.test.mjs"

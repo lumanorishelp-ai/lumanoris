@@ -42,12 +42,35 @@ class ChatbotController {
         // bırakılıyor, böylece ikinci istek güncel sayıyı görür.
         $limitLock = self::acquireBotLimitLock($db->getConnection(), $authorUserId);
 
+        // N-68 — sihirbazın 1. adımı botu TASLAK kaydeder (is_independent = 1,
+        // is_draft = 1): bilgi bankası hemen kullanılabilir. Taslak bot
+        // limitlerine sayılmaz; kullanıcı başına CHATBOT_DRAFT_LIMIT taslak.
+        // Tür limiti "Yayınla" / "Özel kaydet" anında uygulanır.
+        $isDraft = !empty($data['is_draft']);
+        if ($isDraft) {
+            if (!chatbotHasDraftColumn($db)) {
+                self::releaseBotLimitLock($db->getConnection(), $limitLock);
+                JsonResponse::error('Taslak kaydı şu an kullanılamıyor; botu son adımda oluşturabilirsiniz.', 503, AppConfig::ERR_UNAVAILABLE, ['reason' => 'draft_unavailable']);
+            }
+            if (countDraftBots($db, $authorUserId) >= CHATBOT_DRAFT_LIMIT) {
+                JsonResponse::error(
+                    sprintf('En fazla %d taslak botunuz olabilir. Chatbotlarım\'daki bir taslağı yayınlayın, özel olarak kaydedin ya da silin.', CHATBOT_DRAFT_LIMIT),
+                    422, AppConfig::ERR_LIMIT_REACHED, ['reason' => 'draft_limit']
+                );
+            }
+            $data['is_independent'] = 1;
+            $data['is_draft']       = 1;
+            $isIndependent          = 1;
+        } else {
+            unset($data['is_draft']);
+        }
+
         $limit = $isIndependent ? getIndependentBotLimit($db, $authorUserId) : getPublicBotLimit($db, $authorUserId);
         $planName = getUserPlanName($db, $authorUserId);
         $counts = $repo->countByOwner($authorUserId);
         $used  = $isIndependent ? $counts['independent'] : $counts['public'];
 
-        if ($used >= $limit) {
+        if (!$isDraft && $used >= $limit) {
             JsonResponse::error(
                 $isIndependent
                     // BIZ-002: mesaj eskiden her planda "Ücretsiz" diyordu;
@@ -108,7 +131,9 @@ class ChatbotController {
         // belirleniyor.
         [$content, $rejected] = InputSanitizer::pickAllowed($data, array_merge(
             self::UPDATABLE_CHATBOT_COLUMNS,
-            ['author_user_id', 'owner_user_id', 'is_independent']
+            // N-68: is_draft yalnızca OLUŞTURMADA (yukarıda sunucu belirliyor);
+            // UPDATABLE_CHATBOT_COLUMNS'ta yok — güncelleme taslak durumunu değiştiremez.
+            ['author_user_id', 'owner_user_id', 'is_independent', 'is_draft']
         ));
         if ($rejected !== []) {
             JsonResponse::error(
@@ -138,7 +163,11 @@ class ChatbotController {
         $botCreated = true;
         self::releaseBotLimitLock($db->getConnection(), $limitLock);
 
-        JsonResponse::success(['message' => 'Chatbot başarıyla oluşturuldu!', 'id' => $id]);
+        JsonResponse::success([
+            'message'  => $isDraft ? 'Taslak kaydedildi.' : 'Chatbot başarıyla oluşturuldu!',
+            'id'       => $id,
+            'is_draft' => $isDraft,
+        ]);
     }
 
     /**
@@ -413,6 +442,45 @@ class ChatbotController {
         JsonResponse::success(['message' => 'Chatbot silindi.']);
     }
 
+    /**
+     * N-68 — POST /api/chatbot/finalizedraft.php {id}: taslağı ÖZEL (bağımsız)
+     * bot olarak kaydeder. Bağımsız bot limiti burada uygulanır (taslak
+     * limite sayılmıyordu). Herkese açık yayın için publishchatbot.php
+     * kullanılır (o da taslağı temizler).
+     */
+    public static function finalizeDraft(): void {
+        require_method('POST');
+        require_once __DIR__ . '/../../../functions/chatbot_limits.php';
+
+        $userId = AuthMiddleware::requireAuth();
+        $data   = json_decode($_POST['data'] ?? '', true) ?? null;
+        $id     = InputSanitizer::positiveInt($data['id'] ?? 0);
+        if (!$id) {
+            JsonResponse::error('Eksik veri!', 400, AppConfig::ERR_VALIDATION);
+        }
+
+        $db   = Database::getInstance();
+        $repo = new ChatbotRepository();
+        $bot  = $repo->findById($id);
+        if (!$bot || (int) $bot['author_user_id'] !== $userId) {
+            JsonResponse::error('Bu chatbot üzerinde yetkiniz yok.', 403, AppConfig::ERR_PERMISSION);
+        }
+        if (!chatbotHasDraftColumn($db) || (int) ($bot['is_draft'] ?? 0) !== 1) {
+            JsonResponse::error('Bu bot taslak değil.', 400, AppConfig::ERR_VALIDATION);
+        }
+
+        $limitLock = self::acquireBotLimitLock($db->getConnection(), $userId);
+        $limit     = getIndependentBotLimit($db, $userId);
+        if (!isUnlimitedBotLimit($limit) && $repo->countByOwner($userId)['independent'] >= $limit) {
+            JsonResponse::error(
+                sprintf('%s planınızdaki %d bağımsız chatbot hakkınızı kullandınız. Taslak korunuyor; bir botu silerek ya da paketinizi yükselterek kaydedebilirsiniz.', getUserPlanName($db, $userId), $limit),
+                422, AppConfig::ERR_LIMIT_REACHED
+            );
+        }
+        $repo->finalizeDraftPrivate($id);
+        self::releaseBotLimitLock($db->getConnection(), $limitLock);
+        JsonResponse::success(['message' => 'Bot özel olarak kaydedildi. Yalnızca siz görebilirsiniz.']);
+    }
     public static function publishChatbot(): void {
         require_method('POST');
         require_once __DIR__ . '/../../../functions/chatbot_limits.php';
@@ -469,11 +537,12 @@ class ChatbotController {
             }
         }
 
+        // N-68 — taslak yayınlanınca taslaktan da çıkar (sütun varsa).
         $repo->updateById($id, [
             'is_independent' => 0,
             'ucret_haftalik' => $isPaid ? $weekly : null,
             'ucret_aylik'    => $isPaid ? $monthly : null,
-        ]);
+        ] + (chatbotHasDraftColumn($db) ? ['is_draft' => 0] : []));
         self::releaseBotLimitLock($db->getConnection(), $limitLock);
         JsonResponse::success([
             'message' => $isPaid

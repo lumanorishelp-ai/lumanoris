@@ -28,7 +28,7 @@ Aşağıdakiler **ödeme yoluna** (`upgradePlan`, `finalizeHostedPlanPayment`) y
 
 ## 3. Teknik taslak
 
-### 3.1 Şema: `api/database/migrations/019_plan_cancellation.sql` (yıkıcı değil)
+### 3.1 Şema: `api/database/migrations/020_plan_cancellation.sql` (yıkıcı değil)
 
 ```sql
 ALTER TABLE user_plan_selection
@@ -36,7 +36,7 @@ ALTER TABLE user_plan_selection
   ADD COLUMN cancel_mode VARCHAR(20) NULL DEFAULT NULL AFTER cancel_requested_at;
 ```
 
-- `phpmyadmin/019_plan_cancellation.sql` aynı içerikle hazırlanır.
+- `phpmyadmin/020_plan_cancellation.sql` aynı içerikle hazırlanır.
 - Geri alma: `ALTER TABLE user_plan_selection DROP COLUMN cancel_mode, DROP COLUMN cancel_requested_at;` (ayrı, onaylı ters migration).
 - Yeni bir paket satın alındığında bu iki alan `NULL`'a döner (`planSelectionRow`).
 

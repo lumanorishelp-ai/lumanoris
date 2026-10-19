@@ -65,7 +65,7 @@ Durum:
 | A2 · Türkçe mesajlar | Kod → anlaşılır mesaj | `hoppaUserMessage`: dokümandaki 100–206 ve 34 kodları, "51-Limit Yetersiz" biçimli banka reddi. Kimlik sorunu kullanıcıya "bakımda" diye gider, ayrıntı log'a yazılır | `hoppa_diag_selftest` (40) | — |
 | A2 · ödeme yoluna bağlama | | **Onaylandı ve uygulandı** (2026-10-18): başlatma hatası log'a Hoppa özetini yazıyor; kullanıcı nedene göre mesaj görüyor; dönüşte `&neden=`. Bağlantı testi IP reddini artık "anahtarı karşılaştır" diye değil, "IP'yi Hoppa'da tanımlayın" diye açıklıyor | `hoppa_selftest` B (+2), `hoppa_diag_selftest` (+4) | B paketiyle |
 | B3 · aynı paketi yeniden alma | Sunucuda engelle; arayüzde "Mevcut paketiniz" + bitiş | **Arayüz:** aktif ücretli paketin düğmesi kapalı, "Mevcut paketiniz" + bitiş tarihi. **Sunucu engeli onay bekliyor** (ödeme yolu): yenileme penceresi ve erken yenilemede günlerin korunmasıyla birlikte. Bugün erken yenileme kalan günleri yakıyor | `subscription_selftest` F; tarayıcı (ücretli/ücretsiz) | Hayır |
-| B3 · Aboneliğim | Paket, başlangıç/bitiş, kalan gün, ödeme geçmişi, Yenile, İptal | Paket sayfasında "Aboneliğim" kartı: paket, tarihler, kalan gün (3 günden az kalınca renk), "otomatik yenilenmez" notu, ödeme geçmişi. Süresi bitmişse "yeniden satın al". **Erken "Yenile" ve "İptal" onay bekliyor** (ödeme yolu + şema 019) | `subscription_selftest` (15); tarayıcı | Hayır |
+| B3 · Aboneliğim | Paket, başlangıç/bitiş, kalan gün, ödeme geçmişi, Yenile, İptal | Paket sayfasında "Aboneliğim" kartı: paket, tarihler, kalan gün (3 günden az kalınca renk), "otomatik yenilenmez" notu, ödeme geçmişi. Süresi bitmişse "yeniden satın al". **Erken "Yenile" ve "İptal" onay bekliyor** (ödeme yolu + şema 020) | `subscription_selftest` (15); tarayıcı | Hayır |
 | B3 · iptal anlamı | İki seçenek, teknik ve yasal | `docs/proposals/abonelik-yonetimi-2026-10-18.md` §4: "süre sonunda biter" (önerilen varsayılan) ve "hemen biter + iade talebi"; Mesafeli Sözleşmeler Yönetmeliği md. 15/1-ğ, h. Müşteri sorusu 3 | — | — |
 | B3 · üst/alt paket | Öner, uygulama | Öneri: üst paket hemen başlar ve kalan günler yanar, ödeme penceresinde açıkça yazar. Alt paket ve Ücretsiz, ücretli paket bitene kadar seçilemez. Müşteri sorusu 4 | — | — |
 | B3 · tek kaynak | Satın alma, görüntüleme, yenileme, iptal, cron | Görüntüleme, paket kartları, PRO etiketi ve admin aynı fonksiyonu kullanıyor (`plans.php getUserSubscription`). Satın alma, yenileme ve iptalin bağlanması onaylı değişiklikle | — | — |
@@ -279,7 +279,7 @@ Adımlar:
    - Ana sayfa → bot pop-up'ı (sayılar, "Ücret", 2026 kutusu yok).
    - Admin → Kullanıcılar → bir kullanıcının "Paket" kutusu (yalnızca görüntüle; atama yapmayın).
 
-**phpMyAdmin SQL / `schema_migrations`:** Faz B'de şema değişikliği **yok**; uygulanacak migration ve kayıt satırı yok. İptal için önerilen `019_plan_cancellation.sql` onay bekliyor ve pakette yok.
+**phpMyAdmin SQL / `schema_migrations`:** Faz B'de şema değişikliği **yok**; uygulanacak migration ve kayıt satırı yok. İptal için önerilen `020_plan_cancellation.sql` onay bekliyor ve pakette yok.
 
 PR açıklaması (kopyalanabilir):
 

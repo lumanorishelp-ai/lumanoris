@@ -224,8 +224,10 @@ CREATE TABLE `chatbotlar` (
   `yayimlanma_tarih` datetime DEFAULT CURRENT_TIMESTAMP,
   `edit_tarih` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   `is_independent` tinyint(1) NOT NULL DEFAULT '0' COMMENT '1=Bağımsız (pazaryeri dışı, sadece sahibine açık)',
+  `is_draft` tinyint(1) NOT NULL DEFAULT '0' COMMENT '1=taslak (migration 019, N-68)',
   PRIMARY KEY (`id`),
   KEY `author_user_id` (`author_user_id`),
+  KEY `idx_chatbot_author_draft` (`author_user_id`, `is_draft`),
   KEY `owner_user_id` (`owner_user_id`),
   KEY `kategori_id` (`kategori_id`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;

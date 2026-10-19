@@ -27,6 +27,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { toast } from "@/shared/hooks/use-toast";
+import { withoutBot, LISTS_CHANGED_EVENT } from "@/features/lists/list-state.mjs";
 import { EntityAvatar } from "@/shared/ui/entity-image";
 
 function formatCompactNumber(n) {
@@ -216,7 +217,17 @@ function AddToListModalEmpty({ isOpen, onClose, onCreate, loading }) {
 }
 
 function ListDetailModal({ isOpen, onClose, list, onRemoveBot }) {
+  // N-65 — pencere içi onay: "Bu botu listeden çıkar?" (bot silinmez).
+  const [confirmBotId, setConfirmBotId] = useState(null);
+  const [removingId, setRemovingId] = useState(null);
   if (!isOpen || !list) return null;
+
+  const confirmRemove = async (bot) => {
+    setRemovingId(bot.id);
+    const ok = await onRemoveBot(list.id, bot);
+    setRemovingId(null);
+    if (ok) setConfirmBotId(null);
+  };
 
   return (
     <ModalPortal onClose={onClose}>
@@ -277,18 +288,39 @@ function ListDetailModal({ isOpen, onClose, list, onRemoveBot }) {
                     </div>
                   </div>
   
-                  <div className="flex items-center gap-2 shrink-0">
-                    <span className="text-caption text-violet-400 font-mono bg-violet-500/10 border border-violet-500/20 px-2 py-0.5 rounded-md hidden sm:inline-block">
-                      {bot.toplam_chats || bot.dialogues || 0} diyalog
-                    </span>
-                    <button
-                      onClick={() => onRemoveBot && onRemoveBot(list.id, bot.id)}
-                      className="p-1.5 rounded-lg text-zinc-400 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
-                      title="Listeden Çıkar"
-                    >
-                      <Trash2 className="w-6 h-6" />
-                    </button>
-                  </div>
+                  {String(confirmBotId) === String(bot.id) ? (
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-xs text-zinc-300">Bu botu listeden çıkar?</span>
+                      <button
+                        onClick={() => confirmRemove(bot)}
+                        disabled={removingId !== null}
+                        className="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-rose-500 disabled:opacity-60"
+                      >
+                        {String(removingId) === String(bot.id) ? "Çıkarılıyor…" : "Listeden çıkar"}
+                      </button>
+                      <button
+                        onClick={() => setConfirmBotId(null)}
+                        disabled={removingId !== null}
+                        className="rounded-lg bg-zinc-800 px-3 py-1.5 text-xs font-semibold text-zinc-200 hover:bg-zinc-700"
+                      >
+                        Vazgeç
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-caption text-violet-400 font-mono bg-violet-500/10 border border-violet-500/20 px-2 py-0.5 rounded-md hidden sm:inline-block">
+                        {bot.toplam_chats || bot.dialogues || 0} diyalog
+                      </span>
+                      <button
+                        onClick={() => setConfirmBotId(bot.id)}
+                        className="p-1.5 rounded-lg text-zinc-400 hover:text-rose-400 hover:bg-rose-500/10 transition-colors"
+                        title="Listeden çıkar (bot silinmez)"
+                        aria-label={`${bot.isim || "Botu"} listeden çıkar`}
+                      >
+                        <Trash2 className="w-6 h-6" />
+                      </button>
+                    </div>
+                  )}
                 </div>
               ))
             )}
@@ -513,8 +545,38 @@ export default function List() {
       return;
     }
     fetchUserLists(userId);
+    // N-65 — başka bir görünümde (bot pop-up'ı, sohbet sayfası → "Listeye
+    // Ekle") liste değişince bu sayfa da güncellensin.
+    const onChanged = () => fetchUserLists(userId);
+    window.addEventListener(LISTS_CHANGED_EVENT, onChanged);
+    return () => window.removeEventListener(LISTS_CHANGED_EVENT, onChanged);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);
+
+  // N-65 — çöp kutusu: botu YALNIZCA bu listeden çıkarır (bot silinmez).
+  // Eskiden ListDetailModal onRemoveBot verilmeden çiziliyordu; düğme
+  // hiçbir şey yapmıyordu (müşteri görseli 08).
+  const handleRemoveBot = async (listId, bot) => {
+    try {
+      const res = await fetch("/api/social/deletebotfromlist.php", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ data: JSON.stringify({ chatbot_id: bot.id, list_id: listId }) }),
+        credentials: "include",
+      });
+      const result = await res.json().catch(() => null);
+      if (!res.ok || !result?.success) {
+        throw new Error(result?.message || `Sunucu hatası (HTTP ${res.status}).`);
+      }
+      setListData((prev) => prev.map((l) => (l.id === listId ? withoutBot(l, bot.id) : l)));
+      setInspectList((prev) => (prev && prev.id === listId ? withoutBot(prev, bot.id) : prev));
+      toast({ title: "Listeden çıkarıldı", description: `${bot.isim || "Bot"} bu listeden çıkarıldı; bot silinmedi.` });
+      return true;
+    } catch (err) {
+      toast({ variant: "destructive", title: "Listeden çıkarılamadı", description: err.message });
+      return false;
+    }
+  };
 
   const handleCreateList = async (listDataPayload) => {
     const listName =
@@ -773,6 +835,7 @@ export default function List() {
         isOpen={!!inspectList}
         onClose={() => setInspectList(null)}
         list={inspectList}
+        onRemoveBot={handleRemoveBot}
       />
     </div>
   );

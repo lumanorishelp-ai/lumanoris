@@ -125,6 +125,7 @@ php api/database/subscription_selftest.php   # Aboneliğim + paket kaynağı/adm
 node --test web/src/shared/lib/image-url.test.mjs # tek görsel URL üreticisi + baş harf yer tutucu (N-58)
 node --test web/src/features/chat/reply-errors.test.mjs # sohbet hata türü → kullanıcı metni (N-59)
 node --test web/src/shared/lib/plan-badge.test.mjs # PRO etiketi: fiyat temelli bayrak + bitiş anı (N-64)
+node --test web/src/features/lists/list-state.test.mjs # listeden bot çıkarma: sayaçlar, sayfalar arası olay (N-65)
 ```
 
 Bir değişiklik bunlardan birini bozuyorsa geri al ve nedenini raporla.

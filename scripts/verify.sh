@@ -65,6 +65,7 @@ step subscription_selftest selftest subscription_selftest.php
 step image_url_test node --test "$ROOT/web/src/shared/lib/image-url.test.mjs"
 step reply_errors_test node --test "$ROOT/web/src/features/chat/reply-errors.test.mjs"
 step plan_badge_test node --test "$ROOT/web/src/shared/lib/plan-badge.test.mjs"
+step list_state_test node --test "$ROOT/web/src/features/lists/list-state.test.mjs"
 
 if [ ${#failed[@]} -eq 0 ]; then
   echo "DOĞRULAMA: GEÇTİ"

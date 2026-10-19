@@ -11,6 +11,7 @@ import { useRouter } from "next/navigation";
 import { requireLogin } from "@/shared/lib/auth-guard";
 import { resolveCategory } from "@/shared/lib/categories";
 import { EntityAvatar, EntityCover } from "@/shared/ui/entity-image";
+import { statsFromDetail, priceLabel } from "@/entities/chatbot/lib/bot-stats.mjs";
 import {
   Sparkles,
   MessageSquare,
@@ -19,7 +20,6 @@ import {
   ArrowUpRight,
   ChevronRight,
   X,
-  Zap,
   PackageSearch,
   ArrowUp,
   Mic,
@@ -192,7 +192,28 @@ function ListBotCard({ bot, onOpenDetails }) {
 }
 
 function BotDetailModal2026({ bot, onClose }) {
+  // N-66 — sayılar pop-up açılırken tek kaynaktan (getchatbot.php →
+  // getDetail, sohbet sayfasıyla aynı). Liste anlık görüntüsü eskiyordu.
+  const [stats, setStats] = useState(null);
+  useEffect(() => {
+    if (!bot?.id) return;
+    let alive = true;
+    setStats(null);
+    fetch(`/api/chatbot/getchatbot.php?id=${encodeURIComponent(bot.id)}`, { credentials: "include" })
+      .then((r) => r.json())
+      .then((d) => {
+        if (alive) setStats(d?.success ? statsFromDetail(d.chatbot) : { dialogues: bot.dialogues, likes: bot.likes, followers: bot.followers || 0 });
+      })
+      .catch(() => {
+        if (alive) setStats({ dialogues: bot.dialogues, likes: bot.likes, followers: bot.followers || 0 });
+      });
+    return () => {
+      alive = false;
+    };
+  }, [bot?.id, bot?.dialogues, bot?.likes, bot?.followers]);
+
   if (!bot) return null;
+  const stat = (v) => (stats ? formatCompactNumber(v) : "—");
 
   const handleStartChat = () => {
     try {
@@ -265,7 +286,7 @@ function BotDetailModal2026({ bot, onClose }) {
                   Toplam Diyalog
                 </div>
                 <div className="text-lg font-bold font-mono text-white mt-1">
-                  {formatCompactNumber(bot.dialogues)}
+                  {stat(stats?.dialogues)}
                 </div>
               </div>
               <div className="rounded-2xl border border-white/5 bg-zinc-900/60 p-3 text-center">
@@ -273,7 +294,7 @@ function BotDetailModal2026({ bot, onClose }) {
                   Beğeni
                 </div>
                 <div className="text-lg font-bold font-mono text-white mt-1">
-                  {formatCompactNumber(bot.likes)}
+                  {stat(stats?.likes)}
                 </div>
               </div>
               <div className="rounded-2xl border border-white/5 bg-zinc-900/60 p-3 text-center">
@@ -281,32 +302,26 @@ function BotDetailModal2026({ bot, onClose }) {
                   Takipçi
                 </div>
                 <div className="text-lg font-bold font-mono text-white mt-1">
-                  {formatCompactNumber(bot.followers || 0)}
+                  {stat(stats?.followers)}
                 </div>
               </div>
+              {/* N-66 — "Haftalık Ücret: Ücretsiz" çelişkili okunuyordu; kartla
+                  aynı biçim: "Ücretsiz" ya da "₺X /hafta". */}
               <div className="rounded-2xl border border-white/5 bg-zinc-900/60 p-3 text-center">
                 <div className="text-caption text-zinc-400 font-bold uppercase tracking-wider">
-                  Haftalık Ücret
+                  Ücret
                 </div>
                 <div className="text-lg font-bold font-mono text-emerald-400 mt-1">
-                  {bot.weeklyPrice > 0 ? `₺${bot.weeklyPrice}` : "Ücretsiz"}
+                  {priceLabel(bot.weeklyPrice)}
                 </div>
               </div>
             </div>
 
-            {/* Model Capabilities */}
-            <div className="rounded-2xl border border-violet-500/20 bg-violet-500/5 p-4 flex items-start gap-3">
-              <Zap className="h-5 w-5 text-violet-400 shrink-0 mt-0.5" />
-              <div>
-                <h5 className="text-xs font-bold text-violet-200">
-                  2026 Model Desteği Aktif
-                </h5>
-                <p className="mt-0.5 text-xs text-violet-300/80 leading-relaxed">
-                  Bu asistan en son nesil yapay zeka API’leri ve anlık arama
-                  entegrasyonları ile donatılmıştır.
-                </p>
-              </div>
-            </div>
+            {/* N-66 — "2026 Model Desteği Aktif · en son nesil yapay zeka
+                API'leri ve anlık arama entegrasyonları" kutusu kaldırıldı:
+                botlarda internette anlık arama yok (gerçek dışı iddia, N-44
+                ile aynı sınıf). Yerine doğru bir ifade müşteri kararı:
+                docs/musteri/sorular-2026-10-18.md madde 7. */}
 
             {/* Action Call-to-action */}
             <div className="flex items-center justify-end gap-3 pt-2">

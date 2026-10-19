@@ -126,6 +126,7 @@ node --test web/src/shared/lib/image-url.test.mjs # tek görsel URL üreticisi +
 node --test web/src/features/chat/reply-errors.test.mjs # sohbet hata türü → kullanıcı metni (N-59)
 node --test web/src/shared/lib/plan-badge.test.mjs # PRO etiketi: fiyat temelli bayrak + bitiş anı (N-64)
 node --test web/src/features/lists/list-state.test.mjs # listeden bot çıkarma: sayaçlar, sayfalar arası olay (N-65)
+node --test web/src/entities/chatbot/lib/bot-stats.test.mjs # bot pop-up sayıları tek kaynaktan, fiyat biçimi (N-66)
 ```
 
 Bir değişiklik bunlardan birini bozuyorsa geri al ve nedenini raporla.

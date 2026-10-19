@@ -4,6 +4,7 @@ import { ModalPortal } from "@/shared/ui/modal-portal";
 import React, { useEffect, useState, useMemo, useRef, useContext } from "react";
 import { UserContext } from "@/shared/contexts/UserContext";
 import { toast } from "@/shared/hooks/use-toast";
+import { EntityAvatar } from "@/shared/ui/entity-image";
 
 import {
   Search,
@@ -24,20 +25,6 @@ import {
   Filter,
 } from "lucide-react";
 
-// Avatar solution function (Flexible fallback without Next image dependency)
-function resolveAvatarSrc(src) {
-  if (!src || src === "default" || src === "0") {
-    return "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=150&auto=format&fit=crop&q=80";
-  }
-  if (
-    src.startsWith("http://") ||
-    src.startsWith("https://") ||
-    src.startsWith("/")
-  ) {
-    return src;
-  }
-  return `/uploads/avatars/${src}`;
-}
 
 // Turkish Date Formatter
 function formatDateToTurkish(dateString) {
@@ -529,14 +516,10 @@ export function History() {
                           {/* Avatar Container */}
                           <div className="relative shrink-0">
                             <div className="h-12 w-12 overflow-hidden rounded-xl border border-white/10 bg-zinc-800 shadow-md">
-                              <img
-                                src={resolveAvatarSrc(item.profil_fotografi)}
-                                alt={item.conversation_name || "Bot Avatar"}
-                                className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-105"
-                                onError={(e) => {
-                                  e.currentTarget.src =
-                                    "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=150&auto=format&fit=crop&q=80";
-                                }}
+                              <EntityAvatar
+                                src={item.profil_fotografi}
+                                name={item.conversation_name}
+                                className="h-full w-full text-sm transition-transform duration-300 group-hover:scale-105"
                               />
                             </div>
                             <div className="absolute -bottom-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-zinc-900 border border-white/10 text-violet-400">

@@ -1,0 +1,85 @@
+diff --git a/api/src/Presentation/Controllers/WalletController.php b/api/src/Presentation/Controllers/WalletController.php
+index 21206fa..12de989 100644
+--- a/api/src/Presentation/Controllers/WalletController.php
++++ b/api/src/Presentation/Controllers/WalletController.php
+@@ -685,10 +685,18 @@ class WalletController {
+         ], 'order_id = ?', [$orderId]);
+ 
+         if (!$res['success']) {
+-            error_log(sprintf('[upgradePlan] Hoppa ödeme başlatılamadı order=%s code=%s', $orderId, (string) ($res['error_code'] ?? '')));
++            // N-57 — log satırı Hoppa'nın gerçek yanıtını taşımıyordu (yalnızca
++            // kod), kullanıcı her nedende aynı genel mesajı görüyordu. `raw`
++            // HoppaGateway::redact() sonrası: anahtar ve kişisel alan yok.
++            require_once __DIR__ . '/../../../functions/hoppa_diagnostics.php';
++            $raw  = (array) ($res['raw'] ?? []);
++            $code = (string) ($res['error_code'] ?? '');
++            error_log(sprintf('[upgradePlan] Hoppa ödeme başlatılamadı order=%s mode=%s code=%s %s',
++                $orderId, $gateway->isTest() ? 'test' : 'live', $code, hoppaLogSummary($raw)));
+             return [
+                 'success' => false,
+-                'message' => 'Ödeme başlatılamadı. Lütfen biraz sonra tekrar deneyin.',
++                'message' => hoppaUserMessage($code, (string) ($raw['STATUS'] ?? ''),
++                    (string) (($raw['RETURN_MESSAGE_TR'] ?? '') ?: ($raw['RETURN_MESSAGE'] ?? ''))),
+                 'http'    => 502,
+                 'code'    => AppConfig::ERR_PAYMENT,
+             ];
+@@ -854,6 +862,12 @@ class WalletController {
+         }
+ 
+         $result = self::finalizeHostedPlanPayment($db, $gateway, $orderId);
++        if ($result['state'] === 'failed') {
++            // N-57 — nedeni izinli kısa kodla taşı (serbest metin değil).
++            require_once __DIR__ . '/../../../functions/hoppa_diagnostics.php';
++            error_log(sprintf('[hoppaReturn] ödeme başarısız order=%s neden=%s', $orderId, $result['message'] ?: '-'));
++            $back('failed&neden=' . hoppaFailureReason((string) $result['message']));
++        }
+         $back(match ($result['state']) {
+             'paid'                => 'paid',
+             'failed', 'not_found' => 'failed',
+diff --git a/web/src/app/dashboard/upgrade/page.jsx b/web/src/app/dashboard/upgrade/page.jsx
+index 66e4dc6..c5203b2 100644
+--- a/web/src/app/dashboard/upgrade/page.jsx
++++ b/web/src/app/dashboard/upgrade/page.jsx
+@@ -23,6 +23,14 @@ import PlanPaymentModal from "@/features/payment/PlanPaymentModal";
+  */
+ const initialPlanData = [];
+ 
++// api/functions/hoppa_diagnostics.php → hoppaFailureReason() ile ELLE senkron.
++const PAYMENT_FAIL_REASONS = {
++  limit: "Kartınız reddedildi: limit yetersiz",
++  kart: "Kartınız bankanız tarafından reddedildi",
++  "3d": "3D Secure doğrulaması tamamlanamadı",
++  guvenlik: "İşlem güvenlik nedeniyle reddedildi",
++};
++
+ export default function PricingPlans() {
+   const { userId } = useContext(UserContext);
+   const [selectedPlan, setSelectedPlan] = useState(null);
+@@ -42,13 +50,18 @@ export default function PricingPlans() {
+   // ile yönlendiriyor (WalletController::hoppaReturn). Sonuç sunucuda
+   // ProcessQuery ile kesinleşmiş durumda; burada yalnızca gösteriliyor.
+   const [paymentResult, setPaymentResult] = useState(null);
++  // N-57 — başarısız dönüşte sunucunun eklediği izinli neden kodu
++  // (hoppaFailureReason). Bilinmeyen değer genel metne düşer.
++  const [failReason, setFailReason] = useState(null);
+ 
+   useEffect(() => {
+     const params = new URLSearchParams(window.location.search);
+     const result = params.get("odeme");
+     if (["paid", "failed", "pending"].includes(result)) {
+       setPaymentResult(result);
++      setFailReason(params.get("neden"));
+       params.delete("odeme");
++      params.delete("neden");
+       const query = params.toString();
+       window.history.replaceState(null, "", window.location.pathname + (query ? `?${query}` : ""));
+     }
+@@ -248,7 +261,7 @@ export default function PricingPlans() {
+           )}
+           {paymentResult === "failed" && (
+             <StatusBanner variant="error">
+-              Ödeme tamamlanamadı ve paketiniz değişmedi. Dilerseniz tekrar deneyebilirsiniz.
++              {PAYMENT_FAIL_REASONS[failReason] ?? "Ödeme tamamlanamadı"} ve paketiniz değişmedi. Dilerseniz tekrar deneyebilirsiniz.
+             </StatusBanner>
+           )}
+           {paymentResult === "pending" && (

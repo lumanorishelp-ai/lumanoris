@@ -17,6 +17,29 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
     exit;
 }
 
+// N-57 — "Hoppa bağlantı testi": var olmayan bir referansla ProcessQuery.
+// Ödeme başlatmaz, para hareketi yok; seçili HOPPA_MODE'un MERCHANT /
+// MERCHANT_KEY'ini doğrular. Yanıtta anahtar yok (redact + yalnızca
+// durum/kod/mesaj alanları).
+if (($_POST['test'] ?? '') === 'hoppa') {
+    require_once __DIR__ . '/../../functions/hoppa_diagnostics.php';
+    $gateway = new HoppaGateway();
+    $ref     = 'PING-' . strtoupper(bin2hex(random_bytes(6)));
+    $started = microtime(true);
+    $query   = $gateway->isConfigured()
+        ? $gateway->queryPayment($ref)
+        : ['state' => 'unknown', 'raw' => [], 'message' => ''];
+    $result  = hoppaProbeClassify($query) + [
+        'mode'     => $gateway->isTest() ? 'test' : 'live',
+        'base_url' => $gateway->baseUrl(),
+        'ms'       => (int) round((microtime(true) - $started) * 1000),
+    ];
+    error_log(sprintf('[hoppa] admin bağlantı testi mode=%s kind=%s status=%s code=%s message=%s ms=%d',
+        $result['mode'], $result['kind'], $result['status'] ?: '-', $result['code'] ?: '-', $result['message'] ?: '-', $result['ms']));
+    echo json_encode(['success' => true, 'hoppa' => $result], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
 $key   = AppConfig::googleGeminiApiKey();
 $probe = geminiProbe($key);
 

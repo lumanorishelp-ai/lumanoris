@@ -226,10 +226,13 @@ function capacityLabel(used, limit, unlimited) {
 
 const KB_MAX_PDF_MB = 5;
 /* Eğitim metni tavanı — AppConfig::MAX_TRAINING_CHARS ile ELLE senkron.
-   Sunucu bu sınırı aşan kısmı keser, dolunca 413 döner; sohbette metnin
-   tamamı (en fazla bu kadar) olduğu gibi modele verilir — arama/vektör yok. */
+   Sığmayan kaynak eklenmez (N-61: istemci + sunucu 413, sınır ve mevcut
+   uzunlukla). Sohbette 24.000 karakteri aşan metinden yalnızca soruyla
+   ilgili parçalar gider (N-60, sözcük kökü eşleşmesi — vektör arama yok). */
 const KB_MAX_CHARS = 60000;
 const KB_MAX_PDF_BYTES = KB_MAX_PDF_MB * 1024 * 1024;
+/* N-62 — api/src/Shared/Utilities/DocumentText.php ile ELLE senkron. */
+const KB_FILE_EXTENSIONS = ["pdf", "docx", "txt"];
 
 /* Sekmeler tek kaynakta: hem üstteki sekme çubuğu hem alttaki "Devam Et"
    gezinmesi bu diziden besleniyor. Liste JSX'in içinde satır içi duruyordu;
@@ -345,14 +348,17 @@ function ChatbotForm({
 
   // Secilen dosyayi dogrula ve onizlemesini uret. Sunucu tarafi da ayni
   // kontrolleri yapiyor (MIME + 5MB); burasi kullaniciya aninda geri bildirim.
-  // --- Bilgi Bankasi (RAG degil: metin training_prompt'a eklenir, sohbette
-  // tamami modele verilir; bkz. KB_MAX_CHARS) ---------------------------
+  // --- Bilgi Bankasi (metin training_prompt'a eklenir; 24.000 karakteri
+  // asarsa sohbette yalnizca soruyla ilgili parcalar gider — N-60,
+  // chat_context.php chatSelectCorpus; bkz. KB_MAX_CHARS) -------------
   // Backend zaten hazirdi ve hic cagrilmiyordu:
-  //   POST /api/training/readpdf.php            -> PDF metni cikarir
+  //   POST /api/training/readdocument.php       -> PDF / DOCX / TXT metni (N-62)
   //   POST /api/training/readurl.php            -> sayfa metni cikarir (yeni)
   //   POST /api/training/update_training_chunk.php -> training_prompt'a ekler
   const [kbSources, setKbSources] = useState([]);
   const [kbUrl, setKbUrl] = useState("");
+  // N-61 — bot korumalı / JavaScript ile oluşan sayfalar için çıkış yolu.
+  const [kbText, setKbText] = useState("");
   const [kbBusy, setKbBusy] = useState("");
   const [kbError, setKbError] = useState(null);
   const [corpusLength, setCorpusLength] = useState(null);
@@ -392,6 +398,18 @@ function ChatbotForm({
     const payload = header + clean;
     const CHUNK = 8000;
 
+    // N-61 — sığmayan kaynak eskiden sunucuda sessizce kesiliyordu. Önce
+    // burada sınırı ve mevcut uzunluğu söyleyerek reddediyoruz (sunucu da
+    // aynı kontrolü yapıyor).
+    if (corpusLength !== null && corpusLength + payload.length > KB_MAX_CHARS) {
+      const tr = (n) => n.toLocaleString("tr-TR");
+      throw new Error(
+        `Karakter sınırı aşılıyor: bu kaynak ${tr(clean.length)} karakter, bilgi bankasında ` +
+          `${tr(corpusLength)} / ${tr(KB_MAX_CHARS)} karakter var (kalan ${tr(Math.max(0, KB_MAX_CHARS - corpusLength))}). ` +
+          "Daha kısa bir kaynak seçin.",
+      );
+    }
+
     for (let i = 0; i < payload.length; i += CHUNK) {
       const body = new FormData();
       body.append(
@@ -417,19 +435,28 @@ function ChatbotForm({
     await refreshCorpus();
   };
 
-  const handleKbPdf = async (file) => {
+  // N-62 — PDF, DOCX ve TXT. Tür sunucuda dosya imzasından da doğrulanıyor;
+  // buradaki kontrol yalnızca boşuna yükleme yapılmasını önlüyor.
+  const handleKbFile = async (file) => {
     if (!file) return;
     setKbError(null);
-    if (file.type !== "application/pdf") {
-      setKbError("Yalnızca PDF dosyası yükleyebilirsiniz.");
+    const ext = (file.name.split(".").pop() || "").toLowerCase();
+    if (ext === "doc") {
+      setKbError('Eski Word biçimi (.doc) desteklenmiyor. Dosyayı Word\'de "Farklı Kaydet → .docx" ile kaydedip yükleyin.');
+      return;
+    }
+    if (!KB_FILE_EXTENSIONS.includes(ext)) {
+      setKbError(`Bu dosya türü desteklenmiyor${ext ? ` (.${ext})` : ""}. PDF, DOCX veya TXT yükleyin.`);
       return;
     }
     if (file.size > KB_MAX_PDF_BYTES) {
-      setKbError(`PDF çok büyük (maks. ${KB_MAX_PDF_MB} MB).`);
+      setKbError(
+        `Dosya çok büyük: ${(Math.ceil((file.size / 1048576) * 10) / 10).toLocaleString("tr-TR")} MB (en fazla ${KB_MAX_PDF_MB} MB).`,
+      );
       return;
     }
 
-    setKbBusy("PDF okunuyor...");
+    setKbBusy("Belge okunuyor...");
     try {
       const base64Data = await new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -438,10 +465,10 @@ function ChatbotForm({
         reader.readAsDataURL(file);
       });
 
-      const res = await fetch("/api/training/readpdf.php", {
+      const res = await fetch("/api/training/readdocument.php", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ base64Data }),
+        body: JSON.stringify({ base64Data, filename: file.name }),
         credentials: "include",
       });
 
@@ -459,17 +486,17 @@ function ChatbotForm({
       } catch {
         throw new Error(
           res.status === 413
-            ? "PDF, sunucunun kabul ettiği istek boyutunu aşıyor. Daha küçük bir dosya deneyin."
+            ? "Dosya, sunucunun kabul ettiği istek boyutunu aşıyor. Daha küçük bir dosya deneyin."
             : `Sunucu beklenmeyen bir yanıt döndürdü (HTTP ${res.status}). Dosya çok büyük olabilir.`,
         );
       }
       if (!data?.success)
-        throw new Error(data?.message || "PDF ayrıştırılamadı.");
+        throw new Error(data?.message || "Belge okunamadı.");
 
       setKbBusy("Bilgi bankasına ekleniyor...");
-      await appendToCorpus(data.text, file.name, "pdf");
+      await appendToCorpus(data.text, file.name, "file");
     } catch (err) {
-      setKbError(err.message || "PDF eklenemedi.");
+      setKbError(err.message || "Belge eklenemedi.");
     } finally {
       setKbBusy("");
       if (kbFileRef.current) kbFileRef.current.value = "";
@@ -496,6 +523,22 @@ function ChatbotForm({
       setKbUrl("");
     } catch (err) {
       setKbError(err.message || "URL eklenemedi.");
+    } finally {
+      setKbBusy("");
+    }
+  };
+
+  const handleKbText = async () => {
+    const text = kbText.trim();
+    if (!text) return;
+    setKbError(null);
+    setKbBusy("Bilgi bankasına ekleniyor...");
+    try {
+      const firstLine = text.split("\n")[0].slice(0, 60);
+      await appendToCorpus(text, `Metin: ${firstLine}`, "text");
+      setKbText("");
+    } catch (err) {
+      setKbError(err.message || "Metin eklenemedi.");
     } finally {
       setKbBusy("");
     }
@@ -949,11 +992,11 @@ function ChatbotForm({
                   </span>
                 </div>
                 <p className="px-1 text-caption leading-relaxed text-zinc-500">
-                  Eklediğiniz belge ve sayfaların metni botun eğitim metnine
-                  eklenir ve her mesajda olduğu gibi modele verilir; ayrı bir
-                  arama ya da vektör dizini yoktur. En fazla{" "}
-                  {KB_MAX_CHARS.toLocaleString("tr-TR")} karakter saklanır,
-                  fazlası eklenmez.
+                  Eklediğiniz belge, sayfa ve metinler botun eğitim metnine
+                  eklenir. Toplam 24.000 karakteri geçerse her soruda yalnızca
+                  soruyla ilgili bölümler kullanılır. En fazla{" "}
+                  {KB_MAX_CHARS.toLocaleString("tr-TR")} karakter saklanır;
+                  sınırı aşan kaynak eklenmez.
                 </p>
 
                 {/* PDF */}
@@ -967,7 +1010,7 @@ function ChatbotForm({
                     <FileText className="h-5 w-5" />
                   </span>
                   <span className="block text-xs font-semibold text-white">
-                    Doküman veya PDF Yükleyin
+                    Belge yükleyin: PDF, DOCX veya TXT
                   </span>
                   <span className="block text-caption text-zinc-500">
                     Sıkça sorulan sorular, kataloglar veya şirket içi kılavuzlar
@@ -977,9 +1020,9 @@ function ChatbotForm({
                 <input
                   ref={kbFileRef}
                   type="file"
-                  accept="application/pdf"
+                  accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain"
                   className="hidden"
-                  onChange={(e) => handleKbPdf(e.target.files?.[0])}
+                  onChange={(e) => handleKbFile(e.target.files?.[0])}
                 />
 
                 {/* URL */}
@@ -1023,6 +1066,44 @@ function ChatbotForm({
                       )}
                     >
                       URL Ekle
+                    </button>
+                  </div>
+                </div>
+
+                {/* Metin (N-61) */}
+                <div className="rounded-xl border border-white/10 bg-zinc-900 p-4">
+                  <div className="mb-3 flex items-center gap-3">
+                    <FileText className="h-4 w-4 shrink-0 text-emerald-400" />
+                    <div>
+                      <p className="text-xs font-semibold text-white">Metin ekle</p>
+                      <p className="text-caption text-zinc-500">
+                        Okunamayan bir sayfanın metnini ya da kendi notlarınızı yapıştırın
+                      </p>
+                    </div>
+                  </div>
+                  <textarea
+                    rows={4}
+                    value={kbText}
+                    onChange={(e) => setKbText(e.target.value)}
+                    placeholder="Metni buraya yapıştırın…"
+                    className="w-full rounded-xl border border-white/10 bg-zinc-950 p-3 text-xs text-zinc-200 outline-none placeholder:text-zinc-600 focus:border-fuchsia-500/50"
+                  />
+                  <div className="mt-2 flex items-center justify-between">
+                    <span className="font-mono text-caption text-zinc-500">
+                      {kbText.trim().length.toLocaleString("tr-TR")} karakter
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleKbText}
+                      disabled={!kbText.trim() || Boolean(kbBusy)}
+                      className={cn(
+                        "h-8 shrink-0 rounded-lg px-3 text-xs font-semibold transition-all",
+                        kbText.trim() && !kbBusy
+                          ? "bg-gradient-btn text-white hover:brightness-110"
+                          : "cursor-not-allowed bg-white/[0.06] text-zinc-600",
+                      )}
+                    >
+                      Metni Ekle
                     </button>
                   </div>
                 </div>

@@ -4,7 +4,8 @@ import MessageInput from "@/features/chat/MessageInput";
 import ProfileCard from "@/entities/user/ui/ProfileCard";
 import React, { useState, useRef, useEffect, useCallback, useContext } from "react";
 import { UserContext } from "@/shared/contexts/UserContext";
-import { resolveAvatarSrc } from "@/shared/lib/image";
+import { EntityAvatar } from "@/shared/ui/entity-image";
+import { chatFailureText } from "@/features/chat/reply-errors.mjs";
 import { useSearchParams } from "next/navigation";
 
 // Only loaded when the user actually opens one of these modals, instead of
@@ -143,11 +144,6 @@ export default function Chat() {
     const days = Math.floor(hours / 24);
     return `${days} gün önce`;
   }
-
-  const formatImage = (img) => {
-    if (!img) return resolveAvatarSrc(null);
-    return img.startsWith("data:") ? img : `data:image/jpeg;base64,${img}`;
-  };
 
   /* Sunucudaki karsiligi: ChatController::MAX_FILE_BYTES. Ikisi elle senkron
      tutuluyor; buradaki kontrol yalnizca bosuna bir yukleme yapilmasini
@@ -852,11 +848,8 @@ const generateReply = async (userText, filePayloads = [], convId = conversationI
     // Stream finished without throwing but produced no content. If the server
     // told us why (upstream 4xx/5xx), say so instead of the generic wording —
     // a suspended key and a transient outage need different user action.
-    const failureText = upstreamError
-      ? (upstreamError.code === 429
-          ? "Yapay zeka servisi şu anda yoğun. Lütfen biraz sonra tekrar deneyin."
-          : "Yapay zeka servisine şu anda ulaşılamıyor. Sorun sürerse yöneticinize bildirin.")
-      : "Şu anda cevap veremiyorum.";
+    // N-59 — tür (yoğun / kota / zaman aşımı / …) → metin tek yerde.
+    const failureText = chatFailureText(upstreamError);
 
     setMessages((prev) => prev.map((msg) =>
       msg.id === placeholderId
@@ -912,10 +905,10 @@ const handleRetryReply = (retryText) => {
       <div className="flex flex-1 flex-col overflow-y-auto px-4 pb-[150px] pt-5 md:pl-16 md:pr-10">
         {messages.length === 0 ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
-            <img
-              src={formatImage(bot?.profil_fotografi)}
-              alt=""
-              className="h-16 w-16 rounded-full object-cover ring-1 ring-fuchsia-400/20"
+            <EntityAvatar
+              src={bot?.profil_fotografi}
+              name={bot?.isim}
+              className="h-16 w-16 rounded-full text-xl ring-1 ring-fuchsia-400/20"
             />
             <h2 className="font-display text-2xl font-bold text-white md:text-3xl">
               {bot?.isim ? `${bot.isim} ile sohbete başla` : "Sohbete başla"}
@@ -940,10 +933,10 @@ const handleRetryReply = (retryText) => {
                   {msg.type === "received" ? (
                     <>
                       <div className="shrink-0">
-                        <img
-                          src={formatImage(bot?.profil_fotografi)}
-                          alt="avatar"
-                          className="h-[38px] w-[38px] rounded-full object-cover"
+                        <EntityAvatar
+                          src={bot?.profil_fotografi}
+                          name={bot?.isim}
+                          className="h-[38px] w-[38px] rounded-full text-sm"
                         />
                       </div>
                       <div className="flex flex-col">

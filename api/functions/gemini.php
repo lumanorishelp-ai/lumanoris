@@ -170,3 +170,153 @@ function geminiProbe(string $apiKey, int $timeout = 15): array
     }
     return $out;
 }
+
+// ── N-59: hata türü, tek otomatik yeniden deneme, son 24 saat sayımı ─────────
+//
+// Canlıda (BLOCKERS B4, 2026-10-18) Google art arda 503 UNAVAILABLE ("high
+// demand") ve 429 RESOURCE_EXHAUSTED döndürdü; kullanıcı "Yapay zeka servisine
+// şu anda ulaşılamıyor" gördü, "Tekrar Dene" çoğu zaman düzeltti. Geçici
+// hatalarda (yoğunluk, 5xx, bağlantı) akış başlamadan tek bir kısa bekleme +
+// yeniden deneme yapılıyor. Günlük kota (429 + PerDay / uzun retryDelay)
+// yeniden denenmiyor: aynı gün içinde düzelmez, boşa istek olur.
+
+/** İlk deneme bu süreden uzun sürdüyse yeniden deneme bütçesi yok (sn). */
+const GEMINI_RETRY_MAX_ELAPSED = 10.0;
+/** Google'ın önerdiği bekleme bundan uzunsa yeniden deneme yapılmaz (sn). */
+const GEMINI_RETRY_MAX_DELAY = 3.0;
+/** İkinci deneme en az bu kadar süre alabilmeli, yoksa denenmez (sn). */
+const GEMINI_RETRY_MIN_TIMEOUT = 10;
+
+/** Google RetryInfo.retryDelay ("2s", "1.5s") → saniye; yoksa null. */
+function geminiRetryDelaySeconds(string $body): ?float
+{
+    if (preg_match('/"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)s"/', $body, $m)) {
+        return (float) $m[1];
+    }
+    return null;
+}
+
+/**
+ * @return 'busy'|'quota'|'unavailable'|'timeout'|'network'|'config'|'empty'
+ */
+function geminiFailureKind(int $http, string $curlError, string $body): string
+{
+    if ($curlError !== '') {
+        return preg_match('/timed out|timeout/i', $curlError) ? 'timeout' : 'network';
+    }
+    if ($http === 429) {
+        $delay = geminiRetryDelaySeconds($body);
+        $daily = (bool) preg_match('/PerDay/i', $body);
+        return ($daily || ($delay !== null && $delay > GEMINI_RETRY_MAX_DELAY)) ? 'quota' : 'busy';
+    }
+    if ($http === 503) return 'busy';
+    if ($http === 408) return 'timeout';
+    if ($http >= 500) return 'unavailable';
+    if ($http >= 400) return 'config';
+    if ($http >= 200 && $http < 300) return 'empty';
+    return 'network';
+}
+
+/**
+ * Akış başlamadan gelen hatada tek yeniden deneme planı.
+ *
+ * @param float $elapsed  ilk denemenin sürdüğü saniye
+ * @param bool  $streamed istemciye cevap metni gönderilmeye başlandı mı
+ * @return array{retry: bool, delay_ms: int, timeout: int, kind: string}
+ */
+function geminiRetryPlan(int $http, string $curlError, string $body, float $elapsed, bool $streamed): array
+{
+    $kind = geminiFailureKind($http, $curlError, $body);
+    $no   = ['retry' => false, 'delay_ms' => 0, 'timeout' => 0, 'kind' => $kind];
+    if ($streamed || $elapsed > GEMINI_RETRY_MAX_ELAPSED) {
+        return $no;
+    }
+    $delay = match ($kind) {
+        'busy'        => geminiRetryDelaySeconds($body) ?? 1.0,
+        'unavailable' => 1.0,
+        'network'     => 0.5,
+        default       => null,
+    };
+    if ($delay === null || $delay > GEMINI_RETRY_MAX_DELAY) {
+        return $no;
+    }
+    $delay   = max(0.5, $delay);
+    // İkinci deneme PHP süre sınırından en az 5 sn önce bitmeli (kaydet/iade için).
+    $timeout = (int) min(GEMINI_TIMEOUT, floor(CHAT_PHP_TIME_LIMIT - 5 - $elapsed - $delay));
+    if ($timeout < GEMINI_RETRY_MIN_TIMEOUT) {
+        return $no;
+    }
+    return ['retry' => true, 'delay_ms' => (int) round($delay * 1000), 'timeout' => $timeout, 'kind' => $kind];
+}
+
+/**
+ * Log satırlarından son 24 saatin Gemini hata sayımı (admin Sistem Durumu).
+ * Yalnızca sayı ve zaman döner; mesaj metni (anahtar yansıtabilir) dönmez.
+ *
+ * @param iterable<string> $lines
+ * @return array{total: int, by_kind: array<string,int>, recovered: int, last: ?string}
+ */
+function geminiErrorStats(iterable $lines, int $now): array
+{
+    $out = ['total' => 0, 'by_kind' => [], 'recovered' => 0, 'last' => null];
+    $lastTs = 0;
+    foreach ($lines as $line) {
+        if (!str_contains($line, '[gemini]') || !preg_match('/^\[([^\]]+)\]/', $line, $m)) {
+            continue;
+        }
+        $ts = strtotime($m[1]);
+        if ($ts === false || $ts > $now || $now - $ts > 86400) {
+            continue;
+        }
+        if (str_contains($line, 'tekrar deneme başarılı')) {
+            $out['recovered']++;
+            continue;
+        }
+        if (!str_contains($line, 'hata:')) {
+            continue;
+        }
+        if (preg_match('/tür=(\w+)/u', $line, $k)) {
+            $kind = $k[1];
+        } elseif (str_contains($line, 'boş cevap')) {
+            $kind = 'empty';
+        } elseif (str_contains($line, 'http=429') && str_contains($line, 'exceeded your current quota')) {
+            // N-59 öncesi satırlarda tür yok; bu Google metni kota/faturalandırma
+            // sorunudur (canlıda 75 sn beklemeden sonra da sürdü — BLOCKERS B4).
+            $kind = 'quota';
+        } else {
+            $http = preg_match('/http=(\d+)/', $line, $h) ? (int) $h[1] : 0;
+            $curl = preg_match('/curl=(.+?)(?: status=| reason=| message=|$)/', $line, $c) ? $c[1] : '';
+            $kind = geminiFailureKind($http, $curl, '');
+        }
+        $out['total']++;
+        $out['by_kind'][$kind] = ($out['by_kind'][$kind] ?? 0) + 1;
+        if ($ts >= $lastTs) {
+            $lastTs      = $ts;
+            $out['last'] = $m[1];
+        }
+    }
+    return $out;
+}
+
+/** Log dosyasının son $maxBytes baytı, satır satır (dosya büyük olabilir). */
+function geminiLogTail(string $file, int $maxBytes = 4194304): array
+{
+    if (!is_file($file) || !is_readable($file)) {
+        return [];
+    }
+    $size = (int) filesize($file);
+    $fh   = fopen($file, 'rb');
+    if ($fh === false) {
+        return [];
+    }
+    if ($size > $maxBytes) {
+        fseek($fh, -$maxBytes, SEEK_END);
+        fgets($fh); // yarım satırı at
+    }
+    $lines = [];
+    while (($l = fgets($fh)) !== false) {
+        $lines[] = rtrim($l, "\r\n");
+    }
+    fclose($fh);
+    return $lines;
+}

@@ -375,6 +375,17 @@ class WalletController {
      * Kullanıcının mevcut planı da işaretleniyor: `is_current`. Eskiden
      * "Mevcut Paket" etiketi Ücretsiz plana sabitlenmişti.
      */
+    /**
+     * GET /api/wallet/getmysubscription.php — N-63 "Aboneliğim" (salt okunur):
+     * etkin paket, durum (free/active/expired), başlangıç, bitiş, kalan gün,
+     * paket ödeme geçmişi. Tek kaynak: functions/plans.php → getUserSubscription.
+     */
+    public static function getMySubscription(): void {
+        $userId = AuthMiddleware::requireAuth();
+        require_once __DIR__ . '/../../../functions/plans.php';
+        JsonResponse::success(['subscription' => getUserSubscription(Database::getInstance(), $userId)]);
+    }
+
     public static function getPricing(): void {
         $userId = AuthMiddleware::optionalAuth();
         $db     = Database::getInstance();
@@ -383,12 +394,15 @@ class WalletController {
         $catalog = getPlanCatalog($db);
 
         if ($catalog !== []) {
-            $currentPlan = $userId > 0 ? getUserPlanName($db, $userId) : 'Ücretsiz';
+            // N-63 — mevcut paket ve bitişi "Aboneliğim" ile aynı kaynaktan.
+            $sub         = $userId > 0 ? getUserSubscription($db, $userId) : null;
+            $currentPlan = $sub['plan'] ?? 'Ücretsiz';
             $badges      = ['Altın' => 'Önerilen'];
             $output      = [];
 
             foreach ($catalog as $p) {
-                $isCurrent = ($p['name_tr'] === $currentPlan);
+                $isCurrent  = ($p['name_tr'] === $currentPlan);
+                $activePaid = $isCurrent && ($sub['is_paid'] ?? false);
                 $price     = (float) ($p['monthly_price'] ?? 0);
 
                 $output[] = [
@@ -401,10 +415,13 @@ class WalletController {
                         : null,
                     'description'   => $p['description_tr'] ?? '',
                     'features'      => $p['features'] ?? [],
-                    'buttonText'    => $isCurrent ? 'Mevcut Paket' : 'Bu Paketi Seç',
+                    'buttonText'    => $activePaid ? 'Mevcut paketiniz' : ($isCurrent ? 'Mevcut Paket' : 'Bu Paketi Seç'),
                     'buttonType'    => ($p['name_tr'] === 'Altın') ? 'primary' : 'default',
                     'badge'         => $badges[$p['name_tr']] ?? null,
                     'is_current'    => $isCurrent,
+                    // N-63 — aktif ücretli paketin bitişi (süresizse null).
+                    'current_expires_at' => $activePaid ? ($sub['expires_at'] ?? null) : null,
+                    'is_active_paid'     => $activePaid,
                     // Pazarlama metni yerine gerçek kotalar — istemci
                     // isterse "3 bot / 50 mesaj" diye gösterebilir.
                     // Migration 012: bot limitleri NULL = sınırsız. `(int)`
@@ -685,10 +702,18 @@ class WalletController {
         ], 'order_id = ?', [$orderId]);
 
         if (!$res['success']) {
-            error_log(sprintf('[upgradePlan] Hoppa ödeme başlatılamadı order=%s code=%s', $orderId, (string) ($res['error_code'] ?? '')));
+            // N-57 — log satırı Hoppa'nın gerçek yanıtını taşımıyordu (yalnızca
+            // kod), kullanıcı her nedende aynı genel mesajı görüyordu. `raw`
+            // HoppaGateway::redact() sonrası: anahtar ve kişisel alan yok.
+            require_once __DIR__ . '/../../../functions/hoppa_diagnostics.php';
+            $raw  = (array) ($res['raw'] ?? []);
+            $code = (string) ($res['error_code'] ?? '');
+            error_log(sprintf('[upgradePlan] Hoppa ödeme başlatılamadı order=%s mode=%s code=%s %s',
+                $orderId, $gateway->isTest() ? 'test' : 'live', $code, hoppaLogSummary($raw)));
             return [
                 'success' => false,
-                'message' => 'Ödeme başlatılamadı. Lütfen biraz sonra tekrar deneyin.',
+                'message' => hoppaUserMessage($code, (string) ($raw['STATUS'] ?? ''),
+                    (string) (($raw['RETURN_MESSAGE_TR'] ?? '') ?: ($raw['RETURN_MESSAGE'] ?? ''))),
                 'http'    => 502,
                 'code'    => AppConfig::ERR_PAYMENT,
             ];
@@ -854,6 +879,12 @@ class WalletController {
         }
 
         $result = self::finalizeHostedPlanPayment($db, $gateway, $orderId);
+        if ($result['state'] === 'failed') {
+            // N-57 — nedeni izinli kısa kodla taşı (serbest metin değil).
+            require_once __DIR__ . '/../../../functions/hoppa_diagnostics.php';
+            error_log(sprintf('[hoppaReturn] ödeme başarısız order=%s neden=%s', $orderId, $result['message'] ?: '-'));
+            $back('failed&neden=' . hoppaFailureReason((string) $result['message']));
+        }
         $back(match ($result['state']) {
             'paid'                => 'paid',
             'failed', 'not_found' => 'failed',

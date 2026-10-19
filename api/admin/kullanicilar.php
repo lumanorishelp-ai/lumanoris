@@ -41,6 +41,27 @@ $kullanicilar = $database->selectMulti("* FROM kullanicilar");
                       <input type="text" id="eposta" name="eposta" class="w-full border border-gray-300 rounded-lg px-4 py-2.5 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition shadow-sm" required>
                     </div>
 
+                    <!-- N-64 — paket ve kaynağı; admin ataması denetim kaydına yazılır -->
+                    <div id="paketBox" class="hidden border border-amber-200 bg-amber-50 p-4 rounded-lg">
+                        <h4 class="font-bold text-md text-amber-800 mb-3">Paket</h4>
+                        <dl class="grid grid-cols-[120px_1fr] gap-y-1 text-sm">
+                            <dt class="text-gray-500">Etkin paket</dt><dd id="pkPlan" class="font-semibold"></dd>
+                            <dt class="text-gray-500">Bitiş</dt><dd id="pkExpires" class="font-mono"></dd>
+                            <dt class="text-gray-500">Kaynak</dt><dd id="pkSource"></dd>
+                        </dl>
+                        <div class="mt-3 flex flex-wrap items-end gap-2">
+                            <select id="pkSelect" class="border border-gray-300 rounded-lg px-3 py-2 bg-white text-sm"></select>
+                            <select id="pkDuration" class="border border-gray-300 rounded-lg px-3 py-2 bg-white text-sm">
+                                <option value="30">30 gün</option>
+                                <option value="date">Tarihe kadar</option>
+                                <option value="unlimited">Süresiz</option>
+                            </select>
+                            <input type="date" id="pkDate" class="hidden border border-gray-300 rounded-lg px-3 py-2 bg-white text-sm">
+                            <button type="button" id="pkAssign" class="bg-amber-600 text-white font-semibold px-4 py-2 rounded-lg hover:bg-amber-700 text-sm">Paketi ata</button>
+                        </div>
+                        <p class="mt-2 text-xs text-gray-500">Ödeme alınmaz; atama "Admin ataması" olarak kayda geçer (kim, ne zaman, eski/yeni paket).</p>
+                    </div>
+
                     <div class="flex justify-between gap-2 pt-4">
                         <!--
                           G-05 — "Yeni Ekle" KALDIRILDI; bu ekran artık
@@ -132,6 +153,7 @@ $kullanicilar = $database->selectMulti("* FROM kullanicilar");
 
                         saveOrUpdateBtn.textContent = "Güncelle";
                         deleteBtn.classList.remove("hidden");
+                        loadPaket(id);
                     } else {
                         new Notification({
                             text: result.message,
@@ -148,6 +170,49 @@ $kullanicilar = $database->selectMulti("* FROM kullanicilar");
                     });
                 }
             });
+        });
+
+        // N-64 — Paket kutusu: GET ile durum/kaynak, POST ile atama (denetim kaydı).
+        const paketBox = document.getElementById("paketBox");
+        const pkSelect = document.getElementById("pkSelect");
+        const pkDuration = document.getElementById("pkDuration");
+        const pkDate = document.getElementById("pkDate");
+        const fmt = (s) => s ? new Date(s.replace(" ", "T")).toLocaleString("tr-TR") : "Süresiz";
+        async function loadPaket(id) {
+            try {
+                const res = await fetch("/admin/ajax/kullanicipaket.php?user_id=" + encodeURIComponent(id));
+                const r = await res.json();
+                if (!r.success) throw new Error(r.message || "Paket bilgisi alınamadı");
+                document.getElementById("pkPlan").textContent = r.plan + (r.state === "active" && r.days_left !== null ? ` (${r.days_left} gün kaldı)` : "");
+                document.getElementById("pkExpires").textContent = r.is_paid ? fmt(r.expires) : "—";
+                document.getElementById("pkSource").textContent = r.source.label;
+                pkSelect.innerHTML = "";
+                r.catalog.forEach((name) => {
+                    const o = document.createElement("option");
+                    o.value = o.textContent = name;
+                    if (name === r.plan) o.selected = true;
+                    pkSelect.appendChild(o);
+                });
+                paketBox.dataset.userId = id;
+                paketBox.classList.remove("hidden");
+            } catch (err) {
+                new Notification({ text: "Paket: " + err.message, type: "error", position: "top-right" });
+            }
+        }
+        pkDuration.addEventListener("change", () => pkDate.classList.toggle("hidden", pkDuration.value !== "date"));
+        document.getElementById("pkAssign").addEventListener("click", async () => {
+            const id = paketBox.dataset.userId;
+            const label = pkDuration.value === "unlimited" ? "süresiz" : pkDuration.value === "date" ? pkDate.value + " tarihine kadar" : "30 gün";
+            if (!id || !confirm(`Bu kullanıcıya "${pkSelect.value}" paketi ${label} atanacak. Ödeme alınmaz. Onaylıyor musunuz?`)) return;
+            const fd = new FormData();
+            fd.append("user_id", id);
+            fd.append("plan_name", pkSelect.value);
+            fd.append("duration", pkDuration.value);
+            fd.append("date", pkDate.value);
+            const res = await fetch("/admin/ajax/kullanicipaket.php", { method: "POST", body: fd });
+            const r = await res.json().catch(() => ({ success: false, message: "Geçersiz yanıt" }));
+            new Notification({ text: r.message, type: r.success ? "success" : "error", position: "top-right" });
+            if (r.success) loadPaket(id);
         });
 
         // G-05: "Yeni Ekle" akışı kaldırıldı (bkz. formdaki açıklama).

@@ -1,5 +1,4 @@
 'use client';
-import Image from 'next/image';
 import { useEffect, useRef, useState } from 'react';
 import ShareModal from "@/features/sharing/ShareModal";
 import ReportModal from "@/features/moderation/ReportModal";
@@ -7,7 +6,7 @@ import AddToListModal from "@/features/lists/AddToListModal";
 import CommentModal from "@/features/comments/CommentModal";
 import { useRouter } from 'next/navigation';
 import { Dialog, DialogContent, DialogTitle } from '@/shared/ui/dialog';
-import { resolveAvatarSrc } from '@/shared/lib/image';
+import { EntityAvatar } from '@/shared/ui/entity-image';
 import { cn } from '@/lib/utils';
 import { ThumbsUp, ThumbsDown } from 'lucide-react';
 import { toast } from '@/shared/hooks/use-toast';
@@ -316,7 +315,7 @@ export default function DialogueModal({ isOpen, onClose, selectedHistory }) {
                             className="flex cursor-pointer items-center gap-3 rounded-xl p-2 text-left transition-colors hover:bg-white/5"
                         >
                             <div className="h-12 w-12 shrink-0 overflow-hidden rounded-full">
-                                <Image src={resolveAvatarSrc(selectedHistory.chatbot_profil_fotografi)} alt="avatar" width={48} height={48} className="h-full w-full object-cover" />
+                                <EntityAvatar src={selectedHistory.chatbot_profil_fotografi} name={selectedHistory.chatbot_isim} className="h-full w-full text-base" />
                             </div>
                             <div>
                                 <p className="font-display text-body font-semibold text-white">{selectedHistory.chatbot_isim}</p>

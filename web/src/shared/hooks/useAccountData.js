@@ -1,5 +1,6 @@
 "use client";
 import { FREE_PLAN_NAME } from "@/shared/lib/pricing";
+import { planExpiryMs } from "@/shared/lib/plan-badge.mjs";
 import { useState, useEffect, useCallback } from "react";
 
 const DEFAULT_ACCOUNT = {
@@ -12,6 +13,9 @@ const DEFAULT_ACCOUNT = {
   balance: 0,
   transactions: [],
   planName: FREE_PLAN_NAME,
+  // N-64 — PRO etiketi: sunucunun fiyat temelli bayrağı + bitiş anı.
+  planIsPaid: false,
+  planExpiresAtMs: null,
   dailyCoinsRemaining: 0,
   dailyCoinsTotal: 0,
 };
@@ -38,6 +42,8 @@ export function useAccountData(userId) {
             purchasedCount: result.purchasedCount ?? 0,
             sharedDialogueCount: result.sharedDialogueCount ?? 0,
             planName: result.planName || FREE_PLAN_NAME,
+            planIsPaid: result.planIsPaid === true,
+            planExpiresAtMs: planExpiryMs(result.planSecondsLeft),
             dailyCoinsRemaining: result.dailyCoinsRemaining ?? 0,
             dailyCoinsTotal: result.dailyCoinsTotal ?? 0,
           }));

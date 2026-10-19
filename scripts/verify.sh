@@ -56,6 +56,17 @@ step hoppa_selftest selftest hoppa_selftest.php
 step migrate_selftest selftest migrate_selftest.php
 step gemini_selftest selftest gemini_selftest.php
 step plan_collation_selftest selftest plan_collation_selftest.php
+step secret_scan_selftest selftest secret_scan_selftest.php
+step vendor_selftest selftest vendor_selftest.php
+step hoppa_diag_selftest selftest hoppa_diag_selftest.php
+step readurl_selftest selftest readurl_selftest.php
+step document_selftest selftest document_selftest.php
+step subscription_selftest selftest subscription_selftest.php
+step image_url_test node --test "$ROOT/web/src/shared/lib/image-url.test.mjs"
+step reply_errors_test node --test "$ROOT/web/src/features/chat/reply-errors.test.mjs"
+step plan_badge_test node --test "$ROOT/web/src/shared/lib/plan-badge.test.mjs"
+step list_state_test node --test "$ROOT/web/src/features/lists/list-state.test.mjs"
+step bot_stats_test node --test "$ROOT/web/src/entities/chatbot/lib/bot-stats.test.mjs"
 
 if [ ${#failed[@]} -eq 0 ]; then
   echo "DOĞRULAMA: GEÇTİ"

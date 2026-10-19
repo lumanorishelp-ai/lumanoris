@@ -5,6 +5,7 @@ import { Bot, MessageSquare, Heart, Trash2, Rocket, ExternalLink, Lock } from "l
 import { toast } from "@/shared/hooks/use-toast";
 import CategoryBadge from "@/shared/ui/category-badge";
 import { normalizeImagePath } from "@/shared/lib/image";
+import { EntityAvatar, EntityCover } from "@/shared/ui/entity-image";
 
 // Only loaded once a card's publish/price/delete modal is actually opened —
 // these are bundled once per page (not per card) but are rarely needed at all.
@@ -86,10 +87,9 @@ export default function ChatbotCard({
         className="relative block aspect-[16/10] w-full overflow-hidden bg-gradient-to-br from-violet-950/40 to-slate-900/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-violet-400"
       >
         {coverSrc ? (
-          <img
+          <EntityCover
             src={coverSrc}
-            alt={title}
-            className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-105"
+            className="h-full w-full transition-transform duration-500 group-hover:scale-105"
           />
         ) : (
           <div className="flex h-full w-full items-center justify-center bg-violet-600/10 text-violet-400">
@@ -109,11 +109,7 @@ export default function ChatbotCard({
         >
           <div className="h-10 w-10 overflow-hidden rounded-xl border border-white/10 bg-white/5 flex items-center justify-center shrink-0">
             {avatarSrc ? (
-              <img
-                src={avatarSrc}
-                alt=""
-                className="h-full w-full object-cover"
-              />
+              <EntityAvatar src={avatarSrc} name={title} className="h-full w-full text-sm" />
             ) : (
               <Bot className="h-5 w-5 text-violet-400" />
             )}

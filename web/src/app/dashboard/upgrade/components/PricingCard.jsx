@@ -63,8 +63,10 @@ export default function PricingCard({
 
       <div>
         {/* Action Button */}
+        {/* N-63 — aktif ücretli paket yeniden satın alınamaz (düğme kapalı,
+            bitiş gösterilir). Sunucu tarafı engeli onay bekliyor (ödeme yolu). */}
         <PricingButton
-          disabled={plan.title === "Ücretsiz" || isUpgrading}
+          disabled={plan.title === "Ücretsiz" || plan.is_active_paid || isUpgrading}
           onClick={onChoose}
           variant={
             plan.buttonType === "primary"
@@ -76,10 +78,17 @@ export default function PricingCard({
           className="w-full rounded-xl py-3.5 text-xs font-semibold tracking-wide mb-8 group/btn"
         >
           <span>{isUpgrading ? "İşleniyor..." : plan.buttonText}</span>
-          {plan.title !== "Ücretsiz" && !isUpgrading && (
+          {plan.title !== "Ücretsiz" && !plan.is_active_paid && !isUpgrading && (
             <ArrowRight className="w-4 h-4 ml-2 group-hover/btn:translate-x-1 transition-transform" />
           )}
         </PricingButton>
+        {plan.is_active_paid && (
+          <p className="-mt-6 mb-8 text-center text-caption text-zinc-400">
+            {plan.current_expires_at
+              ? `Bitiş: ${new Date(plan.current_expires_at.replace(" ", "T")).toLocaleDateString("tr-TR")}`
+              : "Süresiz"}
+          </p>
+        )}
 
         {/* Features List */}
         <div className="space-y-4">

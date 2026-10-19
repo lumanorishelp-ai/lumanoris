@@ -10,6 +10,8 @@ import { cn } from "@/lib/utils";
 import { useRouter } from "next/navigation";
 import { requireLogin } from "@/shared/lib/auth-guard";
 import { resolveCategory } from "@/shared/lib/categories";
+import { EntityAvatar, EntityCover } from "@/shared/ui/entity-image";
+import { statsFromDetail, priceLabel } from "@/entities/chatbot/lib/bot-stats.mjs";
 import {
   Sparkles,
   MessageSquare,
@@ -18,7 +20,6 @@ import {
   ArrowUpRight,
   ChevronRight,
   X,
-  Zap,
   PackageSearch,
   ArrowUp,
   Mic,
@@ -53,33 +54,6 @@ function formatTime(dateString) {
   return `${diffDays} gün önce`;
 }
 
-function resolveCoverSrc(src) {
-  if (!src || src === "default" || src === "0") {
-    return "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800&auto=format&fit=crop&q=80";
-  }
-  if (
-    src.startsWith("http://") ||
-    src.startsWith("https://") ||
-    src.startsWith("/")
-  ) {
-    return src;
-  }
-  return `/uploads/covers/${src}`;
-}
-
-function resolveAvatarSrc(src) {
-  if (!src || src === "default" || src === "0") {
-    return "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80";
-  }
-  if (
-    src.startsWith("http://") ||
-    src.startsWith("https://") ||
-    src.startsWith("/")
-  ) {
-    return src;
-  }
-  return `/uploads/avatars/${src}`;
-}
 
 import BentoBotCard from "@/entities/chatbot/ui/BotCard.bento";
 
@@ -104,14 +78,9 @@ function CompactBotCard({ bot, onOpenDetails }) {
     >
       <div className="flex items-center gap-3 min-w-0">
         <div className="h-12 w-12 shrink-0 overflow-hidden rounded-xl border border-white/10 bg-zinc-950">
-          <img
+          <EntityCover
             src={bot.image}
-            alt={bot.title}
-            className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-110"
-            onError={(e) => {
-              e.currentTarget.src =
-                "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800&auto=format&fit=crop&q=80";
-            }}
+            className="h-full w-full transition-transform duration-300 group-hover:scale-110"
           />
         </div>
         <div className="min-w-0">
@@ -160,14 +129,9 @@ function ListBotCard({ bot, onOpenDetails }) {
     >
       <div className="flex items-center gap-4 w-full sm:w-auto flex-1 min-w-0">
         <div className="h-16 w-16 sm:h-20 sm:w-20 shrink-0 overflow-hidden rounded-xl border border-white/10 bg-zinc-950">
-          <img
+          <EntityCover
             src={bot.image}
-            alt={bot.title}
-            className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-110"
-            onError={(e) => {
-              e.currentTarget.src =
-                "https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=800&auto=format&fit=crop&q=80";
-            }}
+            className="h-full w-full transition-transform duration-500 group-hover:scale-110"
           />
         </div>
 
@@ -228,7 +192,28 @@ function ListBotCard({ bot, onOpenDetails }) {
 }
 
 function BotDetailModal2026({ bot, onClose }) {
+  // N-66 — sayılar pop-up açılırken tek kaynaktan (getchatbot.php →
+  // getDetail, sohbet sayfasıyla aynı). Liste anlık görüntüsü eskiyordu.
+  const [stats, setStats] = useState(null);
+  useEffect(() => {
+    if (!bot?.id) return;
+    let alive = true;
+    setStats(null);
+    fetch(`/api/chatbot/getchatbot.php?id=${encodeURIComponent(bot.id)}`, { credentials: "include" })
+      .then((r) => r.json())
+      .then((d) => {
+        if (alive) setStats(d?.success ? statsFromDetail(d.chatbot) : { dialogues: bot.dialogues, likes: bot.likes, followers: bot.followers || 0 });
+      })
+      .catch(() => {
+        if (alive) setStats({ dialogues: bot.dialogues, likes: bot.likes, followers: bot.followers || 0 });
+      });
+    return () => {
+      alive = false;
+    };
+  }, [bot?.id, bot?.dialogues, bot?.likes, bot?.followers]);
+
   if (!bot) return null;
+  const stat = (v) => (stats ? formatCompactNumber(v) : "—");
 
   const handleStartChat = () => {
     try {
@@ -261,19 +246,15 @@ function BotDetailModal2026({ bot, onClose }) {
 
           {/* Modal Hero Banner */}
           <div className="relative -mx-6 -mt-6 sm:-mx-8 sm:-mt-8 mb-6 h-48 overflow-hidden bg-zinc-900">
-            <img
-              src={bot.image}
-              alt={bot.title}
-              className="h-full w-full object-cover"
-            />
+            <EntityCover src={bot.image} className="h-full w-full" />
             <div className="absolute inset-0 bg-gradient-to-t from-zinc-950 via-zinc-950/40 to-transparent" />
 
             <div className="absolute bottom-4 left-6 sm:left-8 right-6 flex items-end justify-between">
               <div className="flex items-center gap-3.5">
-                <img
-                  src={resolveAvatarSrc(bot.avatar)}
-                  alt={bot.author}
-                  className="h-12 w-12 rounded-2xl border-2 border-white/20 object-cover shadow-xl"
+                <EntityAvatar
+                  src={bot.avatar}
+                  name={bot.title}
+                  className="h-12 w-12 rounded-2xl border-2 border-white/20 text-base shadow-xl"
                 />
                 <div>
                   <h2 className="text-xl font-extrabold text-white sm:text-2xl">
@@ -305,7 +286,7 @@ function BotDetailModal2026({ bot, onClose }) {
                   Toplam Diyalog
                 </div>
                 <div className="text-lg font-bold font-mono text-white mt-1">
-                  {formatCompactNumber(bot.dialogues)}
+                  {stat(stats?.dialogues)}
                 </div>
               </div>
               <div className="rounded-2xl border border-white/5 bg-zinc-900/60 p-3 text-center">
@@ -313,7 +294,7 @@ function BotDetailModal2026({ bot, onClose }) {
                   Beğeni
                 </div>
                 <div className="text-lg font-bold font-mono text-white mt-1">
-                  {formatCompactNumber(bot.likes)}
+                  {stat(stats?.likes)}
                 </div>
               </div>
               <div className="rounded-2xl border border-white/5 bg-zinc-900/60 p-3 text-center">
@@ -321,32 +302,26 @@ function BotDetailModal2026({ bot, onClose }) {
                   Takipçi
                 </div>
                 <div className="text-lg font-bold font-mono text-white mt-1">
-                  {formatCompactNumber(bot.followers || 0)}
+                  {stat(stats?.followers)}
                 </div>
               </div>
+              {/* N-66 — "Haftalık Ücret: Ücretsiz" çelişkili okunuyordu; kartla
+                  aynı biçim: "Ücretsiz" ya da "₺X /hafta". */}
               <div className="rounded-2xl border border-white/5 bg-zinc-900/60 p-3 text-center">
                 <div className="text-caption text-zinc-400 font-bold uppercase tracking-wider">
-                  Haftalık Ücret
+                  Ücret
                 </div>
                 <div className="text-lg font-bold font-mono text-emerald-400 mt-1">
-                  {bot.weeklyPrice > 0 ? `₺${bot.weeklyPrice}` : "Ücretsiz"}
+                  {priceLabel(bot.weeklyPrice)}
                 </div>
               </div>
             </div>
 
-            {/* Model Capabilities */}
-            <div className="rounded-2xl border border-violet-500/20 bg-violet-500/5 p-4 flex items-start gap-3">
-              <Zap className="h-5 w-5 text-violet-400 shrink-0 mt-0.5" />
-              <div>
-                <h5 className="text-xs font-bold text-violet-200">
-                  2026 Model Desteği Aktif
-                </h5>
-                <p className="mt-0.5 text-xs text-violet-300/80 leading-relaxed">
-                  Bu asistan en son nesil yapay zeka API’leri ve anlık arama
-                  entegrasyonları ile donatılmıştır.
-                </p>
-              </div>
-            </div>
+            {/* N-66 — "2026 Model Desteği Aktif · en son nesil yapay zeka
+                API'leri ve anlık arama entegrasyonları" kutusu kaldırıldı:
+                botlarda internette anlık arama yok (gerçek dışı iddia, N-44
+                ile aynı sınıf). Yerine doğru bir ifade müşteri kararı:
+                docs/musteri/sorular-2026-10-18.md madde 7. */}
 
             {/* Action Call-to-action */}
             <div className="flex items-center justify-end gap-3 pt-2">
@@ -641,10 +616,10 @@ function NewChatHero({
                     </>
                   ) : bot ? (
                     <>
-                      <img
-                        src={resolveAvatarSrc(bot.avatar)}
-                        alt=""
-                        className="h-6 w-6 rounded-full object-cover"
+                      <EntityAvatar
+                        src={bot.avatar}
+                        name={bot.title}
+                        className="h-6 w-6 rounded-full text-[10px]"
                       />
                       <span className="max-w-[150px] truncate text-xs font-medium text-zinc-200 sm:max-w-[260px]">
                         {bot.title}
@@ -686,10 +661,10 @@ function NewChatHero({
                         {pickerBots.map((item) => {
                           const isCurrent = Number(bot?.id) === Number(item.id);
                           const avatar = (
-                            <img
-                              src={resolveAvatarSrc(item.avatar)}
-                              alt=""
-                              className="h-7 w-7 shrink-0 rounded-full object-cover"
+                            <EntityAvatar
+                              src={item.avatar}
+                              name={item.title}
+                              className="h-7 w-7 rounded-full text-[11px]"
                             />
                           );
 
@@ -901,7 +876,7 @@ export function MainDashboard2026() {
               time: formatTime(bot.yayimlanma_tarih),
               publishedAt: bot.yayimlanma_tarih,
               avatar: bot.profil_fotografi,
-              image: resolveCoverSrc(bot.kapak_fotografi),
+              image: bot.kapak_fotografi,
               kategori_id: bot.kategori_id,
               followers: bot.toplam_follows,
               likes: bot.toplam_likes,

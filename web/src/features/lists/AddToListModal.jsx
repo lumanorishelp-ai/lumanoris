@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from '@/shared/ui/dialog';
 import { Plus, ListPlus, Check, ListX } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { announceListsChanged } from '@/features/lists/list-state.mjs';
 
 export default function AddToListModal({ userId, botId, isOpen, onClose, header = "Listeye Ekle", onCreateList }) {
     const [newListName, setNewListName] = useState('');
@@ -109,6 +110,9 @@ export default function AddToListModal({ userId, botId, isOpen, onClose, header 
         ])).filter(Boolean);
 
         setLoading(false);
+        // N-65 — açık Liste sayfası (ve diğer görünümler) yenilensin; kısmi
+        // hatada da, çünkü bazı değişiklikler uygulanmış olabilir.
+        if (added.length + removed.length > 0) announceListsChanged();
         if (errors.length > 0) {
             setErrorMsg(`Bazı değişiklikler kaydedilemedi: ${errors[0]}`);
             await fetchListsStatus();

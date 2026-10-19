@@ -5,7 +5,7 @@ import QuitModal from "@/features/auth/QuitModal";
 import { formatCurrency } from "@/shared/lib/format";
 import { toast } from "@/shared/hooks/use-toast";
 import { logoutAndRedirect } from "@/shared/lib/logout";
-import { isPaidPlan } from "@/shared/lib/pricing";
+import { showProBadge } from "@/shared/lib/plan-badge.mjs";
 import useMarketplaceRegistration from "@/shared/hooks/useMarketplaceRegistration";
 import {
   Search,
@@ -161,7 +161,7 @@ function ProfilePopup({ user, profileImage, onLogout, onClose, onNavigate, showB
             {/* E-05: sabit "Ücretsiz Plan" karşılaştırması, sunucunun kanonik
                 adı "Ücretsiz" olduğu için ücretsiz kullanıcıya da Pro rozeti
                 gösteriyordu. */}
-            {isPaidPlan(user.planName) && (
+            {showProBadge(user) && (
               <span className="px-1.5 py-0.2 text-caption font-bold uppercase tracking-wider text-fuchsia-400  rounded">
                 Pro
               </span>

@@ -5,6 +5,7 @@ import { UserContext } from "@/shared/contexts/UserContext";
 import PricingPageHeader from "./components/PricingPageHeader";
 import PricingLoadingState from "./components/PricingLoadingState";
 import PricingCard from "./components/PricingCard";
+import SubscriptionCard from "./components/SubscriptionCard";
 import EnterpriseContactFooter from "./components/EnterpriseContactFooter";
 import StatusBanner from "./components/StatusBanner";
 import PlanPaymentModal from "@/features/payment/PlanPaymentModal";
@@ -22,6 +23,14 @@ import PlanPaymentModal from "@/features/payment/PlanPaymentModal";
  * gelmiyorsa hiç fiyat gösterilmiyor.
  */
 const initialPlanData = [];
+
+// api/functions/hoppa_diagnostics.php → hoppaFailureReason() ile ELLE senkron.
+const PAYMENT_FAIL_REASONS = {
+  limit: "Kartınız reddedildi: limit yetersiz",
+  kart: "Kartınız bankanız tarafından reddedildi",
+  "3d": "3D Secure doğrulaması tamamlanamadı",
+  guvenlik: "İşlem güvenlik nedeniyle reddedildi",
+};
 
 export default function PricingPlans() {
   const { userId } = useContext(UserContext);
@@ -42,13 +51,18 @@ export default function PricingPlans() {
   // ile yönlendiriyor (WalletController::hoppaReturn). Sonuç sunucuda
   // ProcessQuery ile kesinleşmiş durumda; burada yalnızca gösteriliyor.
   const [paymentResult, setPaymentResult] = useState(null);
+  // N-57 — başarısız dönüşte sunucunun eklediği izinli neden kodu
+  // (hoppaFailureReason). Bilinmeyen değer genel metne düşer.
+  const [failReason, setFailReason] = useState(null);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const result = params.get("odeme");
     if (["paid", "failed", "pending"].includes(result)) {
       setPaymentResult(result);
+      setFailReason(params.get("neden"));
       params.delete("odeme");
+      params.delete("neden");
       const query = params.toString();
       window.history.replaceState(null, "", window.location.pathname + (query ? `?${query}` : ""));
     }
@@ -79,6 +93,20 @@ export default function PricingPlans() {
 
     fetchPlans();
   }, []);
+
+  // N-63 — "Aboneliğim" (paket kartlarıyla aynı kaynak: getUserSubscription).
+  const [subscription, setSubscription] = useState(null);
+  useEffect(() => {
+    if (!userId) return;
+    fetch("/api/wallet/getmysubscription.php", { credentials: "include" })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d?.success) setSubscription(d.subscription);
+      })
+      .catch(() => {
+        /* kart gösterilmez; paket kartları yine çalışır */
+      });
+  }, [userId, paymentResult]);
 
   /**
    * "₺1.299,00" → 1299. Katalog fiyatı sunucudan biçimlendirilmiş metin
@@ -248,7 +276,7 @@ export default function PricingPlans() {
           )}
           {paymentResult === "failed" && (
             <StatusBanner variant="error">
-              Ödeme tamamlanamadı ve paketiniz değişmedi. Dilerseniz tekrar deneyebilirsiniz.
+              {PAYMENT_FAIL_REASONS[failReason] ?? "Ödeme tamamlanamadı"} ve paketiniz değişmedi. Dilerseniz tekrar deneyebilirsiniz.
             </StatusBanner>
           )}
           {paymentResult === "pending" && (
@@ -261,6 +289,14 @@ export default function PricingPlans() {
               Tebrikler! "{upgradedPlan}" paketi başarıyla etkinleştirildi.
             </StatusBanner>
           )}
+
+          <SubscriptionCard
+            sub={subscription}
+            onRebuy={(name) => {
+              const i = plansData.findIndex((p) => p.title === name);
+              if (i >= 0) handleChoosePlan(plansData[i], i);
+            }}
+          />
 
           {/* Pricing Cards Grid */}
           <div className="grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-4 pt-4">

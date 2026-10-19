@@ -5,7 +5,8 @@ import { toast } from "@/shared/hooks/use-toast";
 import { logoutAndRedirect } from "@/shared/lib/logout";
 import logo from "@/images/header-logo-icon.png";
 import { Lumacoin } from "@/shared/ui/lumacoin";
-import { FREE_PLAN_NAME, isPaidPlan } from "@/shared/lib/pricing";
+import { FREE_PLAN_NAME } from "@/shared/lib/pricing";
+import { showProBadge } from "@/shared/lib/plan-badge.mjs";
 import useMarketplaceRegistration from "@/shared/hooks/useMarketplaceRegistration";
 import {
   Plus,
@@ -282,7 +283,7 @@ export function Sidebar({
                     {/* E-05: "Ücretsiz Plan" ile sabit karşılaştırma yapılıyordu;
                         sunucunun kanonik adı "Ücretsiz" olduğu için ücretsiz
                         kullanıcıya Pro rozeti gösteriliyordu. */}
-                    {isPaidPlan(account.planName) && (
+                    {showProBadge(account) && (
                       <span className="px-1.5 py-0.2 text-caption font-bold uppercase tracking-wider text-fuchsia-400  rounded">
                         Pro
                       </span>

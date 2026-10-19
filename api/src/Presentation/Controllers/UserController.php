@@ -18,6 +18,7 @@ class UserController {
         require_once __DIR__ . '/../../../functions/plans.php';
         $userPlan = getUserPlan($db, $userId);
         $planName = (string) $userPlan['name_tr'];
+        $sub      = getUserSubscription($db, $userId);
 
         require_once __DIR__ . '/../../../functions/coin_engine.php';
         $coinBalance = getOrInitCoinBalance($db, $userId);
@@ -48,6 +49,10 @@ class UserController {
             'purchasedCount'      => $purchasedCount,
             'sharedDialogueCount' => $sharedDialogueCount,
             'planName'            => $planName,
+            // N-64 — PRO etiketi ada göre değil, fiyat temelli bayrağa ve
+            // kalan süreye göre (functions/plans.php → getUserSubscription).
+            'planIsPaid'          => $sub['is_paid'],
+            'planSecondsLeft'     => $sub['seconds_left'],
             'dailyCoinsRemaining' => (int) $coinBalance['coins_remaining'],
             // BIZ-002: toplam da plandan gelmeli. Sabit bırakıldığında Elmas
             // planındaki kullanıcı "1000/10" gibi anlamsız bir oran görüyordu.

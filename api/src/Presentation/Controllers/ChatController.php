@@ -428,20 +428,49 @@ class ChatController {
 
         $message = mb_substr((string) $message, 0, self::MAX_MESSAGE_CHARS);
         $style   = mb_substr((string) ($bot['style_prompt'] ?? ''), 0, self::MAX_STYLE_CHARS);
-        $corpus  = (string) ($bot['training_prompt'] ?? '');
+
+        // N-50 geçmişi; N-60 — takip sorusu ("peki örnek?") için önceki
+        // kullanıcı mesajı bilgi bankası seçiminde de kullanılıyor.
+        $historyRows = chatHistoryRows($db, $userId, $chatbotId, InputSanitizer::positiveInt($data['conversation_id'] ?? 0));
+        $prevUser    = '';
+        foreach (array_reverse($historyRows) as $r) {
+            if (($r['sent_by'] ?? '') === 'user' && trim((string) $r['message']) !== trim($message)) {
+                $prevUser = (string) $r['message'];
+                break;
+            }
+        }
+        // N-60 — bilgi bankası CHAT_CORPUS_BUDGET'ı aşıyorsa yalnızca soruyla
+        // ilgili parçalar (+ giriş) gidiyor; her mesajda 60.000 karakterin
+        // tamamı gönderilmiyor.
+        $corpus = chatSelectCorpus((string) ($bot['training_prompt'] ?? ''), $message, $prevUser);
 
         // Talimat sunucuda kuruluyor — istemci artık bu metne dokunamıyor.
-        // N-50 — SOHBET satırı: geçmiş artık modele gidiyor; selamlama ve
-        // tanıtım her cevapta tekrarlanmasın. Müşterinin stil metnine
-        // dokunulmuyor; bu bizim şablonumuz.
+        // N-54 — canlıda cevaplar "Merhaba! Ben LUMANORIS AI, … resmi yapay
+        // zeka asistanıyım" ile başlıyordu (N-50'deki "yalnızca ilk mesajda
+        // tanıt" kuralı hem ilk cevaba izin veriyordu hem de persona metninden
+        // önce geldiği için zayıf kalıyordu). Botu karşılama mesajı zaten
+        // tanıtıyor; cevaplar hiç tanıtım/selamlama ile başlamaz. Kurallar
+        // persona/stil metninin SONUNDA: model sondaki talimata daha çok uyuyor.
+        // Müşterinin stil metnine dokunulmuyor; bu bizim şablonumuz.
         $systemInstruction = "GÖREV: Aşağıdaki [BİLGİ KAYNAĞI] kısmına %100 sadık kalarak cevap ver.\n"
-            . "Bilgi kaynağı dışına çıkma. [KİŞİLİK/STİL] direktiflerini uygula.\n"
-            . "SOHBET: Önceki mesajlar sana sırasıyla verilir; onları dikkate al ve gerektiğinde önceki "
-            . "mesajlara atıf yap. Selamlamayı ve kendini tanıtmayı yalnızca sohbetin ilk mesajında yap; "
-            . "sonraki cevaplarda tekrarlama.\n\n"
+            . "Bilgi kaynağı dışına çıkma. [KİŞİLİK/STİL] direktiflerini uygula.\n\n"
             . "[BİLGİ KAYNAĞI]:\n"
             . ($corpus !== '' ? $corpus : 'Bilgi kaynağı yok, kullanıcının sana sorduğu sorulara cevap ver.')
-            . "\n\n[KİŞİLİK/STİL]:\n" . $style;
+            . "\n\n[KİŞİLİK/STİL]:\n" . $style
+            . "\n\n[SOHBET KURALLARI] (yukarıdaki her şeyden önceliklidir):\n"
+            . "- Kullanıcı seni zaten tanıyor; karşılama mesajı gösterildi. Kendini tanıtma: adını, kim olduğunu "
+            . "ya da rolünü yalnızca kullanıcı açıkça sorarsa söyle.\n"
+            . "- Cevaba selamlamayla başlama (\"Merhaba\", \"Merhabalar\", \"Ben …\" gibi); doğrudan konuya gir. "
+            . "Kullanıcı yalnızca selam verir ya da hâl hatır sorarsa kısa ve doğal bir karşılık ver.\n"
+            . "- Önceki mesajlar sana sırasıyla verilir; onları dikkate al ve gerektiğinde önceki mesajlara atıf yap.\n"
+            // N-60 — müşteri görseli 06: Aristoteles botu Aristoteles'e tenasüh
+            // (ruh göçü) inancı atfetti; Aristoteles bunu reddeder. Model
+            // ayarı (temperature) 3.8 Flash'ta kullanımdan kaldırıldı; doğruluk
+            // talimatla yönetiliyor.
+            . "- Emin olmadığın bilgiyi uydurma. Bilgi kaynağında olmayan bir olgudan emin değilsen bunu açıkça söyle; "
+            . "tarih, sayı, alıntı ve isim uydurma.\n"
+            . "- Gerçek bir kişiyi canlandırıyorsan, o kişiye ait olmayan görüşleri ona atfetme; başka düşünürlerin "
+            . "görüşlerini kendi görüşün gibi sunma.";
 
         // AI-005 — mesaj hakkı SUNUCUDA tüketiliyor. İstemci bu adımı
         // atlayamıyor; ayrıca upstream hata verirse aşağıda iade ediliyor.
@@ -519,7 +548,7 @@ class ChatController {
         // geçmiş hiç gönderilmiyordu (her cevap sıfırdan, tekrar tekrar
         // tanıtım). Dosyalar son kullanıcı turunda, metinden sonra.
         $contents = chatBuildContents(
-            chatHistoryRows($db, $userId, $chatbotId, InputSanitizer::positiveInt($data['conversation_id'] ?? 0)),
+            $historyRows,
             (string) ($bot['sohbet_basi_mesaj'] ?? ''),
             $message,
             $fileParts
@@ -566,45 +595,78 @@ class ChatController {
         $httpStatus = 0;
         $errorBody  = '';
         $streamBody = '';
+        $curlError  = '';
+        $streamed   = false; // istemciye cevap karesi gönderilmeye başlandı mı
 
-        $ch = curl_init($url);
-        curl_setopt_array($ch, [
-            CURLOPT_POST           => true,
-            CURLOPT_HTTPHEADER     => ['Content-Type: application/json'],
-            CURLOPT_POSTFIELDS     => $payload,
-            // AI-004 / N-48: süre zinciri functions/gemini.php'de — cURL
-            // istemciden ÖNCE biter, kullanıcı zaman aşımı yerine anlamlı
-            // hata görür ve sunucu iade eder.
-            CURLOPT_CONNECTTIMEOUT => GEMINI_CONNECT_TIMEOUT,
-            CURLOPT_TIMEOUT        => GEMINI_TIMEOUT,
-            CURLOPT_WRITEFUNCTION  => static function ($handle, string $chunk) use (&$httpStatus, &$errorBody, &$streamBody): int {
-                if ($httpStatus === 0) {
-                    $httpStatus = (int) curl_getinfo($handle, CURLINFO_RESPONSE_CODE);
-                }
-                if ($httpStatus >= 400) {
-                    $errorBody .= $chunk;
+        // Tek deneme. Hata gövdesi (≥400) istemciye gitmez; 2xx kareleri
+        // anında akıtılır. Süre zinciri functions/gemini.php'de (AI-004 /
+        // N-48): cURL istemciden ÖNCE biter, sunucu her durumda kaydeder ya da iade eder.
+        $runAttempt = static function (int $timeout) use ($url, $payload, &$httpStatus, &$errorBody, &$streamBody, &$curlError, &$streamed): void {
+            $httpStatus = 0;
+            $errorBody  = '';
+            $streamBody = '';
+            $ch = curl_init($url);
+            curl_setopt_array($ch, [
+                CURLOPT_POST           => true,
+                CURLOPT_HTTPHEADER     => ['Content-Type: application/json'],
+                CURLOPT_POSTFIELDS     => $payload,
+                CURLOPT_CONNECTTIMEOUT => GEMINI_CONNECT_TIMEOUT,
+                CURLOPT_TIMEOUT        => $timeout,
+                CURLOPT_WRITEFUNCTION  => static function ($handle, string $chunk) use (&$httpStatus, &$errorBody, &$streamBody, &$streamed): int {
+                    if ($httpStatus === 0) {
+                        $httpStatus = (int) curl_getinfo($handle, CURLINFO_RESPONSE_CODE);
+                    }
+                    if ($httpStatus >= 400) {
+                        $errorBody .= $chunk;
+                        return strlen($chunk);
+                    }
+                    $streamBody .= $chunk; // N-30: cevap sonunda sunucuda kaydedilecek
+                    $streamed    = true;
+                    echo $chunk;
+                    @flush();
                     return strlen($chunk);
-                }
-                $streamBody .= $chunk; // N-30: cevap sonunda sunucuda kaydedilecek
-                echo $chunk;
-                @flush();
-                return strlen($chunk);
-            },
-        ]);
-        curl_exec($ch);
-        $curlError = curl_error($ch);
-        if ($httpStatus === 0) {
-            $httpStatus = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
-        }
-        curl_close($ch);
+                },
+            ]);
+            curl_exec($ch);
+            $curlError = curl_error($ch);
+            if ($httpStatus === 0) {
+                $httpStatus = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+            }
+            curl_close($ch);
+        };
 
         // N-48 — kayıt/iade kararı tek yerde (chatReplyOutcome, testli):
         // yalnızca eksiksiz ve boş olmayan cevap kaydedilir, coin düşmüş
         // kalır; diğer her durumda (ağ, zaman aşımı, 4xx/5xx, 200 + boş
-        // akış) iade. Önceden 200 + boş akış ne kaydediliyor ne iade
-        // ediliyordu. N-30: cevabı istemci değil SUNUCU kaydediyor.
-        $replyText = $httpStatus >= 200 && $httpStatus < 300 && $curlError === '' ? geminiSseText($streamBody) : '';
-        $outcome   = chatReplyOutcome($httpStatus, $curlError, $replyText);
+        // akış) iade. N-30: cevabı istemci değil SUNUCU kaydediyor.
+        $decide = static function () use (&$httpStatus, &$curlError, &$streamBody): array {
+            $text = $httpStatus >= 200 && $httpStatus < 300 && $curlError === '' ? geminiSseText($streamBody) : '';
+            return [$text, chatReplyOutcome($httpStatus, $curlError, $text)];
+        };
+
+        $started  = microtime(true);
+        $attempts = 1;
+        $runAttempt(GEMINI_TIMEOUT);
+        [$replyText, $outcome] = $decide();
+
+        // N-59 — geçici hata (yoğunluk 503/429, 5xx, bağlantı) akış başlamadan
+        // geldiyse tek kısa bekleme + yeniden deneme. Kullanıcı bunu yalnızca
+        // biraz gecikme olarak görür; coin iadesi kararı son denemeden sonra.
+        if ($outcome !== 'save') {
+            $plan = geminiRetryPlan($httpStatus, $curlError, $errorBody, microtime(true) - $started, $streamed);
+            if ($plan['retry']) {
+                error_log('[gemini] generatereply hata: ' . geminiErrorSummary($httpStatus, $curlError, $errorBody, $apiKey)
+                    . ' tür=' . $plan['kind'] . ' deneme=1/2');
+                usleep($plan['delay_ms'] * 1000);
+                $attempts = 2;
+                $timeout  = $plan['timeout'];
+                $runAttempt($timeout);
+                [$replyText, $outcome] = $decide();
+                if ($outcome === 'save') {
+                    error_log('[gemini] tekrar deneme başarılı: ilk=' . $plan['kind']);
+                }
+            }
+        }
 
         if ($outcome === 'save') {
             // Kimlik son SSE karesiyle istemciye gidiyor; Diyalog Defteri
@@ -620,9 +682,11 @@ class ChatController {
         // name, network) — without this the failure was undiagnosable.
         // Ham gövde değil ayrıştırılmış özet: Google bazı hatalarda
         // anahtarı gövdeye geri yazıyor; özet onu maskeliyor.
+        $kind = geminiFailureKind($httpStatus, $curlError, $errorBody);
         error_log('[gemini] generatereply hata: ' . ($httpStatus >= 200 && $httpStatus < 300 && $curlError === ''
             ? 'http=' . $httpStatus . ' model=' . GEMINI_MODEL . ' boş cevap (metin yok)'
-            : geminiErrorSummary($httpStatus, $curlError, $errorBody, $apiKey)));
+            : geminiErrorSummary($httpStatus, $curlError, $errorBody, $apiKey))
+            . ' tür=' . $kind . ' deneme=' . $attempts . '/' . $attempts);
 
         // AI-005: cevap üretilemedi — yakılan hakları geri ver. Dosya
         // için düşülen ikinci hak da buraya dahil, kendi kaynağına.
@@ -632,10 +696,10 @@ class ChatController {
         }
 
         // Never leak the upstream body (it can echo the API key back) —
-        // send a stable code the client maps to its own wording.
+        // send a stable code + kind the client maps to its own wording (N-59).
         echo "event: error\n";
         echo 'data: ' . json_encode(
-            ['error' => ['code' => $httpStatus >= 400 ? $httpStatus : 502, 'status' => 'UPSTREAM_ERROR', 'refunded' => true]],
+            ['error' => ['code' => $httpStatus >= 400 ? $httpStatus : 502, 'status' => 'UPSTREAM_ERROR', 'kind' => $kind, 'refunded' => true]],
             JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
         ) . "\n\n";
         @flush();

@@ -35,11 +35,9 @@ export const MAX_WEEKLY_PRICE = 5000;
 // Pro rozeti gösteriliyordu. Sabit yerine bunu kullanın.
 export const FREE_PLAN_NAME = "Ücretsiz";
 
-/** Plan adı ücretli bir plana mı ait? (Pro rozeti kararı buradan geçmeli.) */
-export function isPaidPlan(planName) {
-    const name = String(planName ?? "").trim();
-    return name !== "" && name !== FREE_PLAN_NAME;
-}
+// N-64 — PRO rozeti kararı artık plan ADINA göre verilmiyor (isPaidPlan
+// silindi): sunucunun fiyat temelli `planIsPaid` bayrağı + bitiş anı,
+// tek karar noktası shared/lib/plan-badge.mjs → showProBadge().
 
 // Sohbet Luma Coini: per-bot bonus message allowance unlocked by a purchase,
 // tiered by how much was actually paid. Mirrors coin_engine.php's

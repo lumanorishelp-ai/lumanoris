@@ -17,6 +17,9 @@ node_modules/
 
 # dependencies (PHP) — composer.lock stays tracked, only the generated vendor/ folder is ignored
 vendor/
+# N-55 — api/ altındaki arşivler (ör. içinde .env'ler bulunan, elle hazırlanmış
+# vendor.zip, 2026-10-18) asla commit edilmez.
+api/**/*.zip
 
 .history
 

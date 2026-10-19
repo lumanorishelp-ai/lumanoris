@@ -13,7 +13,6 @@ import {
 } from "lucide-react";
 import { EmptyState } from "@/shared/ui/empty-state";
 import { Skeleton } from "@/shared/ui/skeleton";
-import { resolveCoverSrc } from "@/shared/lib/image";
 import BotList from "@/widgets/BotList";
 import MarketplaceControlBar from "@/widgets/MarketplaceControlBar";
 import { CardGrid } from "@/shared/ui/page-layout";
@@ -173,7 +172,7 @@ export default function Explore() {
     time: formatTime(bot.yayimlanma_tarih),
     publishedAt: bot.yayimlanma_tarih,
     avatar: bot.profil_fotografi,
-    image: resolveCoverSrc(bot.kapak_fotografi),
+    image: bot.kapak_fotografi,
     kategori_id: bot.kategori_id,
     followers: bot.toplam_follows,
     likes: bot.toplam_likes,

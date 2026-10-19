@@ -114,7 +114,12 @@ class AuthController {
     }
 
     public static function loginGoogle(): void {
-        require_once __DIR__ . '/../../../vendor/autoload.php';
+        // N-56 — autoload/sınıf eksikse ham PHP hatası yerine anlaşılır 503.
+        VendorAutoload::requireOrFail(
+            'login-google',
+            VendorAutoload::GOOGLE_CLASSES,
+            'Google ile giriş şu anda kullanılamıyor. E-posta ve şifrenizle giriş yapabilirsiniz.'
+        );
 
         $jsonData = $_POST['data'] ?? null;
         $data     = $jsonData ? json_decode($jsonData, true) : null;

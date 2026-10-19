@@ -70,7 +70,7 @@ export default function ProfileImageEdit({ onChange, onRemove, userId }) {
                 {image ? (
                     <img
                         src={image}
-                        alt="avatar"
+                        alt="Profil fotoğrafı"
                         className="h-full w-full object-cover"
                     />
                 ) : (

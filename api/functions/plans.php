@@ -240,7 +240,7 @@ function getUserSubscription(Database $db, int $userId, bool $fresh = false): ar
     $freeName = (string) ($default['name_tr'] ?? AppConfig::FREE_PLAN_NAME);
     $out = [
         'state' => 'free', 'plan' => $freeName, 'is_paid' => false,
-        'started_at' => null, 'expires_at' => null, 'days_left' => null,
+        'started_at' => null, 'expires_at' => null, 'days_left' => null, 'seconds_left' => null,
         'last_paid_plan' => null, 'expired_at' => null, 'history' => [],
     ];
 
@@ -264,6 +264,8 @@ function getUserSubscription(Database $db, int $userId, bool $fresh = false): ar
             $out['started_at'] = $isPaid ? (string) $row['selected_at'] : null;
             $out['expires_at'] = $isPaid && $row['expires_at'] !== null ? (string) $row['expires_at'] : null;
             $out['days_left']  = $out['expires_at'] !== null ? (int) ceil(((int) $row['secs_left']) / 86400) : null;
+            // N-64 — istemci PRO etiketini bitiş anında kaldırsın (saat dilimi bağımsız).
+            $out['seconds_left'] = $out['expires_at'] !== null ? max(0, (int) $row['secs_left']) : null;
         } elseif ($isPaid) {
             $out['state']          = 'expired';
             $out['last_paid_plan'] = (string) $row['name_tr'];
@@ -292,4 +294,119 @@ function getUserSubscription(Database $db, int $userId, bool $fresh = false): ar
     }
 
     return $cache[$userId] = $out;
+}
+
+/**
+ * N-64 — paketin kaynağı (admin paneli "Paket" alanı). Şemada kaynak sütunu
+ * yok; kayıtlardan çıkarılır:
+ *   admin    — mevcut seçimden sonra (ya da aynı anda) `plan_assign` denetim kaydı
+ *   purchase — bu paket için seçim anından ≤2 gün önce başlatılmış ödenmiş PLN siparişi
+ *   legacy   — ücretli ama ikisi de yok: 2026-08-26 öncesi `upgradePlan`
+ *              paketi ÖDEMESİZ yazıyordu (BIZ-001) ya da satır elle eklendi
+ *   free     — ücretsiz / süresi dolmuş
+ *
+ * @return array{source: string, label: string}
+ */
+function getPlanSource(Database $db, int $userId, array $sub): array
+{
+    if (!$sub['is_paid']) {
+        return ['source' => 'free', 'label' => $sub['state'] === 'expired'
+            ? 'Ücretsiz (' . $sub['last_paid_plan'] . ' paketinin süresi doldu)' : 'Ücretsiz'];
+    }
+    $sel = $db->selectSingle('selected_at FROM user_plan_selection WHERE user_id = ?', [$userId]);
+    $selectedAt = (string) ($sel['selected_at'] ?? '');
+
+    $audit = $db->selectSingle(
+        "admin_name, created_at FROM admin_audit_log
+          WHERE target_user_id = ? AND action = 'plan_assign' AND created_at >= DATE_SUB(?, INTERVAL 5 SECOND)
+          ORDER BY id DESC LIMIT 1",
+        [$userId, $selectedAt]
+    );
+    if ($audit) {
+        return ['source' => 'admin', 'label' => sprintf('Admin ataması (%s, %s)', $audit['admin_name'], date('d.m.Y H:i', strtotime((string) $audit['created_at'])))];
+    }
+
+    $pay = $db->selectSingle(
+        "order_id, created_at FROM param_marketplace_payments
+          WHERE user_id = ? AND order_id LIKE 'PLN-%' AND status = 'paid'
+            AND items_json LIKE ? AND created_at BETWEEN DATE_SUB(?, INTERVAL 2 DAY) AND DATE_ADD(?, INTERVAL 1 MINUTE)
+          ORDER BY id DESC LIMIT 1",
+        [$userId, '%' . json_encode($sub['plan'], JSON_UNESCAPED_UNICODE) . '%', $selectedAt, $selectedAt]
+    );
+    if ($pay) {
+        return ['source' => 'purchase', 'label' => sprintf('Satın alma (%s, %s)', $pay['order_id'], date('d.m.Y', strtotime((string) $pay['created_at'])))];
+    }
+
+    return ['source' => 'legacy', 'label' => 'Ödemesiz kayıt — eski sistem ya da elle eklenmiş'
+        . ($sub['expires_at'] === null ? ', süresiz' : '') . ' (seçim: ' . ($selectedAt !== '' ? date('d.m.Y', strtotime($selectedAt)) : '?') . ')'];
+}
+
+/**
+ * N-64 — admin paket ataması. Tek transaction: seçim satırı + denetim kaydı
+ * (`admin_audit_log`, action `plan_assign`, eski/yeni paket ve bitiş).
+ * Ödeme ve iade akışına dokunmaz.
+ *
+ * @param ?string $expiresAt 'Y-m-d H:i:s' ya da null (süresiz)
+ * @param array{id: ?int, name: string, ip: ?string} $admin
+ * @return array{ok: bool, message: string}
+ */
+function adminAssignPlan(Database $db, int $userId, string $planName, ?string $expiresAt, array $admin): array
+{
+    $plan = $db->selectSingle('name_tr FROM plans WHERE name_tr = ?', [$planName]);
+    if (!$plan) {
+        return ['ok' => false, 'message' => 'Geçersiz paket.'];
+    }
+    // Karşılaştırma MySQL saatiyle: getUserPlan süreyi NOW() ile ölçüyor.
+    if ($expiresAt !== null && (int) ($db->selectSingle('(? > NOW()) AS ok', [$expiresAt])['ok'] ?? 0) !== 1) {
+        return ['ok' => false, 'message' => 'Bitiş tarihi gelecekte olmalı.'];
+    }
+    if (!$db->selectSingle('id FROM kullanicilar WHERE id = ?', [$userId])) {
+        return ['ok' => false, 'message' => 'Kullanıcı bulunamadı.'];
+    }
+
+    $conn  = $db->getConnection();
+    $ownTx = !$conn->inTransaction();
+    if ($ownTx) {
+        $conn->beginTransaction();
+    }
+    try {
+        $old = $db->selectSingle(
+            'plan_name, ' . (planSelectionHasExpiry($db) ? 'expires_at' : 'NULL AS expires_at') . ' FROM user_plan_selection WHERE user_id = ? FOR UPDATE',
+            [$userId]
+        );
+        $row = ['user_id' => $userId, 'plan_name' => (string) $plan['name_tr'], 'selected_at' => date('Y-m-d H:i:s')];
+        if (planSelectionHasExpiry($db)) {
+            $row['expires_at'] = $expiresAt;
+        }
+        $db->insert('user_plan_selection', $row, true);
+        $db->execute(
+            'INSERT INTO admin_audit_log (admin_id, admin_name, action, target_user_id, target_type, target_id, details, ip)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            [
+                $admin['id'] ?? null,
+                mb_substr(($admin['name'] ?? '') !== '' ? (string) $admin['name'] : 'bilinmiyor', 0, 64),
+                'plan_assign',
+                $userId,
+                'user_plan_selection',
+                $userId,
+                json_encode([
+                    'old_plan'       => $old['plan_name'] ?? null,
+                    'old_expires_at' => $old['expires_at'] ?? null,
+                    'new_plan'       => (string) $plan['name_tr'],
+                    'new_expires_at' => $expiresAt,
+                ], JSON_UNESCAPED_UNICODE),
+                isset($admin['ip']) ? mb_substr((string) $admin['ip'], 0, 45) : null,
+            ]
+        );
+        if ($ownTx) {
+            $conn->commit();
+        }
+    } catch (Throwable $e) {
+        if ($ownTx) {
+            $conn->rollBack();
+        }
+        error_log('[adminAssignPlan] ' . $e->getMessage());
+        return ['ok' => false, 'message' => 'Paket atanamadı.'];
+    }
+    return ['ok' => true, 'message' => 'Paket atandı.'];
 }

@@ -110,6 +110,45 @@ try {
     check('getPricing getUserSubscription kullanıyor', (bool) preg_match('/function getPricing\(\)[\s\S]{0,1500}getUserSubscription\(/', $ctl));
     check('aktif ücretli paket: "Mevcut paketiniz" + bitiş alanı', str_contains($ctl, "'current_expires_at'") && str_contains($ctl, 'Mevcut paketiniz'));
     check('getMySubscription ucu var', str_contains($ctl, 'function getMySubscription') && is_file(__DIR__ . '/../api/wallet/getmysubscription.php'));
+
+    echo "\n=== G) Paket kaynağı ve admin ataması (N-64) ===\n\n";
+    if (!function_exists('getPlanSource') || !function_exists('adminAssignPlan')) {
+        check('functions/plans.php: getPlanSource, adminAssignPlan', false, 'tanımlı değil');
+    } else {
+        $db->execute("DELETE FROM param_marketplace_payments WHERE user_id = ? AND order_id LIKE 'PLN-%'", [$uid]); // ROLLBACK ile geri alınır
+        $db->execute("DELETE FROM admin_audit_log WHERE target_user_id = ? AND action = 'plan_assign'", [$uid]);
+
+        $set($paid['name_tr'], null);
+        $src = getPlanSource($db, $uid, getUserSubscription($db, $uid, true));
+        check('ödemesiz, kayıtsız ücretli paket → legacy (eski sistem / elle)', $src['source'] === 'legacy', json_encode($src, JSON_UNESCAPED_UNICODE));
+        check('legacy etiketi süresiz olduğunu söylüyor', str_contains($src['label'], 'süresiz'), $src['label']);
+
+        $set($paid['name_tr'], 'DATE_ADD(NOW(), INTERVAL 30 DAY)');
+        $o2 = 'PLN-SELFTESTSRC' . strtoupper(bin2hex(random_bytes(2)));
+        $db->execute("INSERT INTO param_marketplace_payments (order_id, user_id, status, amount, product_amount, param_receipt_id, items_json, param_response_json, created_at)
+                      VALUES (?, ?, 'paid', ?, ?, ?, ?, '{}', DATE_SUB(NOW(), INTERVAL 5 DAY))",
+            [$o2, $uid, $paid['monthly_price'], $paid['monthly_price'], $o2, json_encode([['plan_name' => $paid['name_tr']]], JSON_UNESCAPED_UNICODE)]);
+        $src = getPlanSource($db, $uid, getUserSubscription($db, $uid, true));
+        check('eşleşen ödenmiş sipariş → purchase', $src['source'] === 'purchase' && str_contains($src['label'], 'Satın alma'), json_encode($src, JSON_UNESCAPED_UNICODE));
+
+        $gold = $db->selectSingle('name_tr FROM plans WHERE monthly_price > ? ORDER BY monthly_price LIMIT 1', [$paid['monthly_price']]);
+        $r = adminAssignPlan($db, $uid, (string) $gold['name_tr'], date('Y-m-d H:i:s', time() + 30 * 86400), ['id' => null, 'name' => 'selftest', 'ip' => '127.0.0.1']);
+        $s = getUserSubscription($db, $uid, true);
+        check('admin ataması: paket ve bitiş yazıldı', $r['ok'] && $s['plan'] === $gold['name_tr'] && $s['state'] === 'active', json_encode([$r, $s['plan']], JSON_UNESCAPED_UNICODE));
+        $log = $db->selectSingle("admin_name, details FROM admin_audit_log WHERE target_user_id = ? AND action = 'plan_assign' ORDER BY id DESC LIMIT 1", [$uid]);
+        $d = json_decode((string) ($log['details'] ?? ''), true);
+        check('denetim kaydı: eski ve yeni paket', $log && $d['old_plan'] === $paid['name_tr'] && $d['new_plan'] === $gold['name_tr'] && array_key_exists('new_expires_at', $d), json_encode($log, JSON_UNESCAPED_UNICODE));
+        $src = getPlanSource($db, $uid, $s);
+        check('atamadan sonra kaynak → admin (kim, ne zaman)', $src['source'] === 'admin' && str_contains($src['label'], 'selftest'), json_encode($src, JSON_UNESCAPED_UNICODE));
+
+        $bad = adminAssignPlan($db, $uid, 'Kral', null, ['id' => null, 'name' => 'selftest', 'ip' => null]);
+        check('katalogda olmayan paket reddedilir, satır değişmez', !$bad['ok'] && getUserSubscription($db, $uid, true)['plan'] === $gold['name_tr']);
+        $past = adminAssignPlan($db, $uid, (string) $gold['name_tr'], date('Y-m-d H:i:s', time() - 3600), ['id' => null, 'name' => 'selftest', 'ip' => null]);
+        check('geçmiş bitiş tarihi reddedilir', !$past['ok']);
+
+        $set(null, null);
+        check('ücretsiz → free', getPlanSource($db, $uid, getUserSubscription($db, $uid, true))['source'] === 'free');
+    }
 } finally {
     $conn->rollBack();
 }

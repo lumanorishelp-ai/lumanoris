@@ -410,3 +410,35 @@ function adminAssignPlan(Database $db, int $userId, string $planName, ?string $e
     }
     return ['ok' => true, 'message' => 'Paket atandı.'];
 }
+
+/**
+ * N-67 (onaylı 2026-10-19) — aynı paketin yeniden satın alınması.
+ * Aktif ücretli paket yeniden satın alınamaz; yalnızca bitişe
+ * PLAN_RENEWAL_WINDOW_DAYS gün ya da daha az kala "yenileme" olarak alınır
+ * (kesinleştirmede yeni bitiş = GREATEST(NOW(), mevcut bitiş) + 30 gün).
+ * Süresiz ücretli pakette hiç alınamaz. Üst/alt paket geçişi BU KURALIN
+ * DIŞINDA (müşteri kararı bekliyor) — farklı paket her zaman izinli.
+ */
+const PLAN_RENEWAL_WINDOW_DAYS = 7;
+
+/** @return array{allowed: bool, renewal: bool, message: string} */
+function planPurchaseCheck(array $sub, string $planName): array
+{
+    $same = ($sub['is_paid'] ?? false) && ($sub['state'] ?? '') === 'active' && ($sub['plan'] ?? '') === $planName;
+    if (!$same) {
+        return ['allowed' => true, 'renewal' => false, 'message' => ''];
+    }
+    if (($sub['expires_at'] ?? null) === null) {
+        return ['allowed' => false, 'renewal' => false,
+            'message' => "\"$planName\" paketiniz zaten etkin ve süresiz; yeniden satın almanız gerekmiyor."];
+    }
+    $days = (int) ($sub['days_left'] ?? 0);
+    if ($days <= PLAN_RENEWAL_WINDOW_DAYS) {
+        return ['allowed' => true, 'renewal' => true, 'message' => ''];
+    }
+    $until = date('d.m.Y', strtotime((string) $sub['expires_at']));
+    return ['allowed' => false, 'renewal' => false, 'message' => sprintf(
+        '"%s" paketiniz zaten etkin (bitiş: %s). Bitişe %d gün kala yenileyebilirsiniz; kalan günleriniz korunur.',
+        $planName, $until, PLAN_RENEWAL_WINDOW_DAYS
+    )];
+}

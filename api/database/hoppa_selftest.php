@@ -411,6 +411,23 @@ try {
     $r5 = $refund($fake, $oNew);
     check('Hoppa\'da zaten iade edilmiş: istek gönderilmez, satır refunded', $r5['success'] && $fake->refunds === $refundsBefore && $row($oNew)['status'] === 'refunded');
     check('iade: admin_audit_log sonuçları (dogrulanamadi, tamamlandi)', $outcomes($oNew) === ['dogrulanamadi', 'tamamlandi'], json_encode($outcomes($oNew)));
+
+    // N-67 (onaylı 2026-10-19) — erken yenilemede kalan günler korunur:
+    // aynı paket, 5 gün kalmışken ödendi → bitiş mevcut bitiş + 30 gün.
+    $db->execute('UPDATE user_plan_selection SET plan_name = ?, expires_at = DATE_ADD(NOW(), INTERVAL 5 DAY) WHERE user_id = ?', [$plan['name_tr'], $uid]); // ROLLBACK
+    $oRen = WalletController::startHostedPlanPayment($db, $fake, $uid, $plan, 'http://localhost:3000')['order_id'];
+    $fake->byOrder[$oRen] = $qr('paid', $price, 0.0);
+    WalletController::finalizeHostedPlanPayment($db, $fake, $oRen);
+    $days = (int) $db->selectSingle('TIMESTAMPDIFF(HOUR, NOW(), expires_at) AS h FROM user_plan_selection WHERE user_id = ?', [$uid])['h'];
+    check('erken yenileme: bitiş ≈ +35 gün (5 kalan + 30), kalan günler yanmadı', $days >= 34 * 24 && $days <= 35 * 24, "saat=$days");
+
+    // Süresi dolmuş paket yenilenince bitiş NOW() + 30 (geçmişe eklenmez).
+    $db->execute('UPDATE user_plan_selection SET expires_at = DATE_SUB(NOW(), INTERVAL 3 DAY) WHERE user_id = ?', [$uid]);
+    $oExp = WalletController::startHostedPlanPayment($db, $fake, $uid, $plan, 'http://localhost:3000')['order_id'];
+    $fake->byOrder[$oExp] = $qr('paid', $price, 0.0);
+    WalletController::finalizeHostedPlanPayment($db, $fake, $oExp);
+    $days = (int) $db->selectSingle('TIMESTAMPDIFF(HOUR, NOW(), expires_at) AS h FROM user_plan_selection WHERE user_id = ?', [$uid])['h'];
+    check('süresi dolmuş paket: bitiş ≈ +30 gün', $days >= 29 * 24 && $days <= 30 * 24, "saat=$days");
 } finally {
     $conn->rollBack();
 }

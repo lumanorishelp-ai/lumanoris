@@ -383,7 +383,11 @@ class WalletController {
     public static function getMySubscription(): void {
         $userId = AuthMiddleware::requireAuth();
         require_once __DIR__ . '/../../../functions/plans.php';
-        JsonResponse::success(['subscription' => getUserSubscription(Database::getInstance(), $userId)]);
+        $sub = getUserSubscription(Database::getInstance(), $userId);
+        // N-67 — "Yenile" düğmesi sunucunun kararıyla (bitişe ≤7 gün, süreli paket).
+        $sub['can_renew']           = $sub['state'] === 'active' && planPurchaseCheck($sub, $sub['plan'])['renewal'];
+        $sub['renewal_window_days'] = PLAN_RENEWAL_WINDOW_DAYS;
+        JsonResponse::success(['subscription' => $sub]);
     }
 
     public static function getPricing(): void {
@@ -403,6 +407,8 @@ class WalletController {
             foreach ($catalog as $p) {
                 $isCurrent  = ($p['name_tr'] === $currentPlan);
                 $activePaid = $isCurrent && ($sub['is_paid'] ?? false);
+                // N-67 — yenileme penceresinde (bitişe ≤7 gün) aynı paket "Yenile".
+                $canRenew   = $activePaid && $sub !== null && planPurchaseCheck($sub, (string) $p['name_tr'])['renewal'];
                 $price     = (float) ($p['monthly_price'] ?? 0);
 
                 $output[] = [
@@ -415,13 +421,14 @@ class WalletController {
                         : null,
                     'description'   => $p['description_tr'] ?? '',
                     'features'      => $p['features'] ?? [],
-                    'buttonText'    => $activePaid ? 'Mevcut paketiniz' : ($isCurrent ? 'Mevcut Paket' : 'Bu Paketi Seç'),
+                    'buttonText'    => $canRenew ? 'Yenile (+30 gün)' : ($activePaid ? 'Mevcut paketiniz' : ($isCurrent ? 'Mevcut Paket' : 'Bu Paketi Seç')),
                     'buttonType'    => ($p['name_tr'] === 'Altın') ? 'primary' : 'default',
                     'badge'         => $badges[$p['name_tr']] ?? null,
                     'is_current'    => $isCurrent,
                     // N-63 — aktif ücretli paketin bitişi (süresizse null).
                     'current_expires_at' => $activePaid ? ($sub['expires_at'] ?? null) : null,
                     'is_active_paid'     => $activePaid,
+                    'can_renew'          => $canRenew,
                     // Pazarlama metni yerine gerçek kotalar — istemci
                     // isterse "3 bot / 50 mesaj" diye gösterebilir.
                     // Migration 012: bot limitleri NULL = sınırsız. `(int)`
@@ -558,6 +565,15 @@ class WalletController {
             // Ücretsiz plan süresiz: bitiş tarihi yok (D-05).
             $db->insert('user_plan_selection', self::planSelectionRow($db, $userId, (string) $plan['name_tr'], null), true);
             JsonResponse::success(['message' => 'Üyelik paketiniz güncellendi.', 'plan_name' => $plan['name_tr']]);
+        }
+
+        // N-67 (onaylı 2026-10-19) — aynı aktif paket yeniden satın alınamaz;
+        // yalnızca bitişe PLAN_RENEWAL_WINDOW_DAYS kala yenileme. Ödeme oturumu
+        // açılmadan, istemciden bağımsız (paket sayfasındaki kapalı düğme
+        // yalnızca kolaylık).
+        $check = planPurchaseCheck(getUserSubscription($db, $userId, true), (string) $plan['name_tr']);
+        if (!$check['allowed']) {
+            JsonResponse::error($check['message'], 409, AppConfig::ERR_VALIDATION, ['reason' => 'already_active']);
         }
 
         // Faz 7a — ücretli paket Hoppa Ortak Ödeme Sayfası'ndan satılıyor.
@@ -798,9 +814,22 @@ class WalletController {
                 if ($changed === 1) {
                     // D-05: 30 günlük tek seferlik satış; bitiş MySQL saatinden.
                     // GK-27: otomatik yenileme yok, kullanıcı her dönem elle yeniler.
+                    // N-67 (onaylı 2026-10-19): AYNI paketin süresi henüz
+                    // dolmamışsa yeni dönem mevcut bitişe eklenir (erken
+                    // yenilemede kalan günler yanmaz). Satır kilitli okunur;
+                    // aynı transaction'da yazılıyor. Farklı paket ya da süresi
+                    // dolmuş/süresiz satır → NOW() + 30.
+                    require_once __DIR__ . '/../../../functions/plans.php';
+                    $cur = $db->selectSingle(
+                        'plan_name, ' . (planSelectionHasExpiry($db) ? 'expires_at' : 'NULL AS expires_at')
+                        . ' FROM user_plan_selection WHERE user_id = ? FOR UPDATE',
+                        [(int) $row['user_id']]
+                    );
+                    $base = ($cur && (string) $cur['plan_name'] === $planName && $cur['expires_at'] !== null)
+                        ? (string) $cur['expires_at'] : null;
                     $expiresAt = (string) $db->selectSingle(
-                        'DATE_ADD(NOW(), INTERVAL ? DAY) AS bitis',
-                        [AppConfig::SUBSCRIPTION_MONTHLY]
+                        'DATE_ADD(GREATEST(NOW(), COALESCE(?, NOW())), INTERVAL ? DAY) AS bitis',
+                        [$base, AppConfig::SUBSCRIPTION_MONTHLY]
                     )['bitis'];
                     $db->insert('user_plan_selection', self::planSelectionRow($db, (int) $row['user_id'], $planName, $expiresAt), true);
                 }

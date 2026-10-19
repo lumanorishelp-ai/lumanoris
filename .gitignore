@@ -20,6 +20,8 @@ vendor/
 # N-55 — api/ altındaki arşivler (ör. içinde .env'ler bulunan, elle hazırlanmış
 # vendor.zip, 2026-10-18) asla commit edilmez.
 api/**/*.zip
+# Kullanıcı yüklemeleri (bot görselleri vb.) git'e girmez; izlenen assets/.htaccess izlenmeye devam eder.
+api/assets/
 
 .history
 

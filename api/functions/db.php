@@ -1,6 +1,7 @@
 <?php
 // PDO Abstraction class version 1.2.0 (MySQL/MariaDB için uyarlanmış)
 require_once __DIR__ . '/env.php';
+require_once __DIR__ . '/timezone.php';
 
 class Database {
     private static $instance = null;
@@ -24,6 +25,7 @@ class Database {
         // kullanmıyor), bu yüzden .env'i burada da yüklüyoruz. env_load()
         // idempotent ve gerçek ortam değişkenlerini asla ezmiyor.
         env_load();
+        app_timezone_init(); // N-69
 
         // Each setting is read as "was it provided at all?", not "is it
         // truthy?". An earlier version used !empty(), so DB_PASS= (a
@@ -75,6 +77,9 @@ class Database {
 
         try {
             $this->conn = new PDO($dsn, $this->username, $this->password, $options);
+            // N-69 — NOW()/CURDATE() PHP ile aynı saati görsün (yalnızca bu
+            // oturum; sunucunun genel ayarı değişmez).
+            $this->conn->exec("SET time_zone = '" . app_timezone_offset() . "'");
         } catch (PDOException $e) {
             throw new Exception('Veritabanı bağlantısı başarısız: ' . $e->getMessage());
         }

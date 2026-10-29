@@ -38,6 +38,11 @@ $kindLabels   = [
     'config'      => 'Anahtar / model (4xx — yönetici)',
     'empty'       => 'Boş cevap (güvenlik filtresi olabilir)',
 ];
+// N-69 — saat dilimi: PHP ile MySQL oturumu aynı ofsette mi? Genel MySQL ayarı
+// yalnızca bilgi (paylaşımlı hostingde değiştirilemez; oturum ayarı yeterli).
+$tzRow = Database::getInstance()->selectSingle("NOW() AS now_db, @@session.time_zone AS tz_session, @@global.time_zone AS tz_global, @@system_time_zone AS tz_system, TIME_FORMAT(TIMEDIFF(NOW(), UTC_TIMESTAMP()), '%H:%i') AS ofs");
+$tzDbOfs = (str_starts_with((string) $tzRow['ofs'], '-') ? '' : '+') . $tzRow['ofs'];
+$tzOk    = $tzDbOfs === date('P') && abs(strtotime((string) $tzRow['now_db']) - time()) <= 5;
 $h = static fn($v) => htmlspecialchars((string) $v, ENT_QUOTES, 'UTF-8');
 $okBad = static fn(bool $ok, string $bad) => $ok ? '<span class="text-emerald-600">kurulu</span>' : '<span class="text-rose-600">' . $bad . '</span>';
 ?>
@@ -75,6 +80,17 @@ $okBad = static fn(bool $ok, string $bad) => $ok ? '<span class="text-emerald-60
                 <dt class="text-gray-500">Google mesajı</dt><dd id="gtMessage" class="break-words"></dd>
             </dl>
             </div>
+        </section>
+
+        <section class="bg-white rounded-lg shadow-sm border border-gray-200 p-5">
+            <h2 class="font-semibold text-gray-800 mb-3">Saat dilimi</h2>
+            <dl class="grid grid-cols-1 sm:grid-cols-[220px_1fr] gap-y-2 text-sm">
+                <dt class="text-gray-500">Sonuç</dt><dd class="font-semibold"><?= $tzOk ? '<span class="text-emerald-600">PHP ve veritabanı aynı saatte</span>' : '<span class="text-rose-600">PHP ve veritabanı saatleri farklı</span>' ?></dd>
+                <dt class="text-gray-500">Uygulama (APP_TIMEZONE)</dt><dd class="font-mono"><?= $h(app_timezone()) ?> · <?= $h(date('P')) ?> · <?= $h(date('Y-m-d H:i:s')) ?></dd>
+                <dt class="text-gray-500">Veritabanı oturumu</dt><dd class="font-mono"><?= $h($tzRow['tz_session']) ?> · <?= $h($tzDbOfs) ?> · <?= $h($tzRow['now_db']) ?></dd>
+                <dt class="text-gray-500">Veritabanı genel / sistem</dt><dd class="font-mono"><?= $h($tzRow['tz_global']) ?> / <?= $h($tzRow['tz_system']) ?></dd>
+            </dl>
+            <p class="mt-2 text-xs text-gray-500">Her veritabanı bağlantısı oturum saatini uygulamanınkine eşitler; sunucunun genel ayarı değişmez. Paket bitişi, ödeme kayıtları, coin yenilenmesi bu saatle hesaplanır.</p>
         </section>
 
         <section class="bg-white rounded-lg shadow-sm border border-gray-200 p-5">

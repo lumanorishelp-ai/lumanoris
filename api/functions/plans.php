@@ -67,6 +67,15 @@ function plansTableReady(Database $db): bool
  * yani Elmas plandaki herkes sessizce ücretsiz kotalara inerdi. Kontrol
  * istek başına bir kez yapılıp hatırlanıyor.
  */
+/**
+ * N-69 — veritabanının şimdiki zamanı. Plan seçim anı `expires_at` ve sipariş
+ * `created_at` ile aynı saatten yazılsın diye (PHP date() değil).
+ */
+function planSelectionNow(Database $db): string
+{
+    return (string) $db->selectSingle('NOW() AS n')['n'];
+}
+
 function planSelectionHasExpiry(Database $db): bool
 {
     static $has = null;
@@ -326,10 +335,14 @@ function getPlanSource(Database $db, int $userId, array $sub): array
         return ['source' => 'admin', 'label' => sprintf('Admin ataması (%s, %s)', $audit['admin_name'], date('d.m.Y H:i', strtotime((string) $audit['created_at'])))];
     }
 
+    // N-69 — üst sınır 14 saat: düzeltmeden önce `selected_at` PHP saatiyle
+    // (canlıda UTC olabilir), sipariş MySQL saatiyle yazılıyordu; eski satırda
+    // seçim, siparişten saatlerce "önce" görünebilir. 14 saat = dünyadaki en
+    // büyük ofset farkı. Kayıtlar yeniden yazılmıyor, okuma toleranslı.
     $pay = $db->selectSingle(
         "order_id, created_at FROM param_marketplace_payments
           WHERE user_id = ? AND order_id LIKE 'PLN-%' AND status = 'paid'
-            AND items_json LIKE ? AND created_at BETWEEN DATE_SUB(?, INTERVAL 2 DAY) AND DATE_ADD(?, INTERVAL 1 MINUTE)
+            AND items_json LIKE ? AND created_at BETWEEN DATE_SUB(?, INTERVAL 2 DAY) AND DATE_ADD(?, INTERVAL 14 HOUR)
           ORDER BY id DESC LIMIT 1",
         [$userId, '%' . json_encode($sub['plan'], JSON_UNESCAPED_UNICODE) . '%', $selectedAt, $selectedAt]
     );
@@ -374,7 +387,7 @@ function adminAssignPlan(Database $db, int $userId, string $planName, ?string $e
             'plan_name, ' . (planSelectionHasExpiry($db) ? 'expires_at' : 'NULL AS expires_at') . ' FROM user_plan_selection WHERE user_id = ? FOR UPDATE',
             [$userId]
         );
-        $row = ['user_id' => $userId, 'plan_name' => (string) $plan['name_tr'], 'selected_at' => date('Y-m-d H:i:s')];
+        $row = ['user_id' => $userId, 'plan_name' => (string) $plan['name_tr'], 'selected_at' => planSelectionNow($db)];
         if (planSelectionHasExpiry($db)) {
             $row['expires_at'] = $expiresAt;
         }

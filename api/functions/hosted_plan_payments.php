@@ -366,7 +366,7 @@ function revokeRefundedPlan(Database $db, array $payment): array
 
     $default  = $db->selectSingle('name_tr FROM plans WHERE is_default = 1 ORDER BY sort_order LIMIT 1');
     $freeName = $default ? (string) $default['name_tr'] : AppConfig::FREE_PLAN_NAME;
-    $row = ['user_id' => $userId, 'plan_name' => $freeName, 'selected_at' => date('Y-m-d H:i:s')];
+    $row = ['user_id' => $userId, 'plan_name' => $freeName, 'selected_at' => planSelectionNow($db)];
     if (planSelectionHasExpiry($db)) {
         $row['expires_at'] = null;
     }

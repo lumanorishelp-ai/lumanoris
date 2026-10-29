@@ -42,6 +42,8 @@ if (!defined('LUMANORIS_STATELESS_ENDPOINT') && session_status() === PHP_SESSION
 // the same configuration (SEC-008).
 require_once __DIR__ . '/env.php';
 env_load();
+require_once __DIR__ . '/timezone.php';
+app_timezone_init(); // N-69 — bağlantıdan önceki date() çağrıları da aynı saatte
 require_once __DIR__ . '/logging.php';
 configure_error_log();
 

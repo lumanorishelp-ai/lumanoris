@@ -496,10 +496,10 @@ class WalletController {
         $row = [
             'user_id'     => $userId,
             'plan_name'   => $planName,
-            'selected_at' => date('Y-m-d H:i:s'),
         ];
 
         require_once __DIR__ . '/../../../functions/plans.php';
+        $row['selected_at'] = planSelectionNow($db); // N-69: expires_at ile aynı saat
         if (planSelectionHasExpiry($db)) {
             $row['expires_at'] = $expiresAt;
         } elseif ($expiresAt !== null) {

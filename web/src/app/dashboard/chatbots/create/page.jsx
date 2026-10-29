@@ -342,7 +342,10 @@ function ChatbotForm({
   const [isDraft, setIsDraft] = useState(Number(bot?.chatbot?.is_draft) === 1);
   const [draftSaving, setDraftSaving] = useState(false);
   const [draftError, setDraftError] = useState(null);
-  const [publishAs, setPublishAs] = useState(independentMode ? "private" : "public");
+  /* N-70 — taslak her zaman is_independent = 1 saklanıyor; yeniden açılan
+     taslakta bu "Özel"i seçili getiriyordu. Hiçbir seçenek seçili gelmez,
+     kullanıcı seçmeden "Yayınla" düğmesi pasif. */
+  const [publishAs, setPublishAs] = useState(null);
   const [coverPreview, setCoverPreview] = useState(
     bot?.chatbot?.kapak_fotografi ? assetUrl(bot.chatbot.kapak_fotografi) : "",
   );
@@ -630,6 +633,7 @@ function ChatbotForm({
 
   /* N-68 — taslağı tamamla: herkese açık yayınla ya da özel kaydet. */
   const finalizeDraft = async () => {
+    if (!publishAs) throw new Error("Botun nasıl kaydedileceğini seçin: herkese açık ya da özel.");
     const body = new FormData();
     body.append("data", JSON.stringify({ id: botId }));
     const res = await fetch(
@@ -644,6 +648,10 @@ function ChatbotForm({
   const handleSubmit = async () => {
     if (!botName.trim()) {
       setSubmitError("Sohbet botu ismi zorunludur.");
+      return;
+    }
+    if (isDraft && !publishAs) {
+      setSubmitError("Botun nasıl kaydedileceğini seçin: herkese açık ya da özel.");
       return;
     }
     setSubmitError(null);
@@ -1293,6 +1301,9 @@ function ChatbotForm({
                     <span className="mt-1 block text-xs leading-relaxed text-zinc-400">{opt.desc}</span>
                   </button>
                 ))}
+                {!publishAs && (
+                  <p className="text-xs text-zinc-500">Devam etmek için bir seçenek seçin.</p>
+                )}
               </div>
             ) : (
             <div className="p-4 rounded-xl bg-zinc-900 border border-white/10 space-y-3">
@@ -1319,7 +1330,7 @@ function ChatbotForm({
 
             <button
               onClick={handleSubmit}
-              disabled={isBuilding}
+              disabled={isBuilding || (isDraft && !publishAs)}
               className="w-full py-4 rounded-xl bg-gradient-btn text-xs font-bold text-white shadow-glow hover:brightness-110 hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {isBuilding ? (
@@ -1331,7 +1342,9 @@ function ChatbotForm({
                     {isDraft
                       ? publishAs === "public"
                         ? "Yayınla"
-                        : "Özel olarak kaydet"
+                        : publishAs === "private"
+                          ? "Özel olarak kaydet"
+                          : "Seçim yapın"
                       : isPersisted
                         ? "Değişiklikleri Kaydet & Güncelle"
                         : "Sohbet Botunu Oluştur & Yayına Al"}

@@ -103,6 +103,14 @@ try {
     check('publishChatbot taslağı temizliyor (repo->publish)', (bool) preg_match('/function publishChatbot[\s\S]*is_draft/', $ctl));
     check('finalizeDraft ucu var', str_contains($ctl, 'function finalizeDraft') && is_file(__DIR__ . '/../api/chatbot/finalizedraft.php'));
     check('updateChatbot is_draft yazdırmıyor (beyaz liste)', !preg_match("/UPDATABLE_CHATBOT_COLUMNS\s*=\s*\[[^\]]*'is_draft'/", $ctl));
+
+    // N-70 (karar 2026-10-29) — taslak her zaman is_independent = 1 saklandığı
+    // için yeniden açılan taslakta "Özel olarak kaydet" seçili geliyordu.
+    // Hiçbir seçenek seçili gelmez; seçim yapılmadan düğme pasif.
+    $ui = (string) file_get_contents(__DIR__ . '/../../web/src/app/dashboard/chatbots/create/page.jsx');
+    check('Yayınla: taslakta seçim varsayılanı yok (publishAs null)', (bool) preg_match('/const \[publishAs, setPublishAs\] = useState\(null\)/', $ui));
+    check('Yayınla: seçim yapılmadan düğme pasif', (bool) preg_match('/disabled=\{[^}]*isDraft && !publishAs/', $ui));
+    check('Yayınla: istemci tarafında da seçimsiz finalize yok', (bool) preg_match('/if \(!publishAs\)/', $ui));
 } finally {
     $conn->rollBack();
 }

@@ -65,6 +65,7 @@ step subscription_selftest selftest subscription_selftest.php
 step draft_selftest selftest draft_selftest.php
 step timezone_selftest selftest timezone_selftest.php
 step plan_coin_selftest selftest plan_coin_selftest.php
+step denylist_selftest selftest denylist_selftest.php
 step image_url_test node --test "$ROOT/web/src/shared/lib/image-url.test.mjs"
 step reply_errors_test node --test "$ROOT/web/src/features/chat/reply-errors.test.mjs"
 step plan_badge_test node --test "$ROOT/web/src/shared/lib/plan-badge.test.mjs"

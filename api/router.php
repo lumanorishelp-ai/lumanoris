@@ -28,6 +28,8 @@ $denied = [
     '/(^|\/)composer\.(json|lock)$/i',
     '/(^|\/)\.git(\/|$)/i',
     '/(^|\/)\.ht[a-z]*$/i',
+    // N-73 — the dev router itself is not a page (api/.htaccess denies it too)
+    '/^\/router\.php$/i',
     // never expose the source tree or vendor code as static files
     '/(^|\/)(src|vendor|migrations|database|functions|cron)(\/|$)/i',
 ];

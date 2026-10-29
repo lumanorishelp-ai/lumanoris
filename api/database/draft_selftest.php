@@ -111,6 +111,10 @@ try {
     check('Yayınla: taslakta seçim varsayılanı yok (publishAs null)', (bool) preg_match('/const \[publishAs, setPublishAs\] = useState\(null\)/', $ui));
     check('Yayınla: seçim yapılmadan düğme pasif', (bool) preg_match('/disabled=\{[^}]*isDraft && !publishAs/', $ui));
     check('Yayınla: istemci tarafında da seçimsiz finalize yok', (bool) preg_match('/if \(!publishAs\)/', $ui));
+    // N-72 — başarıdan sonra isDraft kapatılınca yönlendirme beklenirken eski
+    // "Erişim Türü: Bağımsız (Özel)" paneli çiziliyordu.
+    check('Yayınla: başarıdan sonra taslak paneli korunuyor (setIsDraft(false) yok)', !preg_match('/await finalizeDraft\(\);\s*setIsDraft\(false\)/', $ui));
+    check('Yayınla: yönlendirme sırasında düğme "Yönlendiriliyor…"', str_contains($ui, 'Yönlendiriliyor…'));
 } finally {
     $conn->rollBack();
 }

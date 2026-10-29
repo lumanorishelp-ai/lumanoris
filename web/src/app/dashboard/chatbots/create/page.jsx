@@ -322,6 +322,7 @@ function ChatbotForm({
   ]);
   const [inputMsg, setInputMsg] = useState("");
   const [isBuilding, setIsBuilding] = useState(false);
+  const [redirecting, setRedirecting] = useState(false); // N-72
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
   const [submitError, setSubmitError] = useState(null);
 
@@ -696,11 +697,14 @@ function ChatbotForm({
       } else if (result.success && isDraft) {
         // N-68 — taslak: önce alanlar kaydedildi, şimdi yayın/özel kayıt.
         // Limit doluysa sunucu reddeder; taslak korunur, mesaj gösterilir.
+        // N-72 — isDraft burada kapatılmıyor: kapatılınca yönlendirme
+        // beklenirken eski "Erişim Türü: Bağımsız (Özel)" paneli çiziliyordu.
         await finalizeDraft();
-        setIsDraft(false);
+        setRedirecting(true);
         refetchAccount();
         router.push("/dashboard/chatbots");
       } else if (result.success) {
+        setRedirecting(true);
         refetchAccount();
         router.push("/dashboard/chatbots");
       } else {
@@ -1330,10 +1334,15 @@ function ChatbotForm({
 
             <button
               onClick={handleSubmit}
-              disabled={isBuilding || (isDraft && !publishAs)}
+              disabled={isBuilding || redirecting || (isDraft && !publishAs)}
               className="w-full py-4 rounded-xl bg-gradient-btn text-xs font-bold text-white shadow-glow hover:brightness-110 hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {isBuilding ? (
+              {redirecting ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  <span>Yönlendiriliyor…</span>
+                </>
+              ) : isBuilding ? (
                 <RefreshCw className="w-4 h-4 animate-spin" />
               ) : (
                 <>

@@ -49,7 +49,7 @@ Each item below is backed by routes and endpoints that exist in this repository.
   text is written to the bot's `training_prompt` in chunks via
   `/api/training/update_training_chunk.php`.
 - **Chat with streaming replies** — `/api/chat/generatereply.php` proxies to the Google Gemini
-  `streamGenerateContent` endpoint (`gemini-3-flash-preview`) and relays the SSE stream to the
+  `streamGenerateContent` endpoint (model: `GEMINI_MODEL` in `api/functions/gemini.php`, currently `gemini-3.8-flash`) and relays the SSE stream to the
   browser. Conversations, messages and history are stored in MySQL.
 - **Message allowance ("coin") system** — a daily message quota plus per-bot bonus credits granted on
   purchase. Implemented in `api/functions/coin_engine.php`; consumption is atomic and the quota is
@@ -273,6 +273,27 @@ composer install
 the file the admin panel's API-integrations page writes, and `AppConfig::googleGeminiApiKey()`
 parses it directly as a fallback. It first checks `$_ENV` / `getenv()`, so setting the variable in
 `api/.env` also works, because `functions/bootstrap.php` loads that file into both.
+
+#### Use a separate Google project and key for local development (N-74)
+
+Gemini rate limits and quotas are counted **per Google Cloud project**, not per key
+(<https://ai.google.dev/gemini-api/docs/rate-limits>). If the local `api/.env` holds a key from the
+same project as production, every local chat test spends production users' daily quota, and a key
+that leaks from a laptop is a production key. As of 2026-10-18 (BLOCKERS B4) the local key **was the
+same key as production**; whether the key written locally after the rotation is still the production
+one can only be checked in Google AI Studio (see below) — never by printing `.env`.
+
+1. Google AI Studio → **Create project** (e.g. `lumanoris-dev`), separate from the production project.
+2. In that project: **Get API key** → create a key.
+3. Put it in the local `api/.env` as `API_GOOGLE_GEMINI=…` (it wins over `api/admin/.env`).
+   Production keeps its own key in the server's `api/.env`.
+4. Check: AI Studio → **API keys** lists every key with its project; the local and production keys
+   must be under different projects. Locally, admin → **Sistem Durumu** shows which file the key is
+   read from and has a **Gemini'yi test et** button.
+
+A separate project isolates quota (`429 RESOURCE_EXHAUSTED`). It does not help with
+`503 UNAVAILABLE` "model is currently experiencing high demand": that is Google-side load on the
+model and hits every project at the same time.
 
 ### 2. Database
 

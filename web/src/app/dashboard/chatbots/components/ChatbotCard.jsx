@@ -1,7 +1,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import dynamic from "next/dynamic";
-import { Bot, MessageSquare, Heart, Trash2, Rocket, ExternalLink, Lock } from "lucide-react";
+import { Bot, MessageSquare, Heart, Trash2, Rocket, ExternalLink, Lock, Database } from "lucide-react";
 import { toast } from "@/shared/hooks/use-toast";
 import CategoryBadge from "@/shared/ui/category-badge";
 import { normalizeImagePath } from "@/shared/lib/image";
@@ -26,6 +26,7 @@ export default function ChatbotCard({
   weeklyPrice,
   monthlyPrice,
   isIndependent,
+  isDraft = false,
   isOwn,
   onDelete,
   onChanged,
@@ -149,7 +150,18 @@ export default function ChatbotCard({
             >
               <Trash2 className="h-3.5 w-3.5" />
             </button>
-            {isOwn && isIndependent ? (
+            {/* N-68 — bilgi bankasına yönetimden doğrudan erişim (Madde 4). */}
+            {isOwn && (
+              <Link
+                href={`/dashboard/chatbots/create?id=${id}&tab=knowledge`}
+                className="flex h-8 items-center gap-1 rounded-xl border border-violet-500/20 bg-violet-500/[0.06] px-3 text-xs font-medium text-violet-200/90 transition-all hover:bg-violet-500/15 hover:border-violet-500/40"
+                title="Bilgi bankasını düzenle"
+              >
+                <Database className="h-3 w-3" />
+                <span>Bilgi Bankası</span>
+              </Link>
+            )}
+            {isOwn && isDraft ? null : isOwn && isIndependent ? (
               <button
                 onClick={() => setPublishOpen(true)}
                 className="flex h-8 items-center gap-1 rounded-xl border border-emerald-500/20 bg-emerald-500/[0.06] px-3 text-xs font-medium text-emerald-300/90 transition-all hover:bg-emerald-500/15 hover:border-emerald-500/40"
@@ -183,7 +195,7 @@ export default function ChatbotCard({
               href={`/dashboard/chatbots/create?id=${id}`}
               className="flex h-8 items-center gap-1 rounded-xl bg-gradient-btn px-3.5 text-xs font-semibold text-white shadow-glow transition-all hover:brightness-110"
             >
-              <span>Yönet</span>
+              <span>{isDraft ? "Devam et" : "Yönet"}</span>
               <ExternalLink className="h-3 w-3" />
             </Link>
           </div>

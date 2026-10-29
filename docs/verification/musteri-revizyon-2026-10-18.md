@@ -53,7 +53,12 @@ Durum:
 
 | Alt başlık | İstenen | Yapılan | Kanıt | Canlıda doğrulandı mı |
 |---|---|---|---|---|
-| C1 | Taslak kayıt, yönetimden erişim, "Yayınla" | Faz C | | |
+| C1a (N-68) | 1. adım tamamlanınca bot taslak kaydedilsin, bilgi bankası hemen kullanılsın | 1. adımdan çıkarken (ad doluysa) bot otomatik **taslak** kaydediliyor; bilgi bankası sekmesi açık. Kayıt başarısızsa sihirbaz eski akışla sürüyor. | Yerel, ücretsiz hesap: taslak #64 → metin kaynağı eklendi (`N68-public-1-bilgi-bankasi.png`); `draft_selftest` C/D | Hayır (C paketi + 019 bekliyor) |
+| C1b (N-68) | Taslak hiçbir yerde herkese açık görünmesin | Taslak = `is_independent 1 + is_draft 1`; tüm herkese açık sorgular `is_independent = 0` istiyor. | Yerel: başka hesap listede görmüyor, ayrıntıda 404; `draft_selftest` A (vitrin, sohbet erişimi, ayrıntı) | Hayır |
+| C1c (N-68) | Taslağın limitlere etkisi belgelensin ve test edilsin | **Taslak hiçbir bot limitine sayılmaz**; kullanıcı başına en fazla **3 taslak**. Seçilen türün (herkese açık / özel) limiti **"Yayınla" anında** uygulanır; hak doluysa açık mesaj, taslak korunur. | `draft_selftest` B; yerel: terk edilmiş taslak #63 sayılmıyor (özel 0/1, açık 2/2), hak doluyken "2 herkese açık chatbot hakkınızı kullandınız" (`N68-hak-dolu.png`) | Hayır |
+| C1d (N-68) | Bilgi bankasına Chatbotlarım → bot üzerinden erişim | Her kendi botunun kartında "Bilgi Bankası" düğmesi → sihirbazın bilgi bankası adımı. Taslak kartında "Taslak" rozeti ve "Devam et". | `N68-chatbotlarim-taslak.png` | Hayır |
+| C1e (N-68) | "Yayın & Fiyat" → "Yayınla"; fiyat alanı kalıyorsa bildir | Adım "4. Yayınla": "Herkese açık yayınla" ya da "Özel olarak kaydet". **Bu adımda fiyat alanı yoktu**; fiyat Chatbotlarım'daki fiyat penceresinden. Müşteri sorusu 6 kapandı. | Yerel, ücretli hesap: taslak #65 → özel kaydet → özel 1/3 (`N68-private-*.png`) | Hayır |
+| C1f | Uçtan uca canlı deneme (ücretsiz + ücretli), ekran görüntüleri | Test hesaplarıyla (A ücretsiz, B ücretli) C paketi ve 019 canlıya alındıktan sonra yapılacak; oluşturulan botlar silinecek. | — | **Bekliyor** |
 
 ### Madde 5: Ödeme, abonelik, paket
 
@@ -65,7 +70,7 @@ Durum:
 | A2 · Türkçe mesajlar | Kod → anlaşılır mesaj | `hoppaUserMessage`: dokümandaki 100–206 ve 34 kodları, "51-Limit Yetersiz" biçimli banka reddi. Kimlik sorunu kullanıcıya "bakımda" diye gider, ayrıntı log'a yazılır | `hoppa_diag_selftest` (40) | — |
 | A2 · ödeme yoluna bağlama | | **Onaylandı ve uygulandı** (2026-10-18): başlatma hatası log'a Hoppa özetini yazıyor; kullanıcı nedene göre mesaj görüyor; dönüşte `&neden=`. Bağlantı testi IP reddini artık "anahtarı karşılaştır" diye değil, "IP'yi Hoppa'da tanımlayın" diye açıklıyor | `hoppa_selftest` B (+2), `hoppa_diag_selftest` (+4) | B paketiyle |
 | B3 · aynı paketi yeniden alma | Sunucuda engelle; arayüzde "Mevcut paketiniz" + bitiş | **Arayüz:** aktif ücretli paketin düğmesi kapalı, "Mevcut paketiniz" + bitiş tarihi. **Sunucu engeli onay bekliyor** (ödeme yolu): yenileme penceresi ve erken yenilemede günlerin korunmasıyla birlikte. Bugün erken yenileme kalan günleri yakıyor | `subscription_selftest` F; tarayıcı (ücretli/ücretsiz) | Hayır |
-| B3 · Aboneliğim | Paket, başlangıç/bitiş, kalan gün, ödeme geçmişi, Yenile, İptal | Paket sayfasında "Aboneliğim" kartı: paket, tarihler, kalan gün (3 günden az kalınca renk), "otomatik yenilenmez" notu, ödeme geçmişi. Süresi bitmişse "yeniden satın al". **Erken "Yenile" ve "İptal" onay bekliyor** (ödeme yolu + şema 019) | `subscription_selftest` (15); tarayıcı | Hayır |
+| B3 · Aboneliğim | Paket, başlangıç/bitiş, kalan gün, ödeme geçmişi, Yenile, İptal | Paket sayfasında "Aboneliğim" kartı: paket, tarihler, kalan gün (3 günden az kalınca renk), "otomatik yenilenmez" notu, ödeme geçmişi. Süresi bitmişse "yeniden satın al". **Erken "Yenile" ve "İptal" onay bekliyor** (ödeme yolu + şema 020) | `subscription_selftest` (15); tarayıcı | Hayır |
 | B3 · iptal anlamı | İki seçenek, teknik ve yasal | `docs/proposals/abonelik-yonetimi-2026-10-18.md` §4: "süre sonunda biter" (önerilen varsayılan) ve "hemen biter + iade talebi"; Mesafeli Sözleşmeler Yönetmeliği md. 15/1-ğ, h. Müşteri sorusu 3 | — | — |
 | B3 · üst/alt paket | Öner, uygulama | Öneri: üst paket hemen başlar ve kalan günler yanar, ödeme penceresinde açıkça yazar. Alt paket ve Ücretsiz, ücretli paket bitene kadar seçilemez. Müşteri sorusu 4 | — | — |
 | B3 · tek kaynak | Satın alma, görüntüleme, yenileme, iptal, cron | Görüntüleme, paket kartları, PRO etiketi ve admin aynı fonksiyonu kullanıyor (`plans.php getUserSubscription`). Satın alma, yenileme ve iptalin bağlanması onaylı değişiklikle | — | — |
@@ -279,7 +284,7 @@ Adımlar:
    - Ana sayfa → bot pop-up'ı (sayılar, "Ücret", 2026 kutusu yok).
    - Admin → Kullanıcılar → bir kullanıcının "Paket" kutusu (yalnızca görüntüle; atama yapmayın).
 
-**phpMyAdmin SQL / `schema_migrations`:** Faz B'de şema değişikliği **yok**; uygulanacak migration ve kayıt satırı yok. İptal için önerilen `019_plan_cancellation.sql` onay bekliyor ve pakette yok.
+**phpMyAdmin SQL / `schema_migrations`:** Faz B'de şema değişikliği **yok**; uygulanacak migration ve kayıt satırı yok. İptal için önerilen `020_plan_cancellation.sql` onay bekliyor ve pakette yok.
 
 PR açıklaması (kopyalanabilir):
 
@@ -298,6 +303,61 @@ Müşteri revizyonu 2026-10-18 — Faz B (işlevler)
 Doğrulama: bash scripts/verify.sh → DOĞRULAMA: GEÇTİ (22 adım)
 Arka uç: deploy/backend-2026-10-18-B.zip (sha256 c679e268…)
 Şema değişikliği yok. Onay bekleyenler: docs/proposals/abonelik-yonetimi-2026-10-18.md
+```
+
+---
+
+## 3c. Canlıya alma: Faz C
+
+**Arka uç (cPanel):** `deploy/backend-2026-10-18-C.zip` (A ve B paketlerinin tüm içeriğini de kapsar)
+
+| | |
+|---|---|
+| commit | `e034a92` |
+| dosya | 874 (654 vendor girdisi) |
+| boyut | 2,0 MB |
+| sha256 | `e2e9ae3b813c3d280cbe6c0df5b0eb16276bf1b2744ab5b041aa56975cdb194a` |
+| denetim | `.env*` 0 · anahtar taraması 0 bulgu · PHP 8.2 uyumlu |
+
+**Sıra önemli.** Ön yüz arka uçtan önce yayına girerse eski arka uç 1. adımdaki taslak isteğini normal bot olarak kaydeder (herkese açık seçiliyse hemen yayında). Bu yüzden:
+
+1. cPanel Dosya Yöneticisi → `api.lumanoris.com` → Upload → Extract (üzerine yaz). Klasörü silmeyin. (Arka uç 019 olmadan da çalışır: taslak kapalı, eski akış.)
+2. phpMyAdmin → aşağıdaki SQL (019). Sonra `SHOW COLUMNS FROM chatbotlar LIKE 'is_draft';` → 1 satır.
+3. Ancak bundan sonra ön yüz: `revize/pazaryeri` → `main` PR'ı → merge → Vercel.
+4. Kontrol listesi (test hesaplarıyla canlıda ben bakacağım):
+   - Yeni Chatbot → ad yaz → "Devam Et" → "Taslak kaydediliyor…" → bilgi bankası açık.
+   - Chatbotlarım → "Taslak" rozeti, "Bilgi Bankası", "Devam et".
+   - Başka hesaptan taslak görünmüyor.
+   - "4. Yayınla" → herkese açık / özel.
+
+**phpMyAdmin SQL (019, şema, veri silmez/değiştirmez):**
+
+```sql
+-- Ön kontrol: boş dönerse devam; satır dönerse ÇALIŞTIRMAYIN.
+SHOW COLUMNS FROM `chatbotlar` LIKE 'is_draft';
+
+ALTER TABLE `chatbotlar`
+  ADD COLUMN `is_draft` TINYINT(1) NOT NULL DEFAULT 0 COMMENT '1=taslak (sihirbaz 1. adımda kaydedildi, henüz yayınlanmadı/özel kaydedilmedi)' AFTER `is_independent`,
+  ADD INDEX `idx_chatbot_author_draft` (`author_user_id`, `is_draft`);
+
+-- Yalnızca schema_migrations tablosu varsa (SHOW TABLES LIKE 'schema_migrations';):
+INSERT INTO schema_migrations (filename, checksum, applied_at)
+VALUES ('019_chatbot_draft.sql', '8b74b3c36208f36f20eb176be5421ade54a5f107adec159e8601ed4063228d51', NOW());
+```
+
+Geri alma (gerekirse; ayrı ters işlem, taslakları önce yayınlayın ya da silin): `ALTER TABLE chatbotlar DROP INDEX idx_chatbot_author_draft, DROP COLUMN is_draft;` ve `schema_migrations`'tan 019 satırı. Sütun kalkınca arka uç kendiliğinden eski akışa döner.
+
+PR açıklaması (kopyalanabilir):
+
+```
+Müşteri revizyonu 2026-10-18 — Faz C (bilgi bankası / yayın akışı)
+
+- N-67 Aynı aktif paketin yeniden satın alınması sunucuda engellendi; bitişe 7 gün kala "Yenile (+30 gün)", kalan günler korunuyor (onaylı)
+- N-68 Bot 1. adımda taslak kaydediliyor; bilgi bankası hemen kullanılabilir. Taslak hiçbir yerde görünmez, limitlere sayılmaz (en fazla 3); limit "Yayınla" anında. Son adım "4. Yayınla" (herkese açık / özel). Chatbotlarım: "Taslak" rozeti, "Bilgi Bankası" düğmesi.
+
+Doğrulama: bash scripts/verify.sh → DOĞRULAMA: GEÇTİ
+Arka uç: deploy/backend-2026-10-18-C.zip (sha256 e2e9ae3b…) — MERGE'DEN ÖNCE yüklenmeli
+Şema: migration 019 (chatbotlar.is_draft) — MERGE'DEN ÖNCE phpMyAdmin'de çalıştırılmalı
 ```
 
 ---

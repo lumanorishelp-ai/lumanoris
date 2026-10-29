@@ -125,5 +125,44 @@ function recordPrivacyRightUsage(Database $db, int $userId, int $chatbotId): voi
 }
 
 function countUserChatbots(Database $db, int $userId, int $isIndependent): int {
-    return $db->count(AppConfig::TABLE_CHATBOTS, 'author_user_id = ? AND is_independent = ?', [$userId, $isIndependent]);
+    // N-68 — taslaklar (is_draft = 1) hiçbir bot limitine sayılmaz.
+    $draft = chatbotHasDraftColumn($db) ? ' AND is_draft = 0' : '';
+    return $db->count(AppConfig::TABLE_CHATBOTS, 'author_user_id = ? AND is_independent = ?' . $draft, [$userId, $isIndependent]);
+}
+
+// ── N-68 — taslak bot (Madde 4 / Faz C) ─────────────────────────────────────
+//
+// Sihirbazın 1. adımında bot TASLAK kaydedilir: is_independent = 1 AND
+// is_draft = 1 (migration 019). Herkese açık her sorgu is_independent = 0
+// istediği için taslak hiçbir genel yerde görünmez. Taslak bot limitlerine
+// SAYILMAZ; kötüye kullanıma karşı kullanıcı başına en fazla
+// CHATBOT_DRAFT_LIMIT taslak. "Yayınla" (publishChatbot) ya da "Özel kaydet"
+// (finalizeDraft) anında seçilen türün limiti uygulanır.
+
+const CHATBOT_DRAFT_LIMIT = 3;
+
+/** Migration 019 uygulanmış mı? Uygulanmamışsa taslak kapalı, eski davranış. */
+function chatbotHasDraftColumn(Database $db): bool {
+    static $has = null;
+    if ($has !== null) {
+        return $has;
+    }
+    try {
+        $row = $db->selectSingle(
+            "COUNT(*) AS c FROM information_schema.COLUMNS
+             WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = 'is_draft'",
+            [AppConfig::TABLE_CHATBOTS]
+        );
+        return $has = ((int) ($row['c'] ?? 0) === 1);
+    } catch (Throwable $e) {
+        error_log('[chatbot_limits] is_draft kontrolü başarısız: ' . $e->getMessage());
+        return $has = false;
+    }
+}
+
+function countDraftBots(Database $db, int $userId): int {
+    if (!chatbotHasDraftColumn($db)) {
+        return 0;
+    }
+    return $db->count(AppConfig::TABLE_CHATBOTS, 'author_user_id = ? AND is_draft = 1', [$userId]);
 }

@@ -6,8 +6,8 @@ import { cn } from "@/lib/utils";
  * (functions/plans.php → getUserSubscription; paket kartlarıyla aynı kaynak).
  *
  * Paketler otomatik yenilenmez (30 günlük tek seferlik satış). Süresi
- * dolmadan yenileme ve iptal müşteri kararı bekliyor
- * (docs/musteri/sorular-2026-10-18.md) — o düğmeler burada henüz yok.
+ * dolmadan yenileme (N-67, onaylı): bitişe ≤7 gün kala "Yenile", kalan günler
+ * korunur. İptal müşteri kararı bekliyor — düğmesi henüz yok.
  */
 const fmtDate = (s) => (s ? new Date(String(s).replace(" ", "T")).toLocaleDateString("tr-TR") : "—");
 const fmtMoney = (n) => `₺${Number(n).toLocaleString("tr-TR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -47,6 +47,15 @@ export default function SubscriptionCard({ sub, onRebuy }) {
             <dd className="font-mono text-zinc-200">{sub.expires_at ? fmtDate(sub.expires_at) : "Süresiz"}</dd>
           </dl>
         )}
+        {sub.state === "active" && sub.can_renew && onRebuy && (
+          <button
+            type="button"
+            onClick={() => onRebuy(sub.plan)}
+            className="h-10 shrink-0 rounded-xl bg-gradient-btn px-4 text-xs font-semibold text-white hover:brightness-110"
+          >
+            Yenile (+30 gün)
+          </button>
+        )}
         {sub.state === "expired" && onRebuy && (
           <button
             type="button"
@@ -62,6 +71,7 @@ export default function SubscriptionCard({ sub, onRebuy }) {
         <p className="mt-4 flex items-start gap-2 rounded-xl border border-white/[0.06] bg-white/[0.02] px-3.5 py-2.5 text-xs leading-relaxed text-zinc-400">
           <CalendarClock className="mt-0.5 h-3.5 w-3.5 shrink-0 text-violet-400" />
           Paketler otomatik yenilenmez; süre sonunda ücretsiz pakete geçilir. Bitişten 3 gün önce bildirim alırsınız.
+          {` Bitişe ${sub.renewal_window_days ?? 7} gün kala yenileyebilirsiniz; kalan günleriniz korunur.`}
         </p>
       )}
 

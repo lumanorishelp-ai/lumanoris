@@ -58,8 +58,24 @@ class ChatbotRepository extends BaseRepository implements ChatbotRepositoryInter
         return self::delete(self::T, 'id = ?', [$id]) > 0;
     }
 
+    /** N-68 — migration 019 uygulanmış mı (taslak sütunu)? */
+    private static function hasDraft(): bool {
+        require_once __DIR__ . '/../../../functions/chatbot_limits.php';
+        return chatbotHasDraftColumn(Database::getInstance());
+    }
+
+    /** Yayınla: herkese açık yapar; taslaksa taslaktan da çıkarır (N-68). */
     public function publish(int $id): bool {
-        return self::update(self::T, ['is_independent' => 0], 'id = :_id', ['_id' => $id]) > 0;
+        $set = ['is_independent' => 0] + (self::hasDraft() ? ['is_draft' => 0] : []);
+        return self::update(self::T, $set, 'id = :_id', ['_id' => $id]) > 0;
+    }
+
+    /** N-68 — taslağı özel (bağımsız) bot olarak kaydeder. */
+    public function finalizeDraftPrivate(int $id): bool {
+        if (!self::hasDraft()) {
+            return false;
+        }
+        return self::update(self::T, ['is_independent' => 1, 'is_draft' => 0], 'id = :_id AND is_draft = 1', ['_id' => $id]) > 0;
     }
 
     public function unpublish(int $id): bool {
@@ -79,15 +95,18 @@ class ChatbotRepository extends BaseRepository implements ChatbotRepositoryInter
 
     public function countByOwner(int $ownerId): array {
         $row = self::one(
+            // N-68 — taslaklar özel bot sayısına girmez; ayrıca sayılır.
             'SELECT
-                SUM(is_independent = 1) AS independent_count,
-                SUM(is_independent = 0) AS public_count
+                ' . (self::hasDraft() ? 'SUM(is_independent = 1 AND is_draft = 0)' : 'SUM(is_independent = 1)') . ' AS independent_count,
+                SUM(is_independent = 0) AS public_count,
+                ' . (self::hasDraft() ? 'SUM(is_draft = 1)' : '0') . ' AS draft_count
              FROM `' . self::T . '` WHERE author_user_id = ?',
             [$ownerId]
         );
         return [
             'independent' => (int) ($row['independent_count'] ?? 0),
             'public'      => (int) ($row['public_count'] ?? 0),
+            'draft'       => (int) ($row['draft_count'] ?? 0),
         ];
     }
 
@@ -235,7 +254,7 @@ class ChatbotRepository extends BaseRepository implements ChatbotRepositoryInter
     /** Returns bots the user owns or has active subscriptions for. */
     public function getMenuItems(int $userId): array {
         return self::all(
-            "SELECT c.id, c.author_user_id, c.owner_user_id, c.is_independent, c.isim,
+            "SELECT c.id, c.author_user_id, c.owner_user_id, c.is_independent, " . (self::hasDraft() ? 'c.is_draft' : '0 AS is_draft') . ", c.isim,
                     c.kapak_fotografi, c.profil_fotografi, c.kategori_id, c.ucret_haftalik, c.ucret_aylik,
                     COALESCE(pms.status, 'not_started') AS seller_status,
                     (SELECT COUNT(*) FROM chatbot_likes WHERE chatbot_id = c.id) AS likes,
@@ -385,7 +404,7 @@ class ChatbotRepository extends BaseRepository implements ChatbotRepositoryInter
         }
 
         $row = self::one(
-            "SELECT c.id, c.isim, c.is_independent,
+            "SELECT c.id, c.isim, c.is_independent, " . (self::hasDraft() ? 'c.is_draft' : '0 AS is_draft') . ",
                     (SELECT kullanici_adi FROM kullanicilar WHERE id = c.author_user_id) AS author_username,
                     (SELECT kullanici_adi FROM kullanicilar WHERE id = c.owner_user_id)  AS owner_username,
                     c.owner_user_id, c.aciklama, c.kategori_id,

@@ -183,9 +183,13 @@ export default function App() {
             const isOwn = String(bot.author_user_id) === String(userId);
             const isPurchased =
               !isOwn && String(bot.owner_user_id) === String(userId);
+            // N-68 — taslak (sihirbaz 1. adımda kaydedildi, yayınlanmadı).
+            const isDraftBot = isOwn && Number(bot.is_draft) === 1;
             const statusLabel = isPurchased
               ? "Satın Alındı"
-              : Number(bot.is_independent)
+              : isDraftBot
+                ? "Taslak"
+                : Number(bot.is_independent)
                 ? "Bağımsız"
                 : isFreePublic(bot)
                   ? "Yayında"
@@ -208,6 +212,7 @@ export default function App() {
                 weeklyPrice={bot.ucret_haftalik}
                 monthlyPrice={bot.ucret_aylik}
                 isIndependent={!!bot.is_independent}
+                isDraft={isDraftBot}
                 isOwn={isOwn}
                 onDelete={() => handleDelete(bot.id)}
                 onChanged={fetchChatbots}

@@ -59,48 +59,7 @@ function finish(): void {
 }
 
 /** B bölümü için sahte sağlayıcı: ağ yok, yanıtı test belirliyor, çağrıları sayıyor. */
-final class FakeHostedGateway implements PaymentGatewayInterface
-{
-    public int $queries = 0;
-    public array $next  = ['state' => 'pending', 'amount' => null, 'commission' => null, 'transaction_id' => null, 'message' => '', 'raw' => []];
-    /** Sipariş başına sabit yanıt (mutabakat testi). */
-    public array $byOrder = [];
-    /** Sırayla tüketilen yanıtlar (iade testi: önce/sonra sorgusu). Doluysa önceliklidir. */
-    public array $queue = [];
-    /** Sorulan siparişler, sırayla. */
-    public array $asked = [];
-    public int $refunds = 0;
-    public ?float $lastRefundAmount = null;
-    public array $refundResult = ['success' => true, 'message' => 'İŞLEM İPTAL EDİLDİ', 'error_code' => null, 'raw' => ['STATUS' => 'SUCCESS']];
-
-    public function isConfigured(): bool { return true; }
-    public function isTest(): bool { return true; }
-    /** Doluysa startHostedPayment bunu döner (N-57: başarısız başlatma). */
-    public ?array $startResult = null;
-    public function startHostedPayment(array $order): array
-    {
-        if ($this->startResult !== null) {
-            return $this->startResult;
-        }
-        return ['success' => true, 'redirect_url' => 'https://postest.esnekpos.com/Pages/CommonPaymentNew.aspx?hash=fake',
-                'provider_ref' => '1', 'message' => '', 'error_code' => null, 'raw' => []];
-    }
-    public function queryPayment(string $orderRef): array
-    {
-        $this->queries++;
-        $this->asked[] = $orderRef;
-        if ($this->queue !== []) {
-            return array_shift($this->queue);
-        }
-        return $this->byOrder[$orderRef] ?? $this->next;
-    }
-    public function refundPayment(string $orderRef, float $amount): array
-    {
-        $this->refunds++;
-        $this->lastRefundAmount = $amount;
-        return $this->refundResult;
-    }
-}
+require_once __DIR__ . '/fake_hosted_gateway.php';
 
 // ── Test ortamında kaydedilmiş gerçek ProcessQuery yanıtları (2026-10-07) ──
 // Kişisel/kimlik verisi yok; TEST üye işyeri siparişleri.
@@ -411,6 +370,23 @@ try {
     $r5 = $refund($fake, $oNew);
     check('Hoppa\'da zaten iade edilmiş: istek gönderilmez, satır refunded', $r5['success'] && $fake->refunds === $refundsBefore && $row($oNew)['status'] === 'refunded');
     check('iade: admin_audit_log sonuçları (dogrulanamadi, tamamlandi)', $outcomes($oNew) === ['dogrulanamadi', 'tamamlandi'], json_encode($outcomes($oNew)));
+
+    // N-67 (onaylı 2026-10-19) — erken yenilemede kalan günler korunur:
+    // aynı paket, 5 gün kalmışken ödendi → bitiş mevcut bitiş + 30 gün.
+    $db->execute('UPDATE user_plan_selection SET plan_name = ?, expires_at = DATE_ADD(NOW(), INTERVAL 5 DAY) WHERE user_id = ?', [$plan['name_tr'], $uid]); // ROLLBACK
+    $oRen = WalletController::startHostedPlanPayment($db, $fake, $uid, $plan, 'http://localhost:3000')['order_id'];
+    $fake->byOrder[$oRen] = $qr('paid', $price, 0.0);
+    WalletController::finalizeHostedPlanPayment($db, $fake, $oRen);
+    $days = (int) $db->selectSingle('TIMESTAMPDIFF(HOUR, NOW(), expires_at) AS h FROM user_plan_selection WHERE user_id = ?', [$uid])['h'];
+    check('erken yenileme: bitiş ≈ +35 gün (5 kalan + 30), kalan günler yanmadı', $days >= 34 * 24 && $days <= 35 * 24, "saat=$days");
+
+    // Süresi dolmuş paket yenilenince bitiş NOW() + 30 (geçmişe eklenmez).
+    $db->execute('UPDATE user_plan_selection SET expires_at = DATE_SUB(NOW(), INTERVAL 3 DAY) WHERE user_id = ?', [$uid]);
+    $oExp = WalletController::startHostedPlanPayment($db, $fake, $uid, $plan, 'http://localhost:3000')['order_id'];
+    $fake->byOrder[$oExp] = $qr('paid', $price, 0.0);
+    WalletController::finalizeHostedPlanPayment($db, $fake, $oExp);
+    $days = (int) $db->selectSingle('TIMESTAMPDIFF(HOUR, NOW(), expires_at) AS h FROM user_plan_selection WHERE user_id = ?', [$uid])['h'];
+    check('süresi dolmuş paket: bitiş ≈ +30 gün', $days >= 29 * 24 && $days <= 30 * 24, "saat=$days");
 } finally {
     $conn->rollBack();
 }

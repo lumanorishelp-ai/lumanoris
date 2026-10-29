@@ -122,6 +122,10 @@ php api/database/hoppa_diag_selftest.php     # Hoppa bağlantı testi sınıflam
 php api/database/readurl_selftest.php        # URL okuma: hata sınıfları, içerik çıkarma, karakter kodlaması (N-61), çevrimdışı
 php api/database/document_selftest.php       # belge: PDF/DOCX/TXT, şifreli/taranmış/.doc/boyut mesajları (N-62), çevrimdışı
 php api/database/subscription_selftest.php   # Aboneliğim + paket kaynağı/admin ataması (N-63, N-64), TRANSACTION+ROLLBACK
+php api/database/draft_selftest.php          # taslak bot: görünmezlik, limite sayılmama, yayınla/özel kaydet (N-68), TRANSACTION+ROLLBACK
+php api/database/timezone_selftest.php       # PHP ve MySQL oturumu tek saat diliminde; ödenmiş paket "Satın alma" (N-69), TRANSACTION+ROLLBACK
+php api/database/plan_coin_selftest.php     # paket alındığı gün coin farkı; aynı gün ikinci kez yok; iadede geri alınır (N-71), TRANSACTION+ROLLBACK
+php api/database/denylist_selftest.php      # /router.php canlıda (.htaccess) ve yerelde (php -S) kapalı, normal uçlar açık (N-73)
 node --test web/src/shared/lib/image-url.test.mjs # tek görsel URL üreticisi + baş harf yer tutucu (N-58)
 node --test web/src/features/chat/reply-errors.test.mjs # sohbet hata türü → kullanıcı metni (N-59)
 node --test web/src/shared/lib/plan-badge.test.mjs # PRO etiketi: fiyat temelli bayrak + bitiş anı (N-64)

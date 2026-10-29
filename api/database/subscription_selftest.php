@@ -149,6 +149,33 @@ try {
         $set(null, null);
         check('ücretsiz → free', getPlanSource($db, $uid, getUserSubscription($db, $uid, true))['source'] === 'free');
     }
+
+    echo "\n=== H) Aynı paket engeli + yenileme penceresi (N-67, onaylı 2026-10-19) ===\n\n";
+    if (!function_exists('planPurchaseCheck') || !defined('PLAN_RENEWAL_WINDOW_DAYS')) {
+        check('functions/plans.php: planPurchaseCheck, PLAN_RENEWAL_WINDOW_DAYS', false, 'tanımlı değil');
+    } else {
+        $P = $paid['name_tr'];
+        $s25 = ['plan' => $P, 'is_paid' => true, 'state' => 'active', 'expires_at' => '2026-11-12 00:00:00', 'days_left' => 25];
+        $r = planPurchaseCheck($s25, $P);
+        check('aktif paket, 25 gün kaldı → aynı paket reddedilir', !$r['allowed'] && !$r['renewal'], json_encode($r, JSON_UNESCAPED_UNICODE));
+        check('ret mesajı paketi, bitişi ve yenileme penceresini söylüyor',
+            str_contains($r['message'], $P) && str_contains($r['message'], '12.11.2026') && str_contains($r['message'], (string) PLAN_RENEWAL_WINDOW_DAYS), $r['message']);
+        $s5 = ['days_left' => 5] + $s25;
+        $r = planPurchaseCheck($s5, $P);
+        check('aktif paket, 5 gün kaldı → yenileme olarak izinli', $r['allowed'] && $r['renewal']);
+        $edge = ['days_left' => PLAN_RENEWAL_WINDOW_DAYS] + $s25;
+        check('tam pencere sınırında (7 gün) → izinli', planPurchaseCheck($edge, $P)['allowed']);
+        $forever = ['expires_at' => null, 'days_left' => null] + $s25;
+        check('süresiz aktif paket → aynı paket her zaman reddedilir', !planPurchaseCheck($forever, $P)['allowed']);
+        $other = $db->selectSingle('name_tr FROM plans WHERE monthly_price > ? ORDER BY monthly_price LIMIT 1', [$paid['monthly_price']]);
+        check('farklı paket (üst/alt) → bu kural karışmıyor (müşteri kararı bekliyor)', planPurchaseCheck($s25, (string) $other['name_tr'])['allowed']);
+        check('ücretsiz/süresi dolmuş → izinli', planPurchaseCheck(['plan' => $free['name_tr'], 'is_paid' => false, 'state' => 'expired', 'expires_at' => null, 'days_left' => null], $P)['allowed']);
+
+        $ctl = (string) file_get_contents(__DIR__ . '/../src/Presentation/Controllers/WalletController.php');
+        check('upgradePlan sunucuda planPurchaseCheck uyguluyor (Hoppa\'ya gitmeden)',
+            (bool) preg_match('/function upgradePlan\(\)[\s\S]*planPurchaseCheck\([\s\S]*startHostedPlanPayment\(/', $ctl));
+        check('kesinleştirme erken yenilemede mevcut bitişe ekliyor (GREATEST)', str_contains($ctl, 'GREATEST(NOW()'));
+    }
 } finally {
     $conn->rollBack();
 }

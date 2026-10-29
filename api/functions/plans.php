@@ -67,6 +67,15 @@ function plansTableReady(Database $db): bool
  * yani Elmas plandaki herkes sessizce ücretsiz kotalara inerdi. Kontrol
  * istek başına bir kez yapılıp hatırlanıyor.
  */
+/**
+ * N-69 — veritabanının şimdiki zamanı. Plan seçim anı `expires_at` ve sipariş
+ * `created_at` ile aynı saatten yazılsın diye (PHP date() değil).
+ */
+function planSelectionNow(Database $db): string
+{
+    return (string) $db->selectSingle('NOW() AS n')['n'];
+}
+
 function planSelectionHasExpiry(Database $db): bool
 {
     static $has = null;
@@ -221,6 +230,26 @@ function getDailyMessageLimit(Database $db, int $userId): int
 }
 
 /**
+ * N-71 — bir paketin günlük coin hakkı, ADINDAN ve önbelleksiz. Kesinleştirme
+ * aynı istekte eski ve yeni paketin hakkını okuyor; getUserPlan() istek
+ * başına önbellekli olduğu için orada eski değeri döndürürdü.
+ * null / katalogda olmayan ad → varsayılan (ücretsiz) paket.
+ */
+function planDailyLimit(Database $db, ?string $planName): int
+{
+    if (plansTableReady($db)) {
+        $row = $planName !== null && $planName !== ''
+            ? $db->selectSingle('daily_message_limit FROM plans WHERE name_tr = ? COLLATE utf8mb4_general_ci', [$planName])
+            : null;
+        $row = $row ?: $db->selectSingle('daily_message_limit FROM plans WHERE is_default = 1 ORDER BY sort_order LIMIT 1');
+        if ($row) {
+            return (int) $row['daily_message_limit'];
+        }
+    }
+    return (int) fallbackPlan()['daily_message_limit'];
+}
+
+/**
  * N-63 — "Aboneliğim": görüntüleme ve paket sayfası (getPricing) aynı
  * kaynaktan okur. Etkin plan kuralı getUserPlan() ile aynı: ücretli paket
  * `expires_at` geçmişse etkin değildir; `expires_at IS NULL` süresizdir.
@@ -326,10 +355,14 @@ function getPlanSource(Database $db, int $userId, array $sub): array
         return ['source' => 'admin', 'label' => sprintf('Admin ataması (%s, %s)', $audit['admin_name'], date('d.m.Y H:i', strtotime((string) $audit['created_at'])))];
     }
 
+    // N-69 — üst sınır 14 saat: düzeltmeden önce `selected_at` PHP saatiyle
+    // (canlıda UTC olabilir), sipariş MySQL saatiyle yazılıyordu; eski satırda
+    // seçim, siparişten saatlerce "önce" görünebilir. 14 saat = dünyadaki en
+    // büyük ofset farkı. Kayıtlar yeniden yazılmıyor, okuma toleranslı.
     $pay = $db->selectSingle(
         "order_id, created_at FROM param_marketplace_payments
           WHERE user_id = ? AND order_id LIKE 'PLN-%' AND status = 'paid'
-            AND items_json LIKE ? AND created_at BETWEEN DATE_SUB(?, INTERVAL 2 DAY) AND DATE_ADD(?, INTERVAL 1 MINUTE)
+            AND items_json LIKE ? AND created_at BETWEEN DATE_SUB(?, INTERVAL 2 DAY) AND DATE_ADD(?, INTERVAL 14 HOUR)
           ORDER BY id DESC LIMIT 1",
         [$userId, '%' . json_encode($sub['plan'], JSON_UNESCAPED_UNICODE) . '%', $selectedAt, $selectedAt]
     );
@@ -374,7 +407,7 @@ function adminAssignPlan(Database $db, int $userId, string $planName, ?string $e
             'plan_name, ' . (planSelectionHasExpiry($db) ? 'expires_at' : 'NULL AS expires_at') . ' FROM user_plan_selection WHERE user_id = ? FOR UPDATE',
             [$userId]
         );
-        $row = ['user_id' => $userId, 'plan_name' => (string) $plan['name_tr'], 'selected_at' => date('Y-m-d H:i:s')];
+        $row = ['user_id' => $userId, 'plan_name' => (string) $plan['name_tr'], 'selected_at' => planSelectionNow($db)];
         if (planSelectionHasExpiry($db)) {
             $row['expires_at'] = $expiresAt;
         }
@@ -409,4 +442,36 @@ function adminAssignPlan(Database $db, int $userId, string $planName, ?string $e
         return ['ok' => false, 'message' => 'Paket atanamadı.'];
     }
     return ['ok' => true, 'message' => 'Paket atandı.'];
+}
+
+/**
+ * N-67 (onaylı 2026-10-19) — aynı paketin yeniden satın alınması.
+ * Aktif ücretli paket yeniden satın alınamaz; yalnızca bitişe
+ * PLAN_RENEWAL_WINDOW_DAYS gün ya da daha az kala "yenileme" olarak alınır
+ * (kesinleştirmede yeni bitiş = GREATEST(NOW(), mevcut bitiş) + 30 gün).
+ * Süresiz ücretli pakette hiç alınamaz. Üst/alt paket geçişi BU KURALIN
+ * DIŞINDA (müşteri kararı bekliyor) — farklı paket her zaman izinli.
+ */
+const PLAN_RENEWAL_WINDOW_DAYS = 7;
+
+/** @return array{allowed: bool, renewal: bool, message: string} */
+function planPurchaseCheck(array $sub, string $planName): array
+{
+    $same = ($sub['is_paid'] ?? false) && ($sub['state'] ?? '') === 'active' && ($sub['plan'] ?? '') === $planName;
+    if (!$same) {
+        return ['allowed' => true, 'renewal' => false, 'message' => ''];
+    }
+    if (($sub['expires_at'] ?? null) === null) {
+        return ['allowed' => false, 'renewal' => false,
+            'message' => "\"$planName\" paketiniz zaten etkin ve süresiz; yeniden satın almanız gerekmiyor."];
+    }
+    $days = (int) ($sub['days_left'] ?? 0);
+    if ($days <= PLAN_RENEWAL_WINDOW_DAYS) {
+        return ['allowed' => true, 'renewal' => true, 'message' => ''];
+    }
+    $until = date('d.m.Y', strtotime((string) $sub['expires_at']));
+    return ['allowed' => false, 'renewal' => false, 'message' => sprintf(
+        '"%s" paketiniz zaten etkin (bitiş: %s). Bitişe %d gün kala yenileyebilirsiniz; kalan günleriniz korunur.',
+        $planName, $until, PLAN_RENEWAL_WINDOW_DAYS
+    )];
 }

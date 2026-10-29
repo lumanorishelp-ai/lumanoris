@@ -2,6 +2,8 @@
 
 Yapılan (N-63, onay gerektirmeyen kısım): "Aboneliğim" kartı, ödeme geçmişi, aktif ücretli paketin düğmesinin kapanması. Hepsi tek kaynaktan: `functions/plans.php → getUserSubscription`.
 
+> **Durum (2026-10-19):** Kural 1 (aynı paket engeli + yenileme penceresi) ve erken yenilemede kalan günlerin korunması **onaylandı ve uygulandı** (N-67). Kural 2–5 (üst/alt paket, iptal ve 019 şeması) müşteri cevabını bekliyor.
+
 Aşağıdakiler **ödeme yoluna** (`upgradePlan`, `finalizeHostedPlanPayment`) ya da **şemaya** dokunuyor. CLAUDE.md gereği onay olmadan uygulanmadı.
 
 ---
@@ -26,7 +28,7 @@ Aşağıdakiler **ödeme yoluna** (`upgradePlan`, `finalizeHostedPlanPayment`) y
 
 ## 3. Teknik taslak
 
-### 3.1 Şema: `api/database/migrations/019_plan_cancellation.sql` (yıkıcı değil)
+### 3.1 Şema: `api/database/migrations/020_plan_cancellation.sql` (yıkıcı değil)
 
 ```sql
 ALTER TABLE user_plan_selection
@@ -34,7 +36,7 @@ ALTER TABLE user_plan_selection
   ADD COLUMN cancel_mode VARCHAR(20) NULL DEFAULT NULL AFTER cancel_requested_at;
 ```
 
-- `phpmyadmin/019_plan_cancellation.sql` aynı içerikle hazırlanır.
+- `phpmyadmin/020_plan_cancellation.sql` aynı içerikle hazırlanır.
 - Geri alma: `ALTER TABLE user_plan_selection DROP COLUMN cancel_mode, DROP COLUMN cancel_requested_at;` (ayrı, onaylı ters migration).
 - Yeni bir paket satın alındığında bu iki alan `NULL`'a döner (`planSelectionRow`).
 

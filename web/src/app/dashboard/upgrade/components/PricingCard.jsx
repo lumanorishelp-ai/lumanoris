@@ -63,10 +63,10 @@ export default function PricingCard({
 
       <div>
         {/* Action Button */}
-        {/* N-63 — aktif ücretli paket yeniden satın alınamaz (düğme kapalı,
-            bitiş gösterilir). Sunucu tarafı engeli onay bekliyor (ödeme yolu). */}
+        {/* N-63/N-67 — aktif ücretli paket yeniden satın alınamaz (sunucu da
+            reddeder); bitişe ≤7 gün kala "Yenile (+30 gün)" açılır. */}
         <PricingButton
-          disabled={plan.title === "Ücretsiz" || plan.is_active_paid || isUpgrading}
+          disabled={plan.title === "Ücretsiz" || (plan.is_active_paid && !plan.can_renew) || isUpgrading}
           onClick={onChoose}
           variant={
             plan.buttonType === "primary"
@@ -78,14 +78,14 @@ export default function PricingCard({
           className="w-full rounded-xl py-3.5 text-xs font-semibold tracking-wide mb-8 group/btn"
         >
           <span>{isUpgrading ? "İşleniyor..." : plan.buttonText}</span>
-          {plan.title !== "Ücretsiz" && !plan.is_active_paid && !isUpgrading && (
+          {plan.title !== "Ücretsiz" && (!plan.is_active_paid || plan.can_renew) && !isUpgrading && (
             <ArrowRight className="w-4 h-4 ml-2 group-hover/btn:translate-x-1 transition-transform" />
           )}
         </PricingButton>
         {plan.is_active_paid && (
           <p className="-mt-6 mb-8 text-center text-caption text-zinc-400">
             {plan.current_expires_at
-              ? `Bitiş: ${new Date(plan.current_expires_at.replace(" ", "T")).toLocaleDateString("tr-TR")}`
+              ? `Bitiş: ${new Date(plan.current_expires_at.replace(" ", "T")).toLocaleDateString("tr-TR")}${plan.can_renew ? " · yenilerseniz kalan günleriniz korunur" : ""}`
               : "Süresiz"}
           </p>
         )}

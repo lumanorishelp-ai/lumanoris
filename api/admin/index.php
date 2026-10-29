@@ -3,7 +3,9 @@ require_once __DIR__ . '/../functions/logging.php';
 configure_error_log();
 require_once __DIR__ . '/../functions/util.php';
 require_once __DIR__ . '/functions/tailmind.php';
-date_default_timezone_set('Europe/Istanbul');
+// N-69 — sabit Europe/Istanbul yerine API ile aynı kaynak (APP_TIMEZONE).
+require_once __DIR__ . '/../functions/timezone.php';
+app_timezone_init();
 // The admin panel turned display_errors on unconditionally, regardless of
 // APP_DEBUG — so in production a PHP notice or warning would be printed into
 // the page (and, for anything that emits JSON, into the response body). Honour

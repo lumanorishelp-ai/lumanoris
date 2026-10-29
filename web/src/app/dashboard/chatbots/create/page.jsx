@@ -241,7 +241,9 @@ const FORM_TABS = [
   { id: "general", label: "1. Kimlik & Genel", icon: User },
   { id: "brain", label: "2. Prompt & Zeka", icon: Cpu },
   { id: "knowledge", label: "3. Bilgi Bankası", icon: Database },
-  { id: "publish", label: "4. Yayın & Fiyat", icon: Rocket },
+  // N-68 — müşteri isteği (Madde 4): "Yayın & Fiyat" → "Yayınla". Bu adımda
+  // fiyat alanı zaten yok; fiyat Chatbotlarım'daki satış penceresinden.
+  { id: "publish", label: "4. Yayınla", icon: Rocket },
 ];
 
 /* Hazır rol şablonları. Seçili olanı işaretleyebilmek için liste ile sistem
@@ -305,6 +307,13 @@ function ChatbotForm({
     setActiveTab(id);
     tabsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
+  // N-68 — Chatbotlarım → "Bilgi Bankası" bağlantısı (?tab=knowledge) doğrudan
+  // o adımı açar. Yalnızca kayıtlı bot için (yeni botta 1. adımdan başlanır).
+  useEffect(() => {
+    const t = new URLSearchParams(window.location.search).get("tab");
+    if (t && FORM_TABS.some((x) => x.id === t) && bot) setActiveTab(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [simulatedChat, setSimulatedChat] = useState([
     {
       sender: "bot",
@@ -313,6 +322,7 @@ function ChatbotForm({
   ]);
   const [inputMsg, setInputMsg] = useState("");
   const [isBuilding, setIsBuilding] = useState(false);
+  const [redirecting, setRedirecting] = useState(false); // N-72
   const [isPreviewLoading, setIsPreviewLoading] = useState(false);
   const [submitError, setSubmitError] = useState(null);
 
@@ -326,6 +336,17 @@ function ChatbotForm({
   );
   const [coverFile, setCoverFile] = useState(null);
   const [profileFile, setProfileFile] = useState(null);
+  /* N-68 — bot 1. adımdan çıkarken TASLAK kaydedilir; bilgi bankası hemen
+     kullanılabilir. Taslak hiçbir yerde herkese görünmez, bot hakkı yemez
+     (sunucu: is_independent = 1 AND is_draft = 1). "Yayınla" adımında
+     herkese açık yayınlanır ya da özel kaydedilir. */
+  const [isDraft, setIsDraft] = useState(Number(bot?.chatbot?.is_draft) === 1);
+  const [draftSaving, setDraftSaving] = useState(false);
+  const [draftError, setDraftError] = useState(null);
+  /* N-70 — taslak her zaman is_independent = 1 saklanıyor; yeniden açılan
+     taslakta bu "Özel"i seçili getiriyordu. Hiçbir seçenek seçili gelmez,
+     kullanıcı seçmeden "Yayınla" düğmesi pasif. */
+  const [publishAs, setPublishAs] = useState(null);
   const [coverPreview, setCoverPreview] = useState(
     bot?.chatbot?.kapak_fotografi ? assetUrl(bot.chatbot.kapak_fotografi) : "",
   );
@@ -561,9 +582,77 @@ function ChatbotForm({
     reader.readAsDataURL(file);
   };
 
+  /* N-68 — taslak kaydı. Ad boşsa kaydetmez (sunucu da ister). Başarısızlıkta
+     sihirbaz eski akışla devam eder: bot son adımda oluşturulur. */
+  const saveDraft = async () => {
+    if (isPersisted || !botName.trim() || draftSaving) return isPersisted;
+    setDraftSaving(true);
+    setDraftError(null);
+    try {
+      const chatbotData = {
+        id: -1,
+        isim: botName.trim(),
+        aciklama: description,
+        style_prompt: systemPrompt,
+        sohbet_basi_mesaj: "",
+        is_independent: independentMode ? 1 : 0,
+        is_draft: 1,
+      };
+      if (categoryId) chatbotData.kategori_id = Number(categoryId);
+      const formData = new FormData();
+      formData.append("data", JSON.stringify(chatbotData));
+      if (coverFile) formData.append("coverImage_file", coverFile);
+      if (profileFile) formData.append("profileImage_file", profileFile);
+      const res = await fetch("/api/chatbot/savechatbot.php", { method: "POST", body: formData, credentials: "include" });
+      const result = await res.json().catch(() => null);
+      if (!result?.success || !result.id) {
+        setDraftError(result?.message || "Taslak kaydedilemedi.");
+        return false;
+      }
+      setCreatedBotId(Number(result.id));
+      setIsDraft(Boolean(result.is_draft));
+      setCoverFile(null);
+      setProfileFile(null);
+      window.history.replaceState(null, "", `${window.location.pathname}?id=${result.id}`);
+      refetchAccount();
+      return true;
+    } catch {
+      setDraftError("Sunucuya bağlanılamadı; taslak kaydedilemedi.");
+      return false;
+    } finally {
+      setDraftSaving(false);
+    }
+  };
+
+  /* 1. adımdan ayrılırken (sekme ya da "Devam Et") taslağı kaydet. */
+  const navigate = async (id) => {
+    if (activeTab === "general" && id !== "general" && !isPersisted && botName.trim()) {
+      await saveDraft();
+    }
+    goToTab(id);
+  };
+
+  /* N-68 — taslağı tamamla: herkese açık yayınla ya da özel kaydet. */
+  const finalizeDraft = async () => {
+    if (!publishAs) throw new Error("Botun nasıl kaydedileceğini seçin: herkese açık ya da özel.");
+    const body = new FormData();
+    body.append("data", JSON.stringify({ id: botId }));
+    const res = await fetch(
+      publishAs === "public" ? "/api/chatbot/publishchatbot.php" : "/api/chatbot/finalizedraft.php",
+      { method: "POST", body, credentials: "include" },
+    );
+    const result = await res.json().catch(() => null);
+    if (!result?.success) throw new Error(result?.message || "Bot yayınlanamadı.");
+    return result;
+  };
+
   const handleSubmit = async () => {
     if (!botName.trim()) {
       setSubmitError("Sohbet botu ismi zorunludur.");
+      return;
+    }
+    if (isDraft && !publishAs) {
+      setSubmitError("Botun nasıl kaydedileceğini seçin: herkese açık ya da özel.");
       return;
     }
     setSubmitError(null);
@@ -605,7 +694,17 @@ function ChatbotForm({
           `${window.location.pathname}?id=${result.id}`,
         );
         goToTab("knowledge");
+      } else if (result.success && isDraft) {
+        // N-68 — taslak: önce alanlar kaydedildi, şimdi yayın/özel kayıt.
+        // Limit doluysa sunucu reddeder; taslak korunur, mesaj gösterilir.
+        // N-72 — isDraft burada kapatılmıyor: kapatılınca yönlendirme
+        // beklenirken eski "Erişim Türü: Bağımsız (Özel)" paneli çiziliyordu.
+        await finalizeDraft();
+        setRedirecting(true);
+        refetchAccount();
+        router.push("/dashboard/chatbots");
       } else if (result.success) {
+        setRedirecting(true);
         refetchAccount();
         router.push("/dashboard/chatbots");
       } else {
@@ -613,7 +712,9 @@ function ChatbotForm({
       }
     } catch (err) {
       console.error("Chatbot save error:", err);
-      setSubmitError("Sunucuya bağlanılamadı.");
+      // N-68 — yayın/özel kayıt reddi (ör. bot hakkı dolu) gerçek mesajıyla;
+      // ağ hatası (TypeError) genel metinle.
+      setSubmitError(err instanceof TypeError || !err?.message ? "Sunucuya bağlanılamadı." : err.message);
     } finally {
       setIsBuilding(false);
     }
@@ -754,7 +855,7 @@ function ChatbotForm({
             return (
               <button
                 key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
+                onClick={() => navigate(tab.id)}
                 className={cn(
                   "flex items-center gap-2 pb-3 text-xs font-medium border-b-2 transition-all cursor-pointer",
                   isActive
@@ -965,16 +1066,38 @@ function ChatbotForm({
                  sunucu `positiveInt(-1)=0` ile sahiplik kontrolünü düşürüp
                  "Bu chatbot üzerinde yetkiniz yok." diyordu. URL yolu da
                  aynı çağrıyı yaptığı için kaydedilmemiş botta o da bozuktu. */
-              <div className="flex items-start gap-3 rounded-xl border border-amber-500/20 bg-amber-500/[0.06] p-4">
-                <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
-                <p className="text-xs leading-relaxed text-amber-200/80">
-                  Bilgi bankasına kaynak eklemek için önce botu kaydedin.
-                  <span className="text-amber-200/50">
-                    {" "}
-                    “4. Yayın &amp; Fiyat” sekmesinden oluşturduktan sonra bu
-                    alan aktifleşir.
-                  </span>
-                </p>
+              /* N-68 — müşteri görseli 01: eskiden "4. Yayın & Fiyat'tan
+                 oluşturduktan sonra" diyordu. Artık bot 1. adımdan çıkarken
+                 taslak kaydediliyor; buraya yalnızca ad girilmediyse ya da
+                 taslak kaydı başarısızsa düşülür. */
+              <div className="space-y-3 rounded-xl border border-amber-500/20 bg-amber-500/[0.06] p-4">
+                <div className="flex items-start gap-3">
+                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-amber-400" />
+                  <p className="text-xs leading-relaxed text-amber-200/80">
+                    {botName.trim()
+                      ? "Bilgi bankasını kullanmak için botu taslak olarak kaydedin. Taslak yayınlanana kadar hiçbir yerde görünmez."
+                      : "Bilgi bankasını kullanmak için önce 1. adımda botun adını girin; bot taslak olarak kaydedilir."}
+                  </p>
+                </div>
+                {draftError && <p className="text-xs text-rose-400">{draftError}</p>}
+                {botName.trim() ? (
+                  <button
+                    type="button"
+                    onClick={saveDraft}
+                    disabled={draftSaving}
+                    className="rounded-lg bg-violet-600 px-3 py-2 text-xs font-semibold text-white hover:bg-violet-500 disabled:opacity-60"
+                  >
+                    {draftSaving ? "Kaydediliyor…" : "Taslak olarak kaydet"}
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => goToTab("general")}
+                    className="rounded-lg bg-white/10 px-3 py-2 text-xs font-semibold text-white hover:bg-white/15"
+                  >
+                    1. adıma dön
+                  </button>
+                )}
               </div>
             ) : (
               <>
@@ -1154,6 +1277,39 @@ function ChatbotForm({
         {/* Tab 4: Pricing */}
         {activeTab === "publish" && (
           <div className="space-y-4 animate-in fade-in duration-200">
+            {isDraft ? (
+              /* N-68 — taslak: nasıl yayınlanacağı burada seçilir. Tür
+                 limiti bu anda uygulanır (taslak limite sayılmaz). */
+              <div className="space-y-2">
+                <p className="text-xs text-amber-200/80">
+                  Bu bot şu an <strong>taslak</strong>: yalnızca siz görüyorsunuz ve bot hakkınızdan düşmüyor.
+                </p>
+                {[
+                  { id: "public", title: "Herkese açık yayınla", desc: "Keşfet'te listelenir; herkes ücretsiz sohbet edebilir, mesajlar kullanıcıların günlük LumaCoin'inden düşer." },
+                  { id: "private", title: "Özel olarak kaydet", desc: "Yalnızca sizin hesabınızda kalır; listelenmez." },
+                ].map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setPublishAs(opt.id)}
+                    className={cn(
+                      "w-full rounded-xl border p-4 text-left transition-colors",
+                      publishAs === opt.id ? "border-violet-500 bg-violet-500/10" : "border-white/10 bg-zinc-900 hover:border-white/20",
+                    )}
+                    aria-pressed={publishAs === opt.id}
+                  >
+                    <span className="flex items-center gap-2 text-xs font-bold text-white">
+                      <ShieldCheck className={cn("h-4 w-4", publishAs === opt.id ? "text-violet-400" : "text-zinc-500")} />
+                      {opt.title}
+                    </span>
+                    <span className="mt-1 block text-xs leading-relaxed text-zinc-400">{opt.desc}</span>
+                  </button>
+                ))}
+                {!publishAs && (
+                  <p className="text-xs text-zinc-500">Devam etmek için bir seçenek seçin.</p>
+                )}
+              </div>
+            ) : (
             <div className="p-4 rounded-xl bg-zinc-900 border border-white/10 space-y-3">
               <h4 className="text-xs font-bold text-white flex items-center gap-2">
                 <ShieldCheck className="w-4 h-4 text-emerald-400" />
@@ -1168,6 +1324,7 @@ function ChatbotForm({
                   : "Bu bot Keşfet'te listelenecek; herkes ücretsiz sohbet edebilir, mesajlar kullanıcıların günlük Luma Coin'inden düşer."}
               </p>
             </div>
+            )}
 
             {submitError && (
               <p className="text-xs text-rose-400 bg-rose-500/10 border border-rose-500/20 rounded-xl px-4 py-3">
@@ -1177,18 +1334,29 @@ function ChatbotForm({
 
             <button
               onClick={handleSubmit}
-              disabled={isBuilding}
+              disabled={isBuilding || redirecting || (isDraft && !publishAs)}
               className="w-full py-4 rounded-xl bg-gradient-btn text-xs font-bold text-white shadow-glow hover:brightness-110 hover:-translate-y-0.5 active:translate-y-0 transition-all duration-200 cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {isBuilding ? (
+              {redirecting ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  <span>Yönlendiriliyor…</span>
+                </>
+              ) : isBuilding ? (
                 <RefreshCw className="w-4 h-4 animate-spin" />
               ) : (
                 <>
                   <Rocket className="w-4 h-4" />
                   <span>
-                    {isPersisted
-                      ? "Değişiklikleri Kaydet & Güncelle"
-                      : "Sohbet Botunu Oluştur & Yayına Al"}
+                    {isDraft
+                      ? publishAs === "public"
+                        ? "Yayınla"
+                        : publishAs === "private"
+                          ? "Özel olarak kaydet"
+                          : "Seçim yapın"
+                      : isPersisted
+                        ? "Değişiklikleri Kaydet & Güncelle"
+                        : "Sohbet Botunu Oluştur & Yayına Al"}
                   </span>
                 </>
               )}
@@ -1228,10 +1396,11 @@ function ChatbotForm({
             {activeTabIndex < FORM_TABS.length - 1 && (
               <button
                 type="button"
-                onClick={() => goToTab(FORM_TABS[activeTabIndex + 1].id)}
-                className="inline-flex items-center gap-1.5 rounded-xl bg-violet-600 px-4 py-2.5 text-xs font-semibold text-white transition-colors hover:bg-violet-500 cursor-pointer"
+                onClick={() => navigate(FORM_TABS[activeTabIndex + 1].id)}
+                disabled={draftSaving}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-violet-600 px-4 py-2.5 text-xs font-semibold text-white transition-colors hover:bg-violet-500 cursor-pointer disabled:opacity-60"
               >
-                <span>Devam Et</span>
+                <span>{draftSaving ? "Taslak kaydediliyor…" : "Devam Et"}</span>
                 <ChevronRight className="h-4 w-4" />
               </button>
             )}

@@ -831,7 +831,14 @@ class WalletController {
                         'DATE_ADD(GREATEST(NOW(), COALESCE(?, NOW())), INTERVAL ? DAY) AS bitis',
                         [$base, AppConfig::SUBSCRIPTION_MONTHLY]
                     )['bitis'];
+                    // N-71 — eski paketin günlük hakkı (süresi dolmuşsa ücretsiz),
+                    // paket yazılmadan önce aynı kilitli satırdan.
+                    $oldActive = $cur && (int) $db->selectSingle('(? IS NULL OR ? > NOW()) AS a', [$cur['expires_at'], $cur['expires_at']])['a'] === 1;
+                    $oldLimit  = planDailyLimit($db, $oldActive ? (string) $cur['plan_name'] : null);
                     $db->insert('user_plan_selection', self::planSelectionRow($db, (int) $row['user_id'], $planName, $expiresAt), true);
+                    // N-71 (karar 2026-10-29) — o günün coin hakkı fark kadar artar.
+                    require_once __DIR__ . '/../../../functions/coin_engine.php';
+                    grantPlanUpgradeCoins($db, (int) $row['user_id'], $oldLimit, planDailyLimit($db, $planName), $planName, (int) $row['id']);
                 }
                 if ($ownTx) {
                     $conn->commit();

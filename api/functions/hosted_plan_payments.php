@@ -372,5 +372,9 @@ function revokeRefundedPlan(Database $db, array $payment): array
     }
     $db->insert('user_plan_selection', $row, true);
 
-    return ['revoked' => true, 'reason' => '', 'plan' => $planName];
+    // N-71 — paketin o gün verdiği coin farkı geri alınır (sıfırın altına inmez).
+    require_once __DIR__ . '/coin_engine.php';
+    $coins = reclaimPlanUpgradeCoins($db, (int) $payment['id']);
+
+    return ['revoked' => true, 'reason' => '', 'plan' => $planName, 'coins_reclaimed' => $coins];
 }

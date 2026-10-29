@@ -230,6 +230,26 @@ function getDailyMessageLimit(Database $db, int $userId): int
 }
 
 /**
+ * N-71 — bir paketin günlük coin hakkı, ADINDAN ve önbelleksiz. Kesinleştirme
+ * aynı istekte eski ve yeni paketin hakkını okuyor; getUserPlan() istek
+ * başına önbellekli olduğu için orada eski değeri döndürürdü.
+ * null / katalogda olmayan ad → varsayılan (ücretsiz) paket.
+ */
+function planDailyLimit(Database $db, ?string $planName): int
+{
+    if (plansTableReady($db)) {
+        $row = $planName !== null && $planName !== ''
+            ? $db->selectSingle('daily_message_limit FROM plans WHERE name_tr = ? COLLATE utf8mb4_general_ci', [$planName])
+            : null;
+        $row = $row ?: $db->selectSingle('daily_message_limit FROM plans WHERE is_default = 1 ORDER BY sort_order LIMIT 1');
+        if ($row) {
+            return (int) $row['daily_message_limit'];
+        }
+    }
+    return (int) fallbackPlan()['daily_message_limit'];
+}
+
+/**
  * N-63 — "Aboneliğim": görüntüleme ve paket sayfası (getPricing) aynı
  * kaynaktan okur. Etkin plan kuralı getUserPlan() ile aynı: ücretli paket
  * `expires_at` geçmişse etkin değildir; `expires_at IS NULL` süresizdir.

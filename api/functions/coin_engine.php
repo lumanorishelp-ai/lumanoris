@@ -261,3 +261,111 @@ function refundMessage(Database $db, int $userId, int $chatbotId, string $source
         ));
     }
 }
+
+// ── N-71 — paketin aktifleştiği günün coin hakkı ─────────────────────────────
+//
+// Karar (2026-10-29, müşteriye bildirilecek kural): ücretli paket ödemeyle
+// aktifleştiği anda o günün bakiyesi, iki paketin günlük hakkı arasındaki fark
+// kadar artar (kalan + fark). Eskiden yeni hak ancak ertesi günkü yenilemede
+// geliyordu: Gümüş (50) alan kullanıcı o gün ücretsizden kalan 10 ile kalıyordu.
+//
+//   - Aynı gün ikinci kez verilmez: aynı paket için bugün verilmiş ve geri
+//     alınmamış fark düşülür; aynı paketin yenilenmesinde fark zaten 0.
+//   - İade edilen pakette fark geri alınır (reclaimPlanUpgradeCoins); bakiye
+//     sıfırın altına inmez. Harcanmış kısım geri alınamaz ama aynı gün yeniden
+//     satın almada tekrar da verilmez.
+//   - Bakiye bugün henüz yenilenmemişse (ya da yenilenme zamanı geldiyse) fark
+//     verilmez: ilk kullanımda getOrInitCoinBalance zaten yeni paketin TAM
+//     hakkıyla yeniler.
+//
+// Verilen fark sipariş satırında (param_response_json.coin_bonus) kayıtlı:
+// {amount, date, plan, reclaimed}. Şema değişikliği yok.
+
+/** getOrInitCoinBalance'ın yenileme koşulunun tersi: bakiye "bugünün" bakiyesi. */
+const COIN_BALANCE_LIVE_SQL = 'NOT ((exhausted_at IS NOT NULL AND exhausted_at <= NOW() - INTERVAL 1 DAY)
+     OR (exhausted_at IS NULL AND (last_reset_date IS NULL OR last_reset_date <> CURDATE())))';
+
+function planCoinBonusRecord(Database $db, int $paymentId, array $bonus): void
+{
+    $row  = $db->selectSingle('param_response_json FROM param_marketplace_payments WHERE id = ?', [$paymentId]);
+    $meta = json_decode((string) ($row['param_response_json'] ?? ''), true);
+    $meta = is_array($meta) ? $meta : [];
+    $meta['coin_bonus'] = $bonus;
+    $db->execute('UPDATE param_marketplace_payments SET param_response_json = ? WHERE id = ?', [json_encode($meta, JSON_UNESCAPED_UNICODE), $paymentId]);
+}
+
+/**
+ * Kesinleştirmenin transaction'ı içinde, paket yazıldıktan sonra çağrılır.
+ * Verilen coin sayısını döner (0 = verilmedi).
+ */
+function grantPlanUpgradeCoins(Database $db, int $userId, int $oldLimit, int $newLimit, string $planName, int $paymentId): int
+{
+    $diff = $newLimit - $oldLimit;
+    if ($diff <= 0) {
+        return 0;
+    }
+    $today = (string) $db->selectSingle('CURDATE() AS d')['d'];
+
+    $given = 0;
+    $rows = $db->selectMulti(
+        "param_response_json FROM param_marketplace_payments
+          WHERE user_id = ? AND id <> ? AND order_id LIKE 'PLN-%' AND param_response_json LIKE '%coin_bonus%'",
+        [$userId, $paymentId]
+    );
+    foreach ($rows as $r) {
+        $b = json_decode((string) $r['param_response_json'], true)['coin_bonus'] ?? null;
+        if (is_array($b) && ($b['date'] ?? '') === $today && ($b['plan'] ?? '') === $planName) {
+            $given += max(0, (int) ($b['amount'] ?? 0) - (int) ($b['reclaimed'] ?? 0));
+        }
+    }
+    $grant = max(0, $diff - $given);
+    if ($grant === 0) {
+        return 0;
+    }
+
+    $n = $db->execute(
+        'UPDATE ' . AppConfig::TABLE_COIN_BALANCES . ' SET coins_remaining = coins_remaining + ?
+          WHERE user_id = ? AND ' . COIN_BALANCE_LIVE_SQL,
+        [$grant, $userId]
+    );
+    if ($n !== 1) {
+        return 0; // satır yok ya da yenilenme zamanı gelmiş: ilk kullanımda tam hak
+    }
+    planCoinBonusRecord($db, $paymentId, ['amount' => $grant, 'date' => $today, 'plan' => $planName, 'reclaimed' => 0]);
+    error_log(sprintf('[coin_engine] paket farkı verildi user=%d plan=%s +%d payment=%d', $userId, $planName, $grant, $paymentId));
+    return $grant;
+}
+
+/**
+ * İade edilen ve geri alınan paketin o gün verdiği farkı geri alır (bakiye
+ * sıfırın altına inmez). İadenin transaction'ı içinde çağrılır. Geri alınan
+ * coin sayısını döner.
+ */
+function reclaimPlanUpgradeCoins(Database $db, int $paymentId): int
+{
+    $row = $db->selectSingle('user_id, param_response_json FROM param_marketplace_payments WHERE id = ?', [$paymentId]);
+    $b   = $row ? (json_decode((string) $row['param_response_json'], true)['coin_bonus'] ?? null) : null;
+    if (!is_array($b)) {
+        return 0;
+    }
+    $left = (int) ($b['amount'] ?? 0) - (int) ($b['reclaimed'] ?? 0);
+    if ($left <= 0 || ($b['date'] ?? '') !== (string) $db->selectSingle('CURDATE() AS d')['d']) {
+        return 0; // başka bir gün verildiyse bakiye o arada yenilendi
+    }
+    $userId = (int) $row['user_id'];
+    $bal = $db->selectSingle(
+        'coins_remaining FROM ' . AppConfig::TABLE_COIN_BALANCES . ' WHERE user_id = ? AND ' . COIN_BALANCE_LIVE_SQL . ' FOR UPDATE',
+        [$userId]
+    );
+    if (!$bal) {
+        return 0; // yenilenme zamanı gelmiş: yeni (geri alınmış) paketin hakkıyla yenilenecek
+    }
+    $take = min($left, max(0, (int) $bal['coins_remaining']));
+    if ($take > 0) {
+        $db->execute('UPDATE ' . AppConfig::TABLE_COIN_BALANCES . ' SET coins_remaining = coins_remaining - ? WHERE user_id = ?', [$take, $userId]);
+    }
+    $b['reclaimed'] = (int) ($b['reclaimed'] ?? 0) + $take;
+    planCoinBonusRecord($db, $paymentId, $b);
+    error_log(sprintf('[coin_engine] iade: paket farkı geri alındı user=%d -%d (kalan geri alınamayan %d) payment=%d', $userId, $take, $left - $take, $paymentId));
+    return $take;
+}

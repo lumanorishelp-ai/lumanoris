@@ -46,6 +46,8 @@ import {
   Link2,
   Loader2,
   CheckCircle2,
+  Clock,
+  RotateCcw,
 } from "lucide-react";
 
 // Deny-by-default limits used whenever the server's real limits cannot be
@@ -232,7 +234,15 @@ const KB_MAX_PDF_MB = 5;
 const KB_MAX_CHARS = 60000;
 const KB_MAX_PDF_BYTES = KB_MAX_PDF_MB * 1024 * 1024;
 /* N-62 — api/src/Shared/Utilities/DocumentText.php ile ELLE senkron. */
-const KB_FILE_EXTENSIONS = ["pdf", "docx", "txt"];
+const KB_FILE_EXTENSIONS = ["pdf", "docx", "txt", "md", "csv", "xlsx", "pptx", "html", "htm"];
+// Kaynak durumu → rozet (sunucu: kb_sources.status)
+const KB_STATUS_STYLE = {
+  beklemede: "border-white/10 bg-white/[0.04] text-zinc-400",
+  isleniyor: "border-violet-500/25 bg-violet-500/10 text-violet-300",
+  hazir: "border-emerald-500/25 bg-emerald-500/10 text-emerald-300",
+  basarisiz: "border-rose-500/25 bg-rose-500/10 text-rose-300",
+};
+const KB_POLL_MS = 4000;
 
 /* Sekmeler tek kaynakta: hem üstteki sekme çubuğu hem alttaki "Devam Et"
    gezinmesi bu diziden besleniyor. Liste JSX'in içinde satır içi duruyordu;
@@ -369,115 +379,133 @@ function ChatbotForm({
 
   // Secilen dosyayi dogrula ve onizlemesini uret. Sunucu tarafi da ayni
   // kontrolleri yapiyor (MIME + 5MB); burasi kullaniciya aninda geri bildirim.
-  // --- Bilgi Bankasi (metin training_prompt'a eklenir; 24.000 karakteri
-  // asarsa sohbette yalnizca soruyla ilgili parcalar gider — N-60,
-  // chat_context.php chatSelectCorpus; bkz. KB_MAX_CHARS) -------------
-  // Backend zaten hazirdi ve hic cagrilmiyordu:
-  //   POST /api/training/readdocument.php       -> PDF / DOCX / TXT metni (N-62)
-  //   POST /api/training/readurl.php            -> sayfa metni cikarir (yeni)
-  //   POST /api/training/update_training_chunk.php -> training_prompt'a ekler
-  const [kbSources, setKbSources] = useState([]);
+  // --- Bilgi Bankası (RAG) ---------------------------------------------------
+  // Metin çıkarma + doğrulama mevcut uçlarda (Türkçe hata mesajları orada):
+  //   POST /api/training/readdocument.php -> PDF/DOCX/TXT/MD/CSV/XLSX/PPTX/HTML metni
+  //   POST /api/training/readurl.php      -> sayfa metni
+  // Sonra kaynak kuyruğa konur; parçalama + embedding sunucuda arka planda:
+  //   POST /api/training/kb_add.php    · GET kb_list.php?botId=
+  //   POST /api/training/kb_delete.php · POST kb_retry.php
+  const [kbList, setKbList] = useState(null); // {sources, total, limit, pending}
   const [kbUrl, setKbUrl] = useState("");
   // N-61 — bot korumalı / JavaScript ile oluşan sayfalar için çıkış yolu.
   const [kbText, setKbText] = useState("");
   const [kbBusy, setKbBusy] = useState("");
   const [kbError, setKbError] = useState(null);
-  const [corpusLength, setCorpusLength] = useState(null);
+  const [kbConfirmDelete, setKbConfirmDelete] = useState(null);
   const kbFileRef = useRef(null);
 
-  const refreshCorpus = async () => {
+  const loadKb = async () => {
     // N-02: yeni botun id'si -1 (truthy) — `!botId` onu yakalamıyordu.
     if (!botId || botId === -1) return;
     try {
-      const res = await fetch(
-        `/api/training/get_training_chunks.php?botId=${botId}&offset=0`,
-        {
-          credentials: "include",
-        },
-      );
+      const res = await fetch(`/api/training/kb_list.php?botId=${botId}`, { credentials: "include" });
       const data = await res.json();
-      if (data?.success) setCorpusLength(Number(data.totalLength) || 0);
+      if (data?.success) setKbList(data);
     } catch {
-      /* sayac kritik degil */
+      /* liste bir sonraki yenilemede gelir */
     }
   };
 
   useEffect(() => {
-    if (activeTab === "knowledge") refreshCorpus();
+    if (activeTab === "knowledge") loadKb();
   }, [activeTab, botId]);
 
-  // Metni parcalara bolup training_prompt'un sonuna ekler. Tek bir dev POST
-  // yerine parcali: LONGTEXT sinirsiz ama istek boyutu degil.
-  const appendToCorpus = async (text, label, kind) => {
+  // Beklemede / işleniyor kaynak varken durumu periyodik yenile.
+  useEffect(() => {
+    if (activeTab !== "knowledge" || !kbList?.pending) return undefined;
+    const t = setTimeout(loadKb, KB_POLL_MS);
+    return () => clearTimeout(t);
+  }, [activeTab, kbList]);
+
+  // Kaynağı kuyruğa koyar; işleme sunucuda arka planda.
+  const addKbSource = async (text, meta) => {
     const clean = String(text || "").trim();
-    if (!clean) {
-      setKbError("Bu kaynaktan okunabilir metin çıkmadı.");
-      return;
-    }
-
-    const header = `\n\n### Kaynak: ${label}\n`;
-    const payload = header + clean;
-    const CHUNK = 8000;
-
-    // N-61 — sığmayan kaynak eskiden sunucuda sessizce kesiliyordu. Önce
-    // burada sınırı ve mevcut uzunluğu söyleyerek reddediyoruz (sunucu da
-    // aynı kontrolü yapıyor).
-    if (corpusLength !== null && corpusLength + payload.length > KB_MAX_CHARS) {
-      const tr = (n) => n.toLocaleString("tr-TR");
-      throw new Error(
-        `Karakter sınırı aşılıyor: bu kaynak ${tr(clean.length)} karakter, bilgi bankasında ` +
-          `${tr(corpusLength)} / ${tr(KB_MAX_CHARS)} karakter var (kalan ${tr(Math.max(0, KB_MAX_CHARS - corpusLength))}). ` +
-          "Daha kısa bir kaynak seçin.",
-      );
-    }
-
-    for (let i = 0; i < payload.length; i += CHUNK) {
-      const body = new FormData();
-      body.append(
-        "data",
-        JSON.stringify({
-          id: botId,
-          textChunk: payload.slice(i, i + CHUNK),
-          isFirst: false,
-        }),
-      );
-      const res = await fetch("/api/training/update_training_chunk.php", {
-        method: "POST",
-        body,
-        credentials: "include",
-      });
-      const result = await res.json();
-      if (!result?.success) {
-        throw new Error(result?.message || "Bilgi bankasına yazılamadı.");
-      }
-    }
-
-    setKbSources((prev) => [...prev, { kind, label, chars: clean.length }]);
-    await refreshCorpus();
+    if (!clean) throw new Error("Bu kaynaktan okunabilir metin çıkmadı.");
+    const res = await fetch("/api/training/kb_add.php", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chatbot_id: botId, text: clean, ...meta }),
+      credentials: "include",
+    });
+    const result = await res.json().catch(() => null);
+    if (!result?.success) throw new Error(result?.message || "Kaynak bilgi bankasına eklenemedi. Lütfen tekrar deneyin.");
+    await loadKb();
   };
 
-  // N-62 — PDF, DOCX ve TXT. Tür sunucuda dosya imzasından da doğrulanıyor;
-  // buradaki kontrol yalnızca boşuna yükleme yapılmasını önlüyor.
-  const handleKbFile = async (file) => {
-    if (!file) return;
+  const deleteKbSource = async (id) => {
+    setKbConfirmDelete(null);
     setKbError(null);
+    try {
+      const res = await fetch("/api/training/kb_delete.php", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id }),
+        credentials: "include",
+      });
+      const result = await res.json().catch(() => null);
+      if (!result?.success) throw new Error(result?.message || "Kaynak kaldırılamadı. Lütfen tekrar deneyin.");
+    } catch (err) {
+      setKbError(err.message);
+    }
+    await loadKb();
+  };
+
+  const retryKbSource = async (id) => {
+    setKbError(null);
+    try {
+      const res = await fetch("/api/training/kb_retry.php", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id }),
+        credentials: "include",
+      });
+      const result = await res.json().catch(() => null);
+      if (!result?.success) throw new Error(result?.message || "Kaynak yeniden başlatılamadı.");
+    } catch (err) {
+      setKbError(err.message);
+    }
+    await loadKb();
+  };
+
+  // Birden çok dosya sırayla; biri başarısız olursa diğerleri sürer.
+  const handleKbFiles = async (fileList) => {
+    const files = Array.from(fileList || []);
+    if (files.length === 0) return;
+    setKbError(null);
+    const errors = [];
+    for (let i = 0; i < files.length; i += 1) {
+      try {
+        await handleKbFile(files[i], files.length > 1 ? `(${i + 1}/${files.length}) ` : "");
+      } catch (err) {
+        errors.push(`${files[i].name}: ${err.message}`);
+      }
+    }
+    if (errors.length) setKbError(errors.join("\n"));
+    if (kbFileRef.current) kbFileRef.current.value = "";
+  };
+
+  // N-62 — tür sunucuda dosya imzasından da doğrulanıyor; buradaki kontrol
+  // yalnızca boşuna yükleme yapılmasını önlüyor.
+  const handleKbFile = async (file, progress = "") => {
+    if (!file) return;
     const ext = (file.name.split(".").pop() || "").toLowerCase();
     if (ext === "doc") {
-      setKbError('Eski Word biçimi (.doc) desteklenmiyor. Dosyayı Word\'de "Farklı Kaydet → .docx" ile kaydedip yükleyin.');
-      return;
+      throw new Error('Eski Word biçimi (.doc) desteklenmiyor. Dosyayı Word\'de "Farklı Kaydet → .docx" ile kaydedip yükleyin.');
     }
     if (!KB_FILE_EXTENSIONS.includes(ext)) {
-      setKbError(`Bu dosya türü desteklenmiyor${ext ? ` (.${ext})` : ""}. PDF, DOCX veya TXT yükleyin.`);
-      return;
+      throw new Error(`Bu dosya türü desteklenmiyor${ext ? ` (.${ext})` : ""}. PDF, DOCX, TXT, MD, CSV, XLSX, PPTX veya HTML yükleyin.`);
+    }
+    if (file.size === 0) {
+      throw new Error("Dosya boş. İçeriği olan bir dosya seçin.");
     }
     if (file.size > KB_MAX_PDF_BYTES) {
-      setKbError(
+      throw new Error(
         `Dosya çok büyük: ${(Math.ceil((file.size / 1048576) * 10) / 10).toLocaleString("tr-TR")} MB (en fazla ${KB_MAX_PDF_MB} MB).`,
       );
-      return;
     }
 
-    setKbBusy("Belge okunuyor...");
+    setKbBusy(`${progress}Belge okunuyor...`);
     try {
       const base64Data = await new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -507,20 +535,16 @@ function ChatbotForm({
       } catch {
         throw new Error(
           res.status === 413
-            ? "Dosya, sunucunun kabul ettiği istek boyutunu aşıyor. Daha küçük bir dosya deneyin."
-            : `Sunucu beklenmeyen bir yanıt döndürdü (HTTP ${res.status}). Dosya çok büyük olabilir.`,
+            ? "Dosya, sunucunun kabul ettiği boyutu aşıyor. Daha küçük bir dosya deneyin."
+            : "Belge şu an okunamadı. Dosya çok büyük olabilir; daha küçük bir dosya deneyin ya da biraz sonra tekrar yükleyin.",
         );
       }
-      if (!data?.success)
-        throw new Error(data?.message || "Belge okunamadı.");
+      if (!data?.success) throw new Error(data?.message || "Belge okunamadı.");
 
-      setKbBusy("Bilgi bankasına ekleniyor...");
-      await appendToCorpus(data.text, file.name, "file");
-    } catch (err) {
-      setKbError(err.message || "Belge eklenemedi.");
+      setKbBusy(`${progress}Bilgi bankasına ekleniyor...`);
+      await addKbSource(data.text, { type: "file", name: file.name, mime: file.type, size_bytes: file.size });
     } finally {
       setKbBusy("");
-      if (kbFileRef.current) kbFileRef.current.value = "";
     }
   };
 
@@ -536,11 +560,11 @@ function ChatbotForm({
         body: JSON.stringify({ url }),
         credentials: "include",
       });
-      const data = await res.json();
-      if (!data?.success) throw new Error(data?.message || "Sayfa okunamadı.");
+      const data = await res.json().catch(() => null);
+      if (!data?.success) throw new Error(data?.message || "Sayfa okunamadı. Adresi kontrol edip tekrar deneyin.");
 
       setKbBusy("Bilgi bankasına ekleniyor...");
-      await appendToCorpus(data.text, url, "url");
+      await addKbSource(data.text, { type: "url", url: data.url || url, name: data.title ? `${data.title} — ${data.url || url}` : data.url || url });
       setKbUrl("");
     } catch (err) {
       setKbError(err.message || "URL eklenemedi.");
@@ -556,7 +580,7 @@ function ChatbotForm({
     setKbBusy("Bilgi bankasına ekleniyor...");
     try {
       const firstLine = text.split("\n")[0].slice(0, 60);
-      await appendToCorpus(text, `Metin: ${firstLine}`, "text");
+      await addKbSource(text, { type: "text", name: `Metin: ${firstLine}` });
       setKbText("");
     } catch (err) {
       setKbError(err.message || "Metin eklenemedi.");
@@ -1109,17 +1133,16 @@ function ChatbotForm({
                     </span>
                   </div>
                   <span className="font-mono text-xs font-semibold text-white">
-                    {corpusLength === null
+                    {kbList === null
                       ? "—"
-                      : `${corpusLength.toLocaleString("tr-TR")} / ${KB_MAX_CHARS.toLocaleString("tr-TR")} karakter`}
+                      : `${Number(kbList.total).toLocaleString("tr-TR")} / ${Number(kbList.limit).toLocaleString("tr-TR")} karakter`}
                   </span>
                 </div>
                 <p className="px-1 text-caption leading-relaxed text-zinc-500">
-                  Eklediğiniz belge, sayfa ve metinler botun eğitim metnine
-                  eklenir. Toplam 24.000 karakteri geçerse her soruda yalnızca
-                  soruyla ilgili bölümler kullanılır. En fazla{" "}
-                  {KB_MAX_CHARS.toLocaleString("tr-TR")} karakter saklanır;
-                  sınırı aşan kaynak eklenmez.
+                  Eklediğiniz belge, sayfa ve metinler parçalara ayrılıp
+                  arka planda işlenir; her soruda bot yalnızca soruyla ilgili
+                  bölümleri kullanır. İşlem birkaç dakika sürebilir, bu
+                  sayfadan ayrılabilirsiniz.
                 </p>
 
                 {/* PDF */}
@@ -1133,19 +1156,19 @@ function ChatbotForm({
                     <FileText className="h-5 w-5" />
                   </span>
                   <span className="block text-xs font-semibold text-white">
-                    Belge yükleyin: PDF, DOCX veya TXT
+                    Belge yükleyin: PDF, DOCX, TXT, MD, CSV, XLSX, PPTX, HTML
                   </span>
                   <span className="block text-caption text-zinc-500">
-                    Sıkça sorulan sorular, kataloglar veya şirket içi kılavuzlar
-                    (maks. {KB_MAX_PDF_MB} MB)
+                    Birden çok dosya seçebilirsiniz (dosya başına maks. {KB_MAX_PDF_MB} MB)
                   </span>
                 </button>
                 <input
                   ref={kbFileRef}
                   type="file"
-                  accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain"
+                  multiple
+                  accept=".pdf,.docx,.txt,.md,.csv,.xlsx,.pptx,.html,.htm"
                   className="hidden"
-                  onChange={(e) => handleKbFile(e.target.files?.[0])}
+                  onChange={(e) => handleKbFiles(e.target.files)}
                 />
 
                 {/* URL */}
@@ -1238,33 +1261,99 @@ function ChatbotForm({
                   </p>
                 )}
                 {kbError && (
-                  <p className="rounded-xl border border-rose-500/20 bg-rose-500/10 px-4 py-3 text-xs text-rose-400">
+                  <p className="whitespace-pre-line rounded-xl border border-rose-500/20 bg-rose-500/10 px-4 py-3 text-xs text-rose-400">
                     {kbError}
                   </p>
                 )}
 
-                {kbSources.length > 0 && (
+                {kbList?.sources?.length > 0 && (
                   <div className="space-y-1.5">
                     <p className="text-caption font-semibold uppercase tracking-wider text-zinc-500">
-                      Bu oturumda eklenenler
+                      Bilgi bankasındaki içerikler
                     </p>
-                    {kbSources.map((src, i) => (
+                    {kbList.sources.map((src) => (
                       <div
-                        key={i}
-                        className="flex items-center gap-2.5 rounded-xl border border-emerald-500/15 bg-emerald-500/[0.05] px-3.5 py-2.5"
+                        key={src.id}
+                        className="rounded-xl border border-white/10 bg-zinc-900/60 px-3.5 py-2.5"
                       >
-                        <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
-                        {src.kind === "url" ? (
-                          <Globe2 className="h-3.5 w-3.5 shrink-0 text-cyan-400" />
-                        ) : (
-                          <FileText className="h-3.5 w-3.5 shrink-0 text-violet-400" />
+                        <div className="flex items-center gap-2.5">
+                          {src.type === "url" ? (
+                            <Globe2 className="h-3.5 w-3.5 shrink-0 text-cyan-400" />
+                          ) : src.type === "text" ? (
+                            <FileText className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
+                          ) : (
+                            <FileText className="h-3.5 w-3.5 shrink-0 text-violet-400" />
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-xs text-white/85" title={src.url || src.name}>
+                              {src.name}
+                            </p>
+                            <p className="font-mono text-caption text-zinc-500">
+                              {src.created_at
+                                ? new Date(src.created_at.replace(" ", "T")).toLocaleString("tr-TR", { dateStyle: "short", timeStyle: "short" })
+                                : ""}
+                              {src.chars ? ` · ${Number(src.chars).toLocaleString("tr-TR")} krk` : ""}
+                            </p>
+                          </div>
+                          <span
+                            className={cn(
+                              "flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-caption font-semibold",
+                              KB_STATUS_STYLE[src.status] || KB_STATUS_STYLE.beklemede,
+                            )}
+                          >
+                            {src.status === "isleniyor" && <Loader2 className="h-3 w-3 animate-spin" />}
+                            {src.status === "beklemede" && <Clock className="h-3 w-3" />}
+                            {src.status === "hazir" && <CheckCircle2 className="h-3 w-3" />}
+                            {src.status === "basarisiz" && <AlertCircle className="h-3 w-3" />}
+                            {src.status_label}
+                          </span>
+                          {kbConfirmDelete === src.id ? (
+                            <span className="flex shrink-0 items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => deleteKbSource(src.id)}
+                                className="rounded-lg bg-rose-600 px-2 py-1 text-caption font-semibold text-white hover:bg-rose-500"
+                              >
+                                Kaldır
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setKbConfirmDelete(null)}
+                                className="rounded-lg bg-white/10 px-2 py-1 text-caption font-semibold text-zinc-300 hover:bg-white/15"
+                              >
+                                Vazgeç
+                              </button>
+                            </span>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setKbConfirmDelete(src.id)}
+                              title="Kaldır"
+                              aria-label={`${src.name} kaynağını kaldır`}
+                              className="shrink-0 rounded-lg p-1.5 text-zinc-500 transition hover:bg-rose-500/10 hover:text-rose-400"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </button>
+                          )}
+                        </div>
+                        {kbConfirmDelete === src.id && (
+                          <p className="mt-1.5 text-caption text-rose-300/80">
+                            Bu kaynak ve ona ait tüm içerik bilgi bankasından silinecek; bot artık bu içeriği kullanmayacak.
+                          </p>
                         )}
-                        <span className="min-w-0 flex-1 truncate text-xs text-white/80">
-                          {src.label}
-                        </span>
-                        <span className="shrink-0 font-mono text-caption text-zinc-500">
-                          {src.chars.toLocaleString("tr-TR")} krk
-                        </span>
+                        {src.status === "basarisiz" && (
+                          <div className="mt-1.5 flex items-start justify-between gap-2">
+                            <p className="text-caption leading-relaxed text-rose-300/80">{src.error}</p>
+                            <button
+                              type="button"
+                              onClick={() => retryKbSource(src.id)}
+                              className="flex shrink-0 items-center gap-1 rounded-lg bg-white/10 px-2 py-1 text-caption font-semibold text-zinc-200 hover:bg-white/15"
+                            >
+                              <RotateCcw className="h-3 w-3" />
+                              Tekrar dene
+                            </button>
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>

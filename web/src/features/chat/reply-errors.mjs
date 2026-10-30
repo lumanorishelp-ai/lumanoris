@@ -9,7 +9,7 @@
  */
 
 const TEXTS = {
-  busy: "Yapay zeka şu an yoğun, kısa süreliğine yanıt verilemedi. Birkaç saniye sonra Tekrar Dene'ye basın.",
+  busy: "Şu an yoğunluk var, lütfen birkaç saniye sonra tekrar deneyin.",
   quota: "Yapay zeka servisinin kullanım sınırına ulaşıldı. Lütfen daha sonra tekrar deneyin.",
   timeout: "Yanıt zamanında gelmedi. Tekrar Dene'ye basarak yeniden sorabilirsiniz.",
   unavailable: "Yapay zeka servisine şu anda ulaşılamıyor. Biraz sonra tekrar deneyin.",

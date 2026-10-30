@@ -30,6 +30,23 @@ class NoteController {
         JsonResponse::success(['message' => 'Diyalog Defterine eklendi.', 'id' => $id]);
     }
 
+    /**
+     * POST {id} — kendi Diyalog Defteri kaydını siler. Eskiden arayüzdeki
+     * "Sil" yalnızca listeden çıkarıyordu; sayfa yenilenince kayıt geri geliyordu.
+     */
+    public static function deleteDialogBook(): void {
+        require_method('POST');
+        $userId = AuthMiddleware::requireAuth();
+        require_once __DIR__ . '/../../../functions/dialog_book.php';
+        $data = json_decode($_POST['data'] ?? '', true) ?? [];
+        $id   = InputSanitizer::positiveInt($data['id'] ?? 0);
+        if (!$id) JsonResponse::error('Silinecek kayıt seçilmedi.', 400, AppConfig::ERR_VALIDATION);
+        if (!dialogBookDelete(Database::getInstance(), $userId, $id)) {
+            JsonResponse::error('Kayıt bulunamadı ya da yalnızca kendi kayıtlarınızı silebilirsiniz.', 404, AppConfig::ERR_NOT_FOUND);
+        }
+        JsonResponse::success(['message' => 'Diyalog Defterinden silindi.']);
+    }
+
     /** N-30 — kimlikle erişilen defter uçlarının ortak kapısı (akışla aynı kural). */
     private static function requireVisibleDialog(int $dialogId, int $viewerId): void {
         require_once __DIR__ . '/../../../functions/dialog_book.php';

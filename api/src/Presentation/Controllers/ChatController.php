@@ -364,7 +364,7 @@ class ChatController {
         }
 
         $bot = $db->selectSingle(
-            'style_prompt, sohbet_basi_mesaj, LEFT(training_prompt, ?) AS training_prompt FROM chatbotlar WHERE id = ?',
+            'isim, aciklama, style_prompt, sohbet_basi_mesaj, LEFT(training_prompt, ?) AS training_prompt FROM chatbotlar WHERE id = ?',
             [self::MAX_TRAINING_CHARS, $chatbotId]
         );
         if (!$bot) {
@@ -528,6 +528,14 @@ class ChatController {
             $fileAllowanceSources[] = (string) ($fileAllowance['source'] ?? 'coins');
             // İstemciye gösterilecek kalan, TÜM düşümlerden sonraki değer.
             $allowance['remaining'] = $fileAllowance['remaining'] ?? $allowance['remaining'] ?? null;
+        }
+
+        // OpenAI (RAG) — OPENAI_API_KEY + OPENAI_CHAT_MODEL tanımlıysa. Değilse
+        // aşağıdaki Gemini yolu aynen çalışır (geçiş anahtarla açılıp kapanır).
+        require_once __DIR__ . '/../../../functions/openai.php';
+        if (openaiChatEnabled()) {
+            self::streamOpenAiReply($db, $userId, $chatbotId, $bot, $message, $prevUser, $historyRows,
+                $fileParts, $corpus, $allowance, $allowanceSource, $fileAllowanceSources);
         }
 
         $apiKey = AppConfig::googleGeminiApiKey();
@@ -697,6 +705,165 @@ class ChatController {
 
         // Never leak the upstream body (it can echo the API key back) —
         // send a stable code + kind the client maps to its own wording (N-59).
+        echo "event: error\n";
+        echo 'data: ' . json_encode(
+            ['error' => ['code' => $httpStatus >= 400 ? $httpStatus : 502, 'status' => 'UPSTREAM_ERROR', 'kind' => $kind, 'refunded' => true]],
+            JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+        ) . "\n\n";
+        @flush();
+        exit;
+    }
+
+    /**
+     * OpenAI (Responses API) + bilgi bankası (RAG) ile akışlı cevap.
+     *
+     * Sözleşme generateReply'ın Gemini yoluyla aynı (istemci değişmiyor):
+     * `event: meta` → Gemini biçiminde metin kareleri → `event: sources`
+     * (bilgi bankası kullanıldıysa, RAG_SHOW_SOURCES=0 değilse) → `event: saved`;
+     * hata → `event: error` {kind, refunded}. Coin kararı chatReplyOutcome'da.
+     * Her çağrı ai_usage_log'a yazılır. Her durumda exit.
+     */
+    private static function streamOpenAiReply(
+        Database $db, int $userId, int $chatbotId, array $bot, string $message, string $prevUser,
+        array $historyRows, array $fileParts, string $legacyCorpus,
+        array $allowance, string $allowanceSource, array $fileAllowanceSources
+    ): never {
+        require_once __DIR__ . '/../../../functions/kb.php';
+        require_once __DIR__ . '/../../../functions/chat_openai.php';
+        $cfg = openaiConfig();
+        $refundAll = static function () use ($db, $userId, $chatbotId, $allowanceSource, $fileAllowanceSources): void {
+            refundMessage($db, $userId, $chatbotId, $allowanceSource);
+            foreach ($fileAllowanceSources as $source) {
+                refundMessage($db, $userId, $chatbotId, $source);
+            }
+        };
+
+        // Bilgi bankası araması SSE başlıklarından önce (soru embedding'i ~0,3 sn).
+        $botHasKb = kbBotHasChunks($db, $chatbotId);
+        $chunks = [];
+        if ($botHasKb) {
+            $t0 = microtime(true);
+            $r  = kbRetrieve($db, $chatbotId, $message, $prevUser);
+            $chunks = $r['chunks'];
+            aiUsageLog($db, $userId, $chatbotId, 'embedding', $cfg['embedding_model'] ?: '-', $r['tokens'], 0, 0,
+                (int) round((microtime(true) - $t0) * 1000), $r['ok'] ? 'ok' : 'retrieval_failed');
+        }
+
+        $instructions = chatSystemInstructions($bot);
+        $contents = chatBuildContents($historyRows, (string) ($bot['sohbet_basi_mesaj'] ?? ''), $message, $fileParts);
+        $cacheable = !chatHistoryTruncated($historyRows, $contents, (string) ($bot['sohbet_basi_mesaj'] ?? ''), $message);
+        $input    = chatOpenAiInput($contents, chatKbContextBlock($chunks, $legacyCorpus, $botHasKb), $cacheable);
+        $payload  = json_encode(openaiChatPayload($instructions, $input, 'bot-' . $chatbotId), JSON_UNESCAPED_UNICODE);
+
+        $afterId = (int) ($db->selectSingle(
+            'MAX(id) AS m FROM chatbot_chats WHERE chatbot_id = ? AND user_id = ?',
+            [$chatbotId, $userId]
+        )['m'] ?? 0);
+
+        header('Content-Type: text/event-stream');
+        header('Cache-Control: no-cache');
+        header('X-Accel-Buffering: no');
+        while (ob_get_level() > 0) { ob_end_flush(); }
+        echo "event: meta\n";
+        echo 'data: ' . json_encode([
+            'remaining' => $allowance['remaining'] ?? null,
+            'source'    => $allowanceSource,
+            'after_id'  => $afterId,
+        ], JSON_UNESCAPED_UNICODE) . "\n\n";
+        @flush();
+
+        $httpStatus = 0;
+        $errorBody  = '';
+        $curlError  = '';
+        $streamed   = false;
+        $parser     = null;
+        $runAttempt = static function (int $timeout) use ($payload, $cfg, &$httpStatus, &$errorBody, &$curlError, &$streamed, &$parser): void {
+            $httpStatus = 0;
+            $errorBody  = '';
+            $parser = new OpenAiStreamParser(static function (string $delta) use (&$streamed): void {
+                $streamed = true;
+                echo openaiClientFrame($delta);
+                @flush();
+            });
+            $ch = curl_init(openaiBaseUrl() . '/responses');
+            curl_setopt_array($ch, [
+                CURLOPT_POST           => true,
+                CURLOPT_HTTPHEADER     => ['Content-Type: application/json', 'Authorization: Bearer ' . $cfg['key']],
+                CURLOPT_POSTFIELDS     => $payload,
+                CURLOPT_CONNECTTIMEOUT => OPENAI_CONNECT_TIMEOUT,
+                CURLOPT_TIMEOUT        => $timeout,
+                CURLOPT_WRITEFUNCTION  => static function ($handle, string $chunk) use (&$httpStatus, &$errorBody, &$parser): int {
+                    if ($httpStatus === 0) {
+                        $httpStatus = (int) curl_getinfo($handle, CURLINFO_RESPONSE_CODE);
+                    }
+                    if ($httpStatus >= 400) {
+                        $errorBody .= $chunk;
+                    } else {
+                        $parser->feed($chunk);
+                    }
+                    return strlen($chunk);
+                },
+            ]);
+            curl_exec($ch);
+            $curlError = openaiMask(curl_error($ch), $cfg['key']);
+            if ($httpStatus === 0) {
+                $httpStatus = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+            }
+            curl_close($ch);
+        };
+        // Yalnızca bir bitiş olayıyla (response.completed ya da çıktı sınırı
+        // nedeniyle response.incomplete) sonlanan cevap kaydedilir. Bitiş olayı
+        // olmadan kopan akış (bağlantı yarıda kesildi) ya da response.failed →
+        // kaydedilmez, coin iade edilir, istemciye hata karesi (Tekrar dene).
+        $finished = static function () use (&$parser): bool {
+            return $parser->completed || str_starts_with($parser->streamError, 'incomplete:');
+        };
+        $decide = static function () use (&$httpStatus, &$curlError, &$parser, $finished): array {
+            $ok   = $httpStatus >= 200 && $httpStatus < 300 && $curlError === '';
+            $text = $ok && $finished() ? $parser->text : '';
+            return [$text, chatReplyOutcome($httpStatus, $curlError, $text)];
+        };
+
+        $started  = microtime(true);
+        $attempts = 1;
+        $runAttempt(OPENAI_CHAT_TIMEOUT);
+        [$replyText, $outcome] = $decide();
+        while ($outcome !== 'save') {
+            $plan = openaiChatRetryPlan($httpStatus, $curlError, $errorBody, microtime(true) - $started, $streamed, $attempts);
+            if (!$plan['retry']) {
+                break;
+            }
+            error_log('[openai] generatereply hata: ' . openaiErrorSummary($httpStatus, $curlError, $errorBody, $cfg['chat_model'], $cfg['key'])
+                . ' tür=' . $plan['kind'] . ' deneme=' . $attempts . '/3');
+            usleep($plan['delay_ms'] * 1000);
+            $attempts++;
+            $runAttempt($plan['timeout']);
+            [$replyText, $outcome] = $decide();
+        }
+
+        $latency = (int) round((microtime(true) - $started) * 1000);
+        $cutMidStream = $httpStatus >= 200 && $httpStatus < 300 && $curlError === '' && $parser->text !== '' && !$finished();
+        $kind = $outcome === 'save' ? 'ok' : ($cutMidStream ? 'network' : openaiFailureKind($httpStatus, $curlError, $errorBody));
+        aiUsageLog($db, $userId, $chatbotId, 'chat', $cfg['chat_model'], $parser->usage['input'], $parser->usage['cached'],
+            $parser->usage['output'], $latency, $kind, $parser->usage['cache_write']);
+
+        if ($outcome === 'save') {
+            if ($chunks !== [] && env_get('RAG_SHOW_SOURCES', '1') !== '0') {
+                echo "event: sources\n";
+                echo 'data: ' . json_encode(['sources' => chatSourceNames($chunks)], JSON_UNESCAPED_UNICODE) . "\n\n";
+            }
+            $savedId = chatSaveBotReply($db, $userId, $chatbotId, $replyText);
+            echo "event: saved\n";
+            echo 'data: ' . json_encode(['saved' => ['message_id' => $savedId]]) . "\n\n";
+            @flush();
+            exit;
+        }
+
+        error_log('[openai] generatereply hata: ' . ($httpStatus >= 200 && $httpStatus < 300 && $curlError === ''
+            ? 'http=' . $httpStatus . ' model=' . $cfg['chat_model'] . ' boş cevap ' . $parser->streamError
+            : openaiErrorSummary($httpStatus, $curlError, $errorBody, $cfg['chat_model'], $cfg['key']))
+            . ' tür=' . $kind . ' deneme=' . $attempts . '/' . $attempts);
+        $refundAll();
         echo "event: error\n";
         echo 'data: ' . json_encode(
             ['error' => ['code' => $httpStatus >= 400 ? $httpStatus : 502, 'status' => 'UPSTREAM_ERROR', 'kind' => $kind, 'refunded' => true]],

@@ -381,7 +381,7 @@ export default function DialoguePage() {
     );
 
     if (tab === "mine") {
-      sourceCards = sourceCards.filter((h) => h.user_id === userId);
+      sourceCards = sourceCards.filter((h) => Number(h.user_id) === Number(userId));
     }
 
     const selectedCatObj = categories.find(
@@ -445,13 +445,28 @@ export default function DialoguePage() {
     }
   };
 
-  const handleDelete = (indexToRemove) => {
+  // Eskiden yalnızca listeden çıkarıyordu (sunucuya istek yoktu); sayfa
+  // yenilenince kayıt geri geliyordu. Artık sunucu onaylarsa kalkar.
+  const handleDelete = async (indexToRemove) => {
     const cardToRemove = filteredCards[indexToRemove];
-    if (!cardToRemove) return;
-    const historyId = cardToRemove.id;
-    setHistories((prev) => prev.filter((h) => h.id !== historyId));
     setDeleteModalVisible(false);
     setDeleteTargetIndex(null);
+    if (!cardToRemove) return;
+    const historyId = cardToRemove.id;
+    const body = new FormData();
+    body.append("data", JSON.stringify({ id: historyId }));
+    try {
+      const res = await fetch("/api/note/deletedialogbook.php", { method: "POST", body, credentials: "include" });
+      const result = await res.json().catch(() => null);
+      if (!result?.success) {
+        toast.error(result?.message || "Kayıt silinemedi. Lütfen tekrar deneyin.");
+        return;
+      }
+      setHistories((prev) => prev.filter((h) => h.id !== historyId));
+      toast.success("Diyalog Defterinden silindi.");
+    } catch {
+      toast.error("Sunucuya ulaşılamadı. Kayıt silinemedi.");
+    }
   };
 
   const sortOptions = [

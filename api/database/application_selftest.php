@@ -48,18 +48,10 @@ check('başvuru yardımcıları tanımlı', $missing === [], 'eksik: ' . implode
 if ($missing !== []) finish();
 
 $valid = [
-    'account_type'          => 'kurumsal',
-    'company_title'         => 'Örnek Yazılım Ltd. Şti.',
-    'tax_number'            => '1234567890',
-    'tax_office'            => 'Kadıköy',
-    'mersis_no'             => '0123456789012345',
-    'authorized_first_name' => 'Ayşe',
-    'authorized_last_name'  => 'Yılmaz',
-    'authorized_birth_date' => '1990-01-01',
-    'iban'                  => 'TR33 0006 1005 1978 6457 8413 26',
-    'il'                    => 'İstanbul',
-    'ilce'                  => 'Kadıköy',
-    'address'               => 'Örnek Mah. Deneme Sk. No:1',
+    'full_name'   => 'Ayşe Yılmaz',
+    'phone'       => '0532 123 45 67',
+    'email'       => 'Ayse@Ornek.com',
+    'description' => 'Felsefe ve tarih alanında eğitilmiş chatbotlar sunmak istiyorum.',
 ];
 $errorsOf = function (array $input): array {
     try { validateMarketplaceApplication($input); return []; }
@@ -67,27 +59,36 @@ $errorsOf = function (array $input): array {
 };
 $cleanOf = fn(array $input) => validateMarketplaceApplication($input);
 
-echo "\n=== A) Doğrulama ===\n\n";
+echo "
+=== A) Doğrulama (sade form) ===
 
-check('geçerli kurumsal başvuru kabul', $errorsOf($valid) === [], json_encode($errorsOf($valid), JSON_UNESCAPED_UNICODE));
+";
+
+check('geçerli başvuru kabul', $errorsOf($valid) === [], json_encode($errorsOf($valid), JSON_UNESCAPED_UNICODE));
 $c = $cleanOf($valid);
-check('IBAN normalize edilir (boşluksuz, büyük harf)', ($c['iban'] ?? '') === 'TR330006100519786457841326');
+check('telefon +90 biçimine çevrilir', ($c['phone'] ?? '') === '+905321234567', (string) ($c['phone'] ?? ''));
+check('e-posta küçük harfe çevrilir', ($c['email'] ?? '') === 'ayse@ornek.com');
+check('yalnızca dört alan yazılır', array_keys($c) === ['full_name', 'phone', 'email', 'description'], implode(',', array_keys($c)));
 check('bilinmeyen alan reddedilir (beyaz liste)', isset($errorsOf($valid + ['status' => 'reviewed'])['_fields']));
-check('bireysel hesap türü reddedilir (GK-8)', isset($errorsOf(['account_type' => 'bireysel'] + $valid)['account_type']));
-check('kurumsalda 11 haneli vergi no reddedilir', isset($errorsOf(['tax_number' => '10000000146'] + $valid)['tax_number']));
-check('kurumsalda MERSİS zorunlu (GK-24)', isset($errorsOf(['mersis_no' => ''] + $valid)['mersis_no']));
-check('MERSİS 16 hane rakam', isset($errorsOf(['mersis_no' => '123'] + $valid)['mersis_no']));
-$sahis = ['account_type' => 'sahis', 'tax_number' => '10000000146', 'mersis_no' => ''] + $valid;
-check('şahısta TCKN + MERSİS boş kabul (GK-24)', $errorsOf($sahis) === [], json_encode($errorsOf($sahis), JSON_UNESCAPED_UNICODE));
-check('şahısta VKN de kabul', $errorsOf(['tax_number' => '1234567890'] + $sahis) === []);
-check('şahısta hatalı TCKN reddedilir', isset($errorsOf(['tax_number' => '12345678901'] + $sahis)['tax_number']));
-check('geçersiz IBAN reddedilir', isset($errorsOf(['iban' => 'TR000006100519786457841326'] + $valid)['iban']));
-$under = date('Y-m-d', strtotime('-17 years'));
-check('18 yaş altı yetkili reddedilir', isset($errorsOf(['authorized_birth_date' => $under] + $valid)['authorized_birth_date']));
-check('geçersiz tarih reddedilir', isset($errorsOf(['authorized_birth_date' => '1990-02-31'] + $valid)['authorized_birth_date']));
-check('zorunlu alan boşsa reddedilir', isset($errorsOf(['company_title' => '  '] + $valid)['company_title']));
-check('maskIban son 4 hane', maskIban('TR330006100519786457841326') === 'TR** **** **** **** **** **13 26'
-    || str_ends_with(maskIban('TR330006100519786457841326'), '1326'), maskIban('TR330006100519786457841326'));
+check('eski form alanı reddedilir', isset($errorsOf($valid + ['iban' => 'TR330006100519786457841326'])['_fields']));
+check('tek kelime isim reddedilir', isset($errorsOf(['full_name' => 'Ayşe'] + $valid)['full_name']));
+check('rakamlı isim reddedilir', isset($errorsOf(['full_name' => 'Ayşe 123'] + $valid)['full_name']));
+check('boş isim reddedilir', isset($errorsOf(['full_name' => '   '] + $valid)['full_name']));
+check('isimdeki fazla boşluk tekleşir', ($cleanOf(['full_name' => '  Ayşe   Nur  Yılmaz '] + $valid)['full_name'] ?? '') === 'Ayşe Nur Yılmaz');
+foreach (['05321234567', '5321234567', '+90 532 123 45 67', '0090 532 123 4567', '(0212) 555 11 22'] as $ph) {
+    check("telefon kabul: $ph", !isset($errorsOf(['phone' => $ph] + $valid)['phone']));
+}
+check('yurt dışı telefon kabul', ($cleanOf(['phone' => '+49 151 2345 6789'] + $valid)['phone'] ?? '') === '+4915123456789');
+foreach (['123', '0532 123', '1532 123 45 67', 'abc'] as $ph) {
+    check("telefon red: $ph", isset($errorsOf(['phone' => $ph] + $valid)['phone']));
+}
+check('boş telefon reddedilir', isset($errorsOf(['phone' => ''] + $valid)['phone']));
+check('geçersiz e-posta reddedilir', isset($errorsOf(['email' => 'ayse@'] + $valid)['email']));
+check('boş e-posta reddedilir', isset($errorsOf(['email' => ''] + $valid)['email']));
+check('kısa açıklama reddedilir', isset($errorsOf(['description' => 'Kısa'] + $valid)['description']));
+check('çok uzun açıklama reddedilir', isset($errorsOf(['description' => str_repeat('a', 2001)] + $valid)['description']));
+check('açıklamadaki HTML temizlenir', !str_contains($cleanOf(['description' => '<b>Merhaba</b> pazaryerinde chatbot satmak istiyorum.'] + $valid)['description'], '<b>'));
+check('maskIban son 4 hane', str_ends_with((string) maskIban('TR330006100519786457841326'), '1326'));
 
 $db   = Database::getInstance();
 $conn = $db->getConnection();
@@ -115,12 +116,12 @@ try {
 
     $db->execute("UPDATE marketplace_applications SET status = 'rejected', review_note = 'test' WHERE user_id = ?", [$uid]);
     check('rejected başvuru "kaydı var" SAYILMAZ', !hasMarketplaceRegistration($db, $uid));
-    $r = submitMarketplaceApplication($db, $uid, $cleanOf(['company_title' => 'Yeni Unvan A.Ş.'] + $valid));
+    $r = submitMarketplaceApplication($db, $uid, $cleanOf(['full_name' => 'Ayşe Demir'] + $valid));
     $row = getMarketplaceApplication($db, $uid);
     check('rejected → yeniden gönderim submitted olur', ($row['status'] ?? null) === 'submitted');
     check('yeniden gönderim aynı satırı günceller (GK-20)',
         (int) $db->selectSingle('COUNT(*) AS c FROM marketplace_applications WHERE user_id = ?', [$uid])['c'] === 1
-        && ($row['company_title'] ?? '') === 'Yeni Unvan A.Ş.');
+        && ($row['full_name'] ?? '') === 'Ayşe Demir');
     check('yeniden gönderim inceleme notunu temizler', ($row['review_note'] ?? null) === null);
 
     $db->execute("UPDATE marketplace_applications SET status = 'reviewed' WHERE user_id = ?", [$uid]);
@@ -197,6 +198,11 @@ $conn->beginTransaction();
 try {
     submitMarketplaceApplication($db, $u2, $cleanOf($valid));
     $appId = (int) getMarketplaceApplication($db, $u2)['id'];
+    $r = reviewMarketplaceApplication($db, $appId, 'reviewed', null, null, 'selftest', null);
+    check('sade form onayı → IBAN uygulanmaz', ($r['iban'] ?? '') === 'not_applicable', json_encode($r));
+    check('sade form onayı → banka kaydı açılmaz', $bankIban($u2) === null);
+    check('sade form onayı → log yok', $auditCount($u2) === 0);
+    $db->execute("UPDATE marketplace_applications SET status = 'submitted', iban = 'TR330006100519786457841326' WHERE id = ?", [$appId]);
     $notifBefore = $notifCount($u2);
 
     $r = reviewMarketplaceApplication($db, $appId, 'reviewed', null, null, 'selftest', '127.0.0.1');

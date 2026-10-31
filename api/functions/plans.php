@@ -239,7 +239,7 @@ function planDailyLimit(Database $db, ?string $planName): int
 {
     if (plansTableReady($db)) {
         $row = $planName !== null && $planName !== ''
-            ? $db->selectSingle('daily_message_limit FROM plans WHERE name_tr = ? COLLATE utf8mb4_general_ci', [$planName])
+            ? $db->selectSingle('daily_message_limit FROM plans WHERE name_tr = CONVERT(? USING utf8mb4) COLLATE utf8mb4_general_ci', [$planName])
             : null;
         $row = $row ?: $db->selectSingle('daily_message_limit FROM plans WHERE is_default = 1 ORDER BY sort_order LIMIT 1');
         if ($row) {

@@ -53,6 +53,7 @@ class MarketplaceApplicationController {
         $userId = AuthMiddleware::requireAuth();
         $db     = self::load();
         $app    = getMarketplaceApplication($db, $userId);
+        $user   = (new UserRepository())->findById($userId) ?: [];
 
         JsonResponse::success([
             // GK-22 — arayüzdeki tüm "kaydı var mı" kararları bu alanı okur.
@@ -60,13 +61,21 @@ class MarketplaceApplicationController {
             // Doğum tarihi, tam IBAN ve vergi no DÖNMEZ (GK-26 yalnızca admin).
             'application' => $app ? [
                 'status'        => $app['status'],
-                'account_type'  => $app['account_type'],
+                'full_name'     => $app['full_name'] ?? null,
+                'phone'         => $app['phone'] ?? null,
+                'email'         => $app['email'] ?? null,
+                'description'   => $app['description'] ?? null,
                 'company_title' => $app['company_title'],
                 'iban_masked'   => maskIban($app['iban']),
                 'submitted_at'  => marketplaceApplicationSubmittedAt($app),
                 'reviewed_at'   => $app['reviewed_at'],
                 'review_note'   => $app['status'] === 'rejected' ? $app['review_note'] : null,
             ] : null,
+            'defaults'    => [
+                'full_name' => $user['ad_soyad'] ?? '',
+                'phone'     => $user['telefon'] ?? '',
+                'email'     => $user['eposta'] ?? '',
+            ],
         ]);
     }
 }

@@ -36,6 +36,14 @@ function sendEmail(
         return ['success' => false, 'message' => 'Geçersiz alıcı adresi.'];
     }
 
+    // Staging/yerel: MAIL_TRANSPORT=log iken hiçbir e-posta gönderilmez, yalnızca
+    // loga yazılır. SMTP ayarı .env'de boşsa global_vars'a (canlı DB kopyasında
+    // canlı SMTP hesabı) düşüldüğü için .env'i boşaltmak tek başına yetmiyor.
+    if (strtolower(trim((string) env_get('MAIL_TRANSPORT', 'smtp'))) === 'log') {
+        error_log('[mailer:log] to=' . $toEmail . ' subject=' . $subject . ' body=' . mb_substr(mailerHtmlToText($htmlBody), 0, 2000));
+        return ['success' => true, 'message' => 'E-posta gönderildi.'];
+    }
+
     try {
         $config = mailerConfig();
     } catch (Throwable $e) {

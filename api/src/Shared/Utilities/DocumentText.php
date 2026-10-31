@@ -3,7 +3,11 @@
  * Bilgi bankası belgesinden metin — N-62 (Madde 3).
  *
  * Desteklenen: PDF (smalot/pdfparser, vendor), DOCX (ZipArchive +
- * word/document.xml), TXT (UTF-8, BOM'lu, UTF-16, windows-1254).
+ * word/document.xml), TXT/MD/CSV (UTF-8, BOM'lu, UTF-16, windows-1254),
+ * XLSX (sayfa sayfa, satır = sekmeyle ayrılmış hücreler), PPTX (slayt
+ * slayt), HTML (WebPageText ile ana içerik; menü/altbilgi ayıklanır).
+ * Taranmış PDF için OCR yok (paylaşımlı hostingte OCR motoru yok):
+ * kullanıcıya açıkça söylenir (`scanned`).
  * Tür, uzantıdan önce dosya imzasından (magic bytes) belirlenir.
  *
  * Her başarısızlık bir `reason` + Türkçe mesaj: boyut, desteklenmeyen tür,
@@ -21,7 +25,7 @@ final class DocumentText
 
     private const MESSAGES = [
         'too_large'   => 'Dosya çok büyük: %s MB (en fazla 5 MB). Daha küçük bir dosya yükleyin ya da metni "Metin ekle" ile ekleyin.',
-        'unsupported' => 'Bu dosya türü desteklenmiyor%s. PDF, DOCX veya TXT yükleyin.',
+        'unsupported' => 'Bu dosya türü desteklenmiyor%s. PDF, DOCX, TXT, MD, CSV, XLSX, PPTX veya HTML yükleyin.',
         'doc_legacy'  => 'Eski Word biçimi (.doc) desteklenmiyor. Dosyayı Word\'de "Farklı Kaydet → .docx" ile kaydedip yükleyin.',
         'encrypted'   => 'Dosya şifreli ya da parola korumalı; okunamadı. Korumayı kaldırıp yeniden yükleyin.',
         'scanned'     => 'PDF yalnızca taranmış görüntü içeriyor, okunabilir metin yok. Metni kopyalayıp "Metin ekle" ile ekleyin ya da metin içeren bir PDF yükleyin.',
@@ -39,7 +43,7 @@ final class DocumentText
         return $tpl;
     }
 
-    /** @return 'pdf'|'docx'|'txt'|'doc'|'encrypted'|'unsupported' */
+    /** @return 'pdf'|'docx'|'xlsx'|'pptx'|'html'|'txt'|'doc'|'encrypted'|'unsupported' */
     public static function detectType(string $filename, string $bytes): string
     {
         if (str_starts_with($bytes, '%PDF-')) {
@@ -51,9 +55,15 @@ final class DocumentText
             return str_contains($bytes, $utf16) ? 'encrypted' : 'doc';
         }
         if (str_starts_with($bytes, "PK\x03\x04")) {
-            return str_contains($bytes, 'word/document.xml') ? 'docx' : 'unsupported';
+            if (str_contains($bytes, 'word/document.xml')) return 'docx';
+            if (str_contains($bytes, 'xl/workbook.xml')) return 'xlsx';
+            if (str_contains($bytes, 'ppt/presentation.xml')) return 'pptx';
+            return 'unsupported';
         }
         $ext = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+        if (in_array($ext, ['html', 'htm'], true) && self::looksLikeText($bytes)) {
+            return 'html';
+        }
         if (in_array($ext, ['txt', 'text', 'md', 'csv', ''], true) && self::looksLikeText($bytes)) {
             return 'txt';
         }
@@ -97,6 +107,19 @@ final class DocumentText
                 return $fail('unsupported', $type, $ext !== '' ? " (.$ext)" : '');
             case 'txt':
                 $text = self::decodeText($bytes);
+                break;
+            case 'html':
+                if (!class_exists('WebPageText', false)) {
+                    require_once __DIR__ . '/WebPageText.php';
+                }
+                $text = WebPageText::extract(self::decodeText($bytes))['text'];
+                break;
+            case 'xlsx':
+            case 'pptx':
+                $text = $type === 'xlsx' ? self::xlsxText($bytes) : self::pptxText($bytes);
+                if ($text === null) {
+                    return $fail('corrupt', $type);
+                }
                 break;
             case 'docx':
                 $text = self::docxText($bytes);
@@ -154,6 +177,90 @@ final class DocumentText
         }
         $xml = preg_replace(['#<w:tab\s*/>#', '#<w:(br|cr)\b[^>]*/>#', '#</w:p>#'], ["\t", "\n", "\n"], $xml) ?? $xml;
         return html_entity_decode(strip_tags($xml), ENT_QUOTES | ENT_XML1, 'UTF-8');
+    }
+
+    /** @return array<string, string>|null zip içindeki eşleşen dosyalar (ad → içerik), doğal sırada */
+    private static function zipEntries(string $bytes, string $pattern): ?array
+    {
+        $tmp = tempnam(sys_get_temp_dir(), 'ooxml');
+        if ($tmp === false || file_put_contents($tmp, $bytes) === false) {
+            return null;
+        }
+        $out = null;
+        $zip = new ZipArchive();
+        if ($zip->open($tmp) === true) {
+            $out = [];
+            for ($i = 0; $i < $zip->numFiles; $i++) {
+                $name = (string) $zip->getNameIndex($i);
+                if (preg_match($pattern, $name)) {
+                    $out[$name] = (string) $zip->getFromIndex($i);
+                }
+            }
+            $zip->close();
+            uksort($out, 'strnatcmp');
+        }
+        @unlink($tmp);
+        return $out;
+    }
+
+    /** XLSX: her sayfa "## Sayfa N" başlığıyla, satırlar sekmeyle ayrılmış hücreler. */
+    private static function xlsxText(string $bytes): ?string
+    {
+        $files = self::zipEntries($bytes, '#^xl/(sharedStrings\.xml|worksheets/sheet\d+\.xml)$#');
+        if ($files === null) {
+            return null;
+        }
+        $shared = [];
+        if (isset($files['xl/sharedStrings.xml']) && preg_match_all('#<si>(.*?)</si>#s', $files['xl/sharedStrings.xml'], $m)) {
+            foreach ($m[1] as $si) {
+                $shared[] = html_entity_decode(strip_tags($si), ENT_QUOTES | ENT_XML1, 'UTF-8');
+            }
+        }
+        $out = [];
+        $n = 0;
+        foreach ($files as $name => $xml) {
+            if (!str_starts_with($name, 'xl/worksheets/')) continue;
+            $n++;
+            $rows = [];
+            preg_match_all('#<row\b[^>]*>(.*?)</row>#s', $xml, $rm);
+            foreach ($rm[1] as $row) {
+                $cells = [];
+                preg_match_all('#<c\b([^>]*)>(.*?)</c>#s', $row, $cm, PREG_SET_ORDER);
+                foreach ($cm as $c) {
+                    $val = preg_match('#<v>(.*?)</v>#s', $c[2], $v) ? $v[1] : strip_tags($c[2]);
+                    $val = html_entity_decode($val, ENT_QUOTES | ENT_XML1, 'UTF-8');
+                    if (str_contains($c[1], 't="s"')) $val = $shared[(int) $val] ?? '';
+                    $cells[] = trim($val);
+                }
+                $line = rtrim(implode("\t", $cells));
+                if ($line !== '') $rows[] = $line;
+            }
+            if ($rows !== []) $out[] = "## Sayfa $n\n" . implode("\n", $rows);
+        }
+        return implode("\n\n", $out);
+    }
+
+    /** PPTX: her slayt "## Slayt N" başlığıyla, paragraflar satır satır. */
+    private static function pptxText(string $bytes): ?string
+    {
+        $files = self::zipEntries($bytes, '#^ppt/slides/slide\d+\.xml$#');
+        if ($files === null) {
+            return null;
+        }
+        $out = [];
+        $n = 0;
+        foreach ($files as $xml) {
+            $n++;
+            $paras = [];
+            preg_match_all('#<a:p\b[^>]*>(.*?)</a:p>#s', $xml, $pm);
+            foreach ($pm[1] as $p) {
+                preg_match_all('#<a:t>(.*?)</a:t>#s', $p, $tm);
+                $t = trim(html_entity_decode(implode('', $tm[1]), ENT_QUOTES | ENT_XML1, 'UTF-8'));
+                if ($t !== '') $paras[] = $t;
+            }
+            if ($paras !== []) $out[] = "## Slayt $n\n" . implode("\n", $paras);
+        }
+        return implode("\n\n", $out);
     }
 
     /** @return array{text: string}|array{reason: string} */

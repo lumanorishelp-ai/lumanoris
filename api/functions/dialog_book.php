@@ -121,12 +121,17 @@ function dialogBookIsVisible(Database $db, int $dialogId, int $viewerId): bool
     );
 }
 
-/** Akış: yalnızca izleyenin görebildiği kayıtlar (en fazla $limit, rastgele). */
+/**
+ * Akış: yalnızca izleyenin görebildiği kayıtlar. İzleyenin KENDİ kayıtları
+ * her zaman (en yeni önce) gelir; başkalarınınki rastgele en fazla $limit.
+ * Eskiden tamamı `ORDER BY RAND() LIMIT 100` idi ve "Paylaştıklarım" bu
+ * rastgele kümeden istemcide süzülüyordu: toplam 100'ü aşınca kullanıcının
+ * kendi kaydı sayfa yenilenince kaybolabiliyordu.
+ */
 function dialogBookFeed(Database $db, int $viewerId, int $limit = 100): array
 {
     $limit = max(1, min($limit, 1000));
-    return $db->selectMulti(
-        "udb.id, udb.user_id, udb.chatbot_id, udb.name,
+    $cols = "udb.id, udb.user_id, udb.chatbot_id, udb.name,
          udb.input_message, udb.output_message, udb.created_at,
          udb.chatbot_id AS conversation_chatbot_id,
          c.owner_user_id, c.isim AS chatbot_isim, c.kategori_id AS chatbot_kategori_id,
@@ -137,9 +142,39 @@ function dialogBookFeed(Database $db, int $viewerId, int $limit = 100): array
          JOIN chatbotlar c ON udb.chatbot_id = c.id
          LEFT JOIN param_marketplace_sellers pms ON pms.user_id = c.author_user_id AND pms.status = 'active'
          LEFT JOIN kullanicilar k ON c.owner_user_id = k.id
-         LEFT JOIN kullanicilar sharer ON udb.user_id = sharer.id
-         WHERE " . dialogBookVisibleSql() . "
-         ORDER BY RAND() LIMIT $limit",
+         LEFT JOIN kullanicilar sharer ON udb.user_id = sharer.id";
+    $own = $db->selectMulti(
+        "$cols WHERE udb.user_id = ? ORDER BY udb.created_at DESC, udb.id DESC LIMIT 1000",
         [$viewerId]
-    );
+    ) ?: [];
+    $others = $db->selectMulti(
+        "$cols WHERE " . dialogBookVisibleSql() . " AND udb.user_id <> ? ORDER BY RAND() LIMIT $limit",
+        [$viewerId, $viewerId]
+    ) ?: [];
+    return array_merge($own, $others);
+}
+
+/**
+ * Kaydı yalnızca sahibi (paylaşan) siler; kayda bağlı beğeni/beğenmeme/
+ * yorum/gizleme/şikâyet satırları da temizlenir (FK yok, yetim kalmasın).
+ *
+ * @return bool silindi mi (kayıt yoksa ya da başkasınınsa false)
+ */
+function dialogBookDelete(Database $db, int $userId, int $dialogId): bool
+{
+    $conn = $db->getConnection();
+    $conn->beginTransaction();
+    try {
+        $n = $db->execute('DELETE FROM ' . DIALOG_BOOK_TABLE . ' WHERE id = ? AND user_id = ?', [$dialogId, $userId]);
+        if ($n > 0) {
+            foreach (['dialog_likes', 'dialog_dislikes', 'dialog_comments', 'dialog_hide', 'dialog_reports'] as $t) {
+                $db->execute("DELETE FROM `$t` WHERE dialog_id = ?", [$dialogId]);
+            }
+        }
+        $conn->commit();
+        return $n > 0;
+    } catch (Throwable $e) {
+        $conn->rollBack();
+        throw $e;
+    }
 }

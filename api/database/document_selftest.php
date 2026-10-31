@@ -121,6 +121,49 @@ foreach (['too_large', 'unsupported', 'doc_legacy', 'encrypted', 'scanned', 'cor
     check("mesaj ($reason) Türkçe, genel 'sunucu hatası' değil", $m !== '' && !preg_match('/sunucu hatas/iu', $m), $m);
 }
 
+echo "\n=== C2) XLSX / PPTX / HTML / MD / CSV ===\n\n";
+$zipOf = static function (array $files): string {
+    $tmp = tempnam(sys_get_temp_dir(), 'ooxt');
+    $z = new ZipArchive();
+    $z->open($tmp, ZipArchive::OVERWRITE);
+    foreach ($files as $name => $body) { $z->addFromString($name, $body); }
+    $z->close();
+    $bytes = (string) file_get_contents($tmp);
+    @unlink($tmp);
+    return $bytes;
+};
+$xlsx = $zipOf([
+    'xl/workbook.xml' => '<workbook/>',
+    'xl/sharedStrings.xml' => '<sst><si><t>Ürün</t></si><si><t>Fiyat &amp; KDV</t></si><si><r><t>Kalem</t></r><r><t> A</t></r></si></sst>',
+    'xl/worksheets/sheet1.xml' => '<worksheet><cols><col min="1"/></cols><sheetData>'
+        . '<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row>'
+        . '<row r="2"><c r="A2" t="s"><v>2</v></c><c r="B2"><v>149.5</v></c></row></sheetData></worksheet>',
+    'xl/worksheets/sheet2.xml' => '<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>İkinci sayfa</t></is></c></row></sheetData></worksheet>',
+]);
+check('XLSX imzadan tanınıyor', DocumentText::detectType('tablo.xlsx', $xlsx) === 'xlsx');
+$r = DocumentText::read('tablo.xlsx', $xlsx);
+check('XLSX: paylaşılan metinler, sayılar, satır/sekme düzeni, sayfa başlıkları', $r['ok']
+    && str_contains($r['text'], "## Sayfa 1\nÜrün\tFiyat & KDV\nKalem A\t149.5") && str_contains($r['text'], "## Sayfa 2\nİkinci sayfa"),
+    json_encode($r, JSON_UNESCAPED_UNICODE));
+$pptx = $zipOf([
+    'ppt/presentation.xml' => '<p:presentation/>',
+    'ppt/slides/slide2.xml' => '<p:sld><a:p><a:pPr lvl="0"/><a:r><a:t>İkinci slayt</a:t></a:r></a:p></p:sld>',
+    'ppt/slides/slide1.xml' => '<p:sld><a:p><a:r><a:t>Başlık: </a:t></a:r><a:r><a:t>Erdem</a:t></a:r></a:p><a:p><a:r><a:t>Ortalama &lt;doğru&gt;</a:t></a:r></a:p></p:sld>',
+    'ppt/slides/slide10.xml' => '<p:sld><a:p><a:r><a:t>Onuncu</a:t></a:r></a:p></p:sld>',
+]);
+check('PPTX imzadan tanınıyor', DocumentText::detectType('sunum.pptx', $pptx) === 'pptx');
+$r = DocumentText::read('sunum.pptx', $pptx);
+check('PPTX: slayt sırası doğal (1,2,10), paragraflar ayrı, a:pPr paragrafı bölmüyor', $r['ok']
+    && str_contains($r['text'], "## Slayt 1\nBaşlık: Erdem\nOrtalama <doğru>")
+    && strpos($r['text'], 'İkinci slayt') < strpos($r['text'], 'Onuncu'), json_encode($r, JSON_UNESCAPED_UNICODE));
+$html = '<html><head><title>T</title></head><body><nav>Menü Ana sayfa</nav><main><h1>Etik</h1><p>Erdem iki aşırılığın ortasıdır ve uzun bir açıklama metnidir.</p></main><footer>© Telif</footer></body></html>';
+$r = DocumentText::read('sayfa.html', $html);
+check('HTML: ana içerik alınıyor, menü/altbilgi ayıklanıyor', $r['ok'] && str_contains($r['text'], 'Erdem iki aşırılığın') && !str_contains($r['text'], '© Telif'), json_encode($r, JSON_UNESCAPED_UNICODE));
+check('MD ve CSV düz metin olarak okunuyor', DocumentText::read('not.md', "# Başlık\n\nMetin")['ok'] && DocumentText::read('veri.csv', "a,b\n1,2")['ok']);
+$r = DocumentText::read('bozuk.xlsx', "PK\x03\x04" . 'xl/workbook.xml' . str_repeat('x', 50));
+check('bozuk XLSX → corrupt', !$r['ok'] && $r['reason'] === 'corrupt', json_encode($r, JSON_UNESCAPED_UNICODE));
+check('desteklenmeyen tür mesajı yeni türleri sayıyor', str_contains(DocumentText::message('unsupported'), 'XLSX') && str_contains(DocumentText::message('unsupported'), 'PPTX'));
+
 echo "\n=== D) Uç nokta ===\n\n";
 check('api/training/readdocument.php var', is_file($api . '/api/training/readdocument.php'));
 $ctl = (string) file_get_contents($api . '/src/Presentation/Controllers/TrainingController.php');

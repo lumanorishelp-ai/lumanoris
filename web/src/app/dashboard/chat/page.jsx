@@ -12,6 +12,7 @@ import { useSearchParams } from "next/navigation";
 // shipping their code with every chat page load.
 const DialogNotebookModal = dynamic(() => import("@/features/notes/DialogNotebookModal"), { ssr: false });
 import ReactMarkdown from "react-markdown";
+import ChatMarkdown from "@/features/chat/ChatMarkdown";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { Button } from "@/shared/ui/button";
@@ -38,6 +39,8 @@ export default function Chat() {
   const [conversationId, setConversationId] = useState(-1);
   const [chatAdFrequency, setChatAdFrequency] = useState(10);
   const messagesEndRef = useRef(null);
+  // Kullanıcı yukarı kaydırdıysa akış sırasında zorla aşağı çekme.
+  const stickToBottomRef = useRef(true);
   const [messages, setMessages] = useState([]);
   const [logoClicked, setLogoClicked] = useState(false);
   const [isDialogModalOpen, setIsDialogModalOpen] = useState(false);
@@ -436,10 +439,16 @@ export default function Chat() {
   }, [conversation, bot, canChat]); // bot ve erişim (N-52) bağımlılıkta
 
   useEffect(() => {
-    if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
+    if (messagesEndRef.current && stickToBottomRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
     }
   }, [messages]);
+
+  // Alta ~120 px'ten yakınsa "takip et"; daha yukarıdaysa kullanıcı okuyor.
+  const handleMessagesScroll = (e) => {
+    const el = e.currentTarget;
+    stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+  };
 
   useEffect(() => {
     conversationIdRef.current = conversationId;
@@ -680,7 +689,10 @@ const generateReply = async (userText, filePayloads = [], convId = conversationI
   const placeholderId = Date.now();
   let timeoutId;
   let afterId = null; // N-48: sunucunun ilk karesinden
-  setMessages((prev) => [...prev, { id: placeholderId, type: "received", text: "" }]);
+  // Yeni cevap: kullanıcı yukarıdaysa bile kendi mesajını ve cevabı görsün.
+  stickToBottomRef.current = true;
+  // `streaming`: yazım sırasında imleç; akış nasıl biterse bitsin finally'de kapanır.
+  setMessages((prev) => [...prev, { id: placeholderId, type: "received", text: "", streaming: true }]);
 
   // N-48 — istemci beklemekten vazgeçti ya da akış yarıda koptu; sunucu
   // (ignore_user_abort) cevabı kaydetmiş olabilir. Bulursa göster, yoksa
@@ -753,6 +765,8 @@ const generateReply = async (userText, filePayloads = [], convId = conversationI
                 text:
                   payload?.message ||
                   "Yapay zeka servisine şu anda ulaşılamıyor. Sorun sürerse yöneticinize bildirin.",
+                error: true,
+                retryText: userText,
               }
             : msg,
         ),
@@ -803,6 +817,14 @@ const generateReply = async (userText, filePayloads = [], convId = conversationI
             }
             // N-30 — sunucu cevabı kendisi kaydedip kimliğini son karede
             // gönderiyor; "Diyalog Defterine Ekle" bu kimliği kullanır.
+            // Bilgi bankasından yararlanıldıysa (event: sources) cevabın altında kaynak notu.
+            if (Array.isArray(gData.sources)) {
+              const sources = gData.sources.filter((s) => typeof s === "string" && s);
+              setMessages((prev) =>
+                prev.map((msg) => (msg.id === placeholderId ? { ...msg, sources } : msg))
+              );
+              continue;
+            }
             if (gData.saved) {
               const savedId = Number(gData.saved.message_id);
               setMessages((prev) =>
@@ -838,6 +860,17 @@ const generateReply = async (userText, filePayloads = [], convId = conversationI
       return;
     }
 
+    // Akış yarıda koptu: sunucu yarım cevabı kaydetmedi ve hakkı iade etti
+    // (event: error). Yarım metin yerine açıklama + Tekrar Dene.
+    if (fullText && upstreamError) {
+      setMessages((prev) => prev.map((msg) =>
+        msg.id === placeholderId
+          ? { ...msg, text: chatFailureText(upstreamError), error: true, retryText: userText, sources: undefined }
+          : msg
+      ));
+      return;
+    }
+
     if (fullText) {
       // N-30 — bot cevabını artık SUNUCU kaydediyor (generateReply sonunda
       // `event: saved`). Buradaki addchat(sent_by:"bot") istemcinin yazdığı
@@ -867,6 +900,8 @@ const generateReply = async (userText, filePayloads = [], convId = conversationI
     setMessages((prev) => prev.map((msg) =>
       msg.id === placeholderId ? { ...msg, text: errorText, error: true, retryText: userText } : msg
     ));
+  } finally {
+    setMessages((prev) => prev.map((msg) => (msg.id === placeholderId ? { ...msg, streaming: false } : msg)));
   }
 };
 
@@ -902,7 +937,7 @@ const handleRetryReply = (retryText) => {
       {/* Sohbetin kendisi artık ekranın tamamını dolduruyor — üstteki
           başlık ile ilk mesaj arasında eskiden `justify-between`in
           zorladığı boş alan kalmıyor. */}
-      <div className="flex flex-1 flex-col overflow-y-auto px-4 pb-[150px] pt-5 md:pl-16 md:pr-10">
+      <div onScroll={handleMessagesScroll} className="flex flex-1 flex-col overflow-y-auto px-4 pb-[150px] pt-5 md:pl-16 md:pr-10">
         {messages.length === 0 ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
             <EntityAvatar
@@ -943,7 +978,7 @@ const handleRetryReply = (retryText) => {
                         <p className="font-display text-body-sm font-semibold capitalize text-white/55">{bot?.isim}</p>
                         <div className={cn("font-sans text-[15px] font-normal leading-relaxed", msg.error ? "text-rose-300" : "text-white/90")}>
                           {msg.text ? (
-                            <ReactMarkdown>{msg.text}</ReactMarkdown>
+                            <ChatMarkdown streaming={Boolean(msg.streaming) && !msg.error}>{msg.text}</ChatMarkdown>
                           ) : (
                             <div className="flex gap-1 py-2">
                               <span className="h-2 w-2 animate-bounce rounded-full bg-white/40 [animation-delay:-0.32s]" />
@@ -952,6 +987,11 @@ const handleRetryReply = (retryText) => {
                             </div>
                           )}
                         </div>
+                        {!msg.error && msg.sources?.length > 0 && (
+                          <p className="mt-1 text-caption text-white/40">
+                            Kaynak: {msg.sources.join(", ")}
+                          </p>
+                        )}
                         {msg.error ? (
                           <button
                             className="mt-1.5 flex w-max items-center justify-center gap-1.5 rounded-md bg-rose-500/10 px-2.5 py-1 text-rose-300 transition-all duration-200 hover:-translate-y-px hover:bg-rose-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"

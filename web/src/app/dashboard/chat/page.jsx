@@ -34,9 +34,14 @@ export default function Chat() {
   const [bot, setBot] = useState(null);
   const [botId, setBotId] = useState(0);
   const [comments, setComments] = useState(null);
-  const [prompt, setPrompt] = useState("");
-  const [conversation, setConversation] = useState();
-  const [conversationId, setConversationId] = useState(-1);
+  const [conversationId, setConversationId] = useState(0);
+  const searchParams = useSearchParams();
+  const urlBotId = searchParams.get("botId") || "";
+  const urlConvId = Number(searchParams.get("convId") || 0);
+  const urlPrompt = searchParams.get("prompt") || "";
+  const chatSessionRef = useRef(0);
+  const convPendingRef = useRef(null);
+  const promptSentRef = useRef(false);
   const [chatAdFrequency, setChatAdFrequency] = useState(10);
   const messagesEndRef = useRef(null);
   // Kullanıcı yukarı kaydırdıysa akış sırasında zorla aşağı çekme.
@@ -217,14 +222,10 @@ export default function Chat() {
   useEffect(() => {
     if (!userId) return;
 
-    let botIdd = 0;
-    const params = new URLSearchParams(window.location.search);
-    botIdd = params.get("botId") || 0;
+    const botIdd = urlBotId || 0;
     setBotId(botIdd);
-    const initialPrompt = params.get("prompt") || "";
-    const conversationIdd = params.get("convId") || 0;
-    setConversationId(conversationIdd);
-    setPrompt(initialPrompt);
+    setBot(null);
+    setBotLoadError(null);
 
     // No botId in the URL means no bot is selected yet — the page used to
     // request getchatbot.php?id=0 anyway and take a 400, filling the console
@@ -267,176 +268,64 @@ export default function Chat() {
       .catch(() => {
         setBotLoadError("Sunucuya ulaşılamadı. Bağlantınızı kontrol edin.");
       });
-  }, [userId]);
+  }, [userId, urlBotId]);
+
+  const greetingMessages = useCallback((b) => {
+    const text = (b?.sohbet_basi_mesaj || "").trim();
+    return text ? [{ type: "received", text: b.sohbet_basi_mesaj }] : [];
+  }, []);
 
   useEffect(() => {
-    if (!userId) return;
-    if (!bot) return;
+    if (!userId || !bot) return;
+    chatSessionRef.current += 1;
+    convPendingRef.current = null;
+    const greeting = greetingMessages(bot);
+    const greetText = (bot.sohbet_basi_mesaj || "").trim();
 
-    const handleConversationData = async (data) => {
-        setConversation(data);
-
-        if (data?.id == 0 && prompt.trim() !== "") {
-          const words = prompt.trim().split(/\s+/);
-          let convName = words.slice(0, 5).join(" ");
-          if (words.length > 5) {
-            convName += " ...";
-          }
-          const payload = {
-            chatbot_id: botId,
-            user_id: userId,
-            conversation_name: convName,
-          };
-          try {
-            const res = await fetch("/api/chat/addconversation.php", {
-              method: "POST",
-              headers: {
-                "Content-Type": "application/x-www-form-urlencoded",
-              },
-              body: new URLSearchParams({
-                data: JSON.stringify(payload),
-              }),
-            });
-            const result = await res.json();
-            const newConversation = {
-              id: Number(result.id), // backend’den dönen id
-              conversation_name: convName, // frontend’de oluşturduğun isim
-            };
-
-            setConversation(newConversation);
-            setConversationId(result.id);
-            const firstPrompt = {
-              text: prompt,
-              convId: newConversation.id,
-            };
-            handleSendMessage(firstPrompt);
-          } catch (err) {
-            console.error("Yeni sohbet eklenirken hata:", err);
-          }
-        }
-    };
-
-    // URL'de convId yoksa (kullanıcı geçmişten belirli bir sohbete
-    // girmediyse), sayfa her açıldığında/yenilendiğinde son sohbeti
-    // otomatik devam ettirmek yerine her zaman yeni ve temiz bir sohbet
-    // başlatılır.
-    if (conversationId < 1) {
-      handleConversationData({ id: 0, conversation_name: "Yeni Sohbet" });
+    if (urlConvId < 1) {
+      conversationIdRef.current = 0;
+      setConversationId(0);
+      setMessages(greeting);
       return;
     }
 
-    const convFetchUrl = `/api/chat/getconversation.php?chatbot_id=${botId}&user_id=${userId}&convId=${conversationId}`;
-
-    fetch(convFetchUrl)
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error("HTTP error " + response.status);
-        }
-        return response.json();
-      })
-      .then(handleConversationData)
-      .catch((error) => console.error("Hata:", error));
-  }, [bot]);
-
-  useEffect(() => {
-    // bot bilgisinin de geldiğinden emin oluyoruz (başlangıç mesajı için)
-    if (!conversation || !userId || !bot) return;
-    
-
-    // Eğer zaten mesaj varsa ve bu var olan bir sohbetse tekrar yükleme.
-    //
-    // N-23 — bu kontrol `conversationIdRef.current` ile yapılıyordu. Ref, AŞAĞIDAKİ
-    // bir effect'te güncellendiği için yeni sohbet oluşturan ilk mesajdan sonra
-    // (handleSendMessage sonunda setConversationId + setConversation) bu effect
-    // çalışırken ref hâlâ -1'di: kontrol kaçıyor, geçmiş DB'den yeniden
-    // yükleniyor ve DB'ye yazılmayan hata balonu ("…ulaşılamıyor", "Tekrar Dene")
-    // siliniyordu. Aynı render'ın `conversationId` state'i zaten güncel.
-    if (messages.length > 0 && conversationId > 0) {
-        return;
-    }
-
-    // N-32 — bu yükleme bitmeden sohbet değişirse (ana sayfadan ?prompt= ile
-    // gelindiğinde: önce id=0 sohbeti, hemen ardından yeni sohbet + ilk mesaj)
-    // geç dönen eski sonuç, o arada eklenen mesajı ve cevabı ekrandan
-    // siliyordu — kullanıcının bu botla geçmişi varsa yalnızca karşılama
-    // mesajı kalıyordu. Effect yeniden çalışınca eski yükleme yok sayılır.
     let cancelled = false;
+    conversationIdRef.current = urlConvId;
+    setConversationId(urlConvId);
+    setMessages(greeting);
 
-    const loadHistory = async () => {
-      try {
-        // Gerçek geçmişi artık HER ZAMAN çekiyoruz — sadece "kullanıcı
-        // belirli bir sohbeti mi açtı" değil, "botun karşılama mesajı bu
-        // kullanıcı için daha önce hiç kaydedilmiş mi" sorusuna da cevap
-        // vermemiz gerekiyor. Eskiden convId yoksa bu kontrol hiç
-        // yapılmıyordu, bu yüzden convId'siz her sayfa yüklemesinde botun
-        // karşılama mesajı DB'ye yeni, tekrar eden bir satır olarak
-        // ekleniyordu.
-        const historyResult = await (
-          await fetch(`/api/chat/getchat.php?chatbot_id=${bot.id}&user_id=${userId}`)
-        ).json();
-        if (cancelled) return; // N-32: sohbet bu arada değişti
-        const historyData = Array.isArray(historyResult?.messages) ? historyResult.messages : [];
-        const hasHistory = historyData.length > 0;
-        const shouldRestoreHistory = conversationId >= 1;
-
-        if (hasHistory && shouldRestoreHistory) {
-          // Kullanıcı Geçmişim üzerinden belirli bir sohbeti açtı — tüm
-          // geçmişi göster.
-          setMessages(
-            historyData.map((m) => ({
-              type: m.sent_by === "user" ? "sent" : "received",
-              text: m.message,
-              // N-30: defter kaydı bot mesajının kimliğiyle yapılıyor.
-              messageId: m.sent_by === "user" ? undefined : Number(m.id),
-            })),
-          );
-        } else if (hasHistory) {
-          // convId yok (bot'a yeni tıklandı) ama bu bot+kullanıcı için
-          // geçmiş zaten var — "temiz" görünüm için yalnızca botun daha
-          // önce kaydedilmiş karşılama mesajını ekranda göster, DB'ye
-          // tekrar YAZMA.
-          const firstBotMsg = historyData.find((m) => m.sent_by !== "user");
-          setMessages(firstBotMsg ? [{ type: "received", text: firstBotMsg.message }] : []);
-        } else if (bot.sohbet_basi_mesaj && bot.sohbet_basi_mesaj.trim() !== "") {
-          // Bu bot+kullanıcı için hiç geçmiş yok — karşılama mesajını ilk
-          // ve tek kez ekle.
-          const initialMsg = {
-            type: "received",
-            text: bot.sohbet_basi_mesaj,
-          };
-          setMessages([initialMsg]);
-
-          // N-52 — erişim yoksa sunucu bu kaydı 403 ile reddediyordu (her
-          // ziyarette konsol hatası). Karşılama yalnızca gösterilir.
-          if (canChat === false) return;
-
-          try {
-            const botPayload = {
-              chatbot_id: bot.id,
-              user_id: userId,
-              sent_by: "bot",
-              message: bot.sohbet_basi_mesaj,
-            };
-
-            fetch("/api/chat/addchat.php", {
-              method: "POST",
-              headers: { "Content-Type": "application/x-www-form-urlencoded" },
-              body: new URLSearchParams({ data: JSON.stringify(botPayload) }),
-            });
-          } catch (dbErr) {
-            console.error("Bot başlangıç mesajı kaydedilemedi:", dbErr);
-          }
+    fetch(`/api/chat/getchat.php?chatbot_id=${bot.id}&conversation_id=${urlConvId}`)
+      .then(async (res) => ({ ok: res.ok, data: await res.json().catch(() => null) }))
+      .then(({ ok, data }) => {
+        if (cancelled) return;
+        if (!ok || !data?.success || !Array.isArray(data.messages)) {
+          conversationIdRef.current = 0;
+          setConversationId(0);
+          return;
         }
-      } catch (err) {
-        console.error("Geçmiş yüklenirken hata:", err);
-      }
-    };
+        const restored = data.messages
+          .filter((m) => !(m.sent_by !== "user" && greetText && String(m.message).trim() === greetText))
+          .map((m) => ({
+            type: m.sent_by === "user" ? "sent" : "received",
+            text: m.message,
+            messageId: m.sent_by === "user" ? undefined : Number(m.id),
+          }));
+        setMessages([...greeting, ...restored]);
+      })
+      .catch((err) => console.error("Sohbet yüklenemedi:", err));
 
-    loadHistory();
     return () => {
       cancelled = true;
     };
-  }, [conversation, bot, canChat]); // bot ve erişim (N-52) bağımlılıkta
+  }, [bot, userId, urlConvId, greetingMessages]);
+
+  useEffect(() => {
+    if (!userId || !bot || canChat === false || promptSentRef.current) return;
+    if (urlConvId > 0 || !urlPrompt.trim()) return;
+    promptSentRef.current = true;
+    router.replace(`/dashboard/chat/?botId=${bot.id}`);
+    handleSendMessage({ text: urlPrompt });
+  }, [bot, userId, canChat, urlConvId, urlPrompt]);
 
   useEffect(() => {
     if (messagesEndRef.current && stickToBottomRef.current) {
@@ -467,35 +356,14 @@ export default function Chat() {
     }, 50);
   };*/
 
-  const handleResetChat = async () => {
-    setMessages([]);
-    const newConvId = conversation.id + 1;
-    const bot_id = conversation.chatbot_id;
-    const payload = {
-      chatbot_id: bot_id,
-      user_id: userId,
-      conversation_name: "Yeni Sohbet",
-    };
-    try {
-      const res = await fetch("/api/chat/addconversation.php", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-        body: new URLSearchParams({
-          data: JSON.stringify(payload),
-        }),
-      });
-      const result = await res.json();
-      const newConversation = {
-        id: Number(result.id), // backend’den dönen id
-        conversation_name: "Yeni Sohbet", // frontend’de oluşturduğun isim
-      };
-
-      setConversation(newConversation);
-      setConversationId(result.id);
-    } catch (err) {
-      console.error("Yeni sohbet eklenirken hata:", err);
+  const handleResetChat = () => {
+    chatSessionRef.current += 1;
+    convPendingRef.current = null;
+    conversationIdRef.current = 0;
+    setConversationId(0);
+    setMessages(greetingMessages(bot));
+    if (urlConvId > 0 || urlPrompt) {
+      router.replace(`/dashboard/chat/?botId=${botId}`);
     }
     setTimeout(() => {
       if (messagesEndRef.current) {
@@ -521,47 +389,6 @@ export default function Chat() {
   // Sunucu tarafında tüketim + upstream hatasında iade var; 429 durumunu
   // generateReply() içindeki res.ok kontrolü ele alıyor.
 
-  // Fonksiyon içinde kullanacağımız yerel değişkenler
-  let currentConvId = (data.convId && data.convId > 0) ? data.convId : conversationId;
-  let isNewConversation = false;
-  let newConvData = null;
-
-  // 1. EĞER YENİ SOHBETSE ÖNCE LOCAL OLARAK OLUŞTUR
-  if (currentConvId <= 0) {
-    const words = data.text.trim().split(/\s+/);
-    let convName = words.slice(0, 5).join(" ");
-    if (words.length > 5) convName += " ...";
-    if (!convName) convName = "Yeni Sohbet";
-
-    const payload = {
-      chatbot_id: botId,
-      user_id: userId,
-      conversation_name: convName,
-    };
-
-    try {
-      const res = await fetch("/api/chat/addconversation.php", {
-        method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({ data: JSON.stringify(payload) }),
-      });
-      const result = await res.json();
-
-      if (result.id) {
-        currentConvId = Number(result.id);
-        isNewConversation = true; // Yeni olduğunu işaretle
-        newConvData = { id: currentConvId, conversation_name: convName };
-        // DİKKAT: setConversation'ı burada çağırmıyoruz, sona saklıyoruz!
-      } else {
-        throw new Error("Conversation oluşturulamadı.");
-      }
-    } catch (err) {
-      console.error("Conversation oluşturma hatası:", err);
-      return;
-    }
-  }
-
-  // 2. Kullanıcı mesajını arayüze ekle
   setMessages((prev) => [
     ...prev,
     {
@@ -571,24 +398,6 @@ export default function Chat() {
       audioUrl: data.audioUrl || "",
     },
   ]);
-
-  // 3. Kullanıcı mesajını DB'ye kaydet
-  const userPayload = {
-    chatbot_id: botId,
-    user_id: userId,
-    sent_by: "user",
-    message: data.text,
-  };
-
-  try {
-    fetch("/api/chat/addchat.php", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({ data: JSON.stringify(userPayload) }),
-    });
-  } catch (error) {
-    console.error("Kullanıcı mesajı DB hatası:", error);
-  }
 
   /* Dosya burada base64'e çevrilip `parts` dizisine konuyordu ve o dizi
      HİÇBİR YERDE OKUNMUYORDU: istek gövdesi yalnızca {chatbot_id, message}
@@ -650,12 +459,7 @@ export default function Chat() {
     }
   }
 
-  await generateReply(data.text, filePayloads, currentConvId);
-
-  if (isNewConversation) {
-    setConversationId(currentConvId);
-    setConversation(newConvData);
-  }
+  await generateReply(data.text, filePayloads);
 };
 
 // Bot cevabını üretip akışını ekrana basan kısım, orijinal kullanıcı
@@ -668,11 +472,12 @@ export default function Chat() {
 // "yazıyor..." animasyonunun sonsuza kadar ekranda kalmasına yol açıyordu.
 // N-48 — sunucunun bu istek için kaydettiği cevabı ara: meta karesindeki
 // after_id'den büyük kimlikli son bot mesajı. Bulunamazsa null.
-const pollSavedReply = async (afterId) => {
+const pollSavedReply = async (afterId, convId) => {
+  if (!(convId > 0)) return null;
   for (let i = 0; i < SAVED_REPLY_POLLS; i++) {
     await new Promise((r) => setTimeout(r, SAVED_REPLY_POLL_MS));
     try {
-      const res = await fetch(`/api/chat/getchat.php?chatbot_id=${botId}&user_id=${userId}`);
+      const res = await fetch(`/api/chat/getchat.php?chatbot_id=${botId}&conversation_id=${convId}`);
       const json = await res.json();
       const found = (Array.isArray(json?.messages) ? json.messages : [])
         .filter((m) => m.sent_by !== "user" && Number(m.id) > afterId)
@@ -685,7 +490,26 @@ const pollSavedReply = async (afterId) => {
   return null;
 };
 
-const generateReply = async (userText, filePayloads = [], convId = conversationIdRef.current) => {
+const generateReply = async (userText, filePayloads = []) => {
+  const session = chatSessionRef.current;
+  let convId = conversationIdRef.current;
+  let resolveConv = null;
+  if (!(convId > 0)) {
+    if (convPendingRef.current) {
+      convId = await convPendingRef.current;
+      if (session !== chatSessionRef.current) return;
+    } else {
+      convPendingRef.current = new Promise((r) => {
+        resolveConv = r;
+      });
+    }
+  }
+  const settleConv = (id) => {
+    if (!resolveConv) return;
+    resolveConv(id);
+    resolveConv = null;
+    if (session === chatSessionRef.current) convPendingRef.current = null;
+  };
   const placeholderId = Date.now();
   let timeoutId;
   let afterId = null; // N-48: sunucunun ilk karesinden
@@ -703,7 +527,7 @@ const generateReply = async (userText, filePayloads = [], convId = conversationI
     setMessages((prev) => prev.map((msg) =>
       msg.id === placeholderId ? { ...msg, text: "Cevap bekleniyor…", error: false } : msg
     ));
-    const saved = await pollSavedReply(afterId);
+    const saved = await pollSavedReply(afterId, conversationIdRef.current);
     checkMessageAllowance(userId, botId);
     setMessages((prev) => prev.map((msg) =>
       msg.id === placeholderId
@@ -837,6 +661,12 @@ const generateReply = async (userText, filePayloads = [], convId = conversationI
             if (typeof gData.remaining === "number" || gData.source) {
               if (typeof gData.remaining === "number") setCoinsRemaining(gData.remaining);
               if (typeof gData.after_id === "number") afterId = gData.after_id;
+              const newConvId = Number(gData.conversation_id);
+              if (newConvId > 0 && session === chatSessionRef.current) {
+                conversationIdRef.current = newConvId;
+                setConversationId(newConvId);
+              }
+              settleConv(newConvId > 0 ? newConvId : 0);
               continue;
             }
             const textChunk = gData.candidates?.[0]?.content?.parts?.[0]?.text || "";
@@ -901,6 +731,7 @@ const generateReply = async (userText, filePayloads = [], convId = conversationI
       msg.id === placeholderId ? { ...msg, text: errorText, error: true, retryText: userText } : msg
     ));
   } finally {
+    settleConv(conversationIdRef.current);
     setMessages((prev) => prev.map((msg) => (msg.id === placeholderId ? { ...msg, streaming: false } : msg)));
   }
 };

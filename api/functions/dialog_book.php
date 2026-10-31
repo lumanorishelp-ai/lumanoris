@@ -37,14 +37,22 @@ function geminiSseText(string $raw): string
 }
 
 /** Sunucunun ürettiği bot cevabını kaydeder; yeni satırın kimliğini döner. */
-function chatSaveBotReply(Database $db, int $userId, int $chatbotId, string $text): int
+function chatSaveBotReply(Database $db, int $userId, int $chatbotId, string $text, int $conversationId = 0): int
 {
-    return (int) $db->insert('chatbot_chats', [
+    $row = [
         'chatbot_id' => $chatbotId,
         'user_id'    => $userId,
         'sent_by'    => 'bot',
         'message'    => $text,
-    ]);
+    ];
+    if ($conversationId > 0) {
+        $row['conversation_id'] = $conversationId;
+    }
+    $id = (int) $db->insert('chatbot_chats', $row);
+    if ($conversationId > 0) {
+        $db->execute('UPDATE chatbot_conversations SET last_message_at = NOW() WHERE id = ?', [$conversationId]);
+    }
+    return $id;
 }
 
 /**

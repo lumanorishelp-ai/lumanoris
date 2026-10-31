@@ -9,7 +9,7 @@ class ChatController {
      * gereken alanlar istemciden yazılabiliyordu (sahte zaman damgalı mesaj
      * geçmişi), var olmayan bir sütun adı ise SQL hatasına dönüşüyordu.
      */
-    private const CHAT_COLUMNS         = ['chatbot_id', 'sent_by', 'message'];
+    private const CHAT_COLUMNS         = ['chatbot_id', 'conversation_id', 'sent_by', 'message'];
     private const CONVERSATION_COLUMNS = ['chatbot_id', 'conversation_name'];
 
     /** Ortak yardımcı: beyaz liste dışındaki anahtarları açıkça reddeder. */
@@ -62,6 +62,13 @@ class ChatController {
         $data['chatbot_id'] = $chatbotId;
         $data['user_id']   = $userId;
 
+        require_once __DIR__ . '/../../../functions/chat_context.php';
+        $convId = chatOwnedConversation($db, $userId, $chatbotId, InputSanitizer::positiveInt($data['conversation_id'] ?? 0));
+        unset($data['conversation_id']);
+        if ($convId > 0) {
+            $data['conversation_id'] = $convId;
+        }
+
         $id = $db->insert('chatbot_chats', $data);
         JsonResponse::success(['message' => 'Mesaj kaydedildi!', 'id' => $id]);
     }
@@ -71,7 +78,22 @@ class ChatController {
         $userId    = AuthMiddleware::requireAuth();
         if (!$chatbotId) JsonResponse::error('chatbot_id gereklidir.', 400, AppConfig::ERR_VALIDATION);
 
-        $results = Database::getInstance()->selectMulti(
+        $db = Database::getInstance();
+        if (isset($_GET['conversation_id'])) {
+            require_once __DIR__ . '/../../../functions/chat_context.php';
+            $convId = chatOwnedConversation($db, $userId, $chatbotId, InputSanitizer::positiveInt($_GET['conversation_id']));
+            if (!$convId) {
+                JsonResponse::error('Sohbet bulunamadı.', 404, AppConfig::ERR_NOT_FOUND);
+            }
+            $conv = $db->selectSingle('id, conversation_name FROM chatbot_conversations WHERE id = ?', [$convId]);
+            $results = $db->selectMulti(
+                'id, message, sent_by FROM chatbot_chats WHERE conversation_id = ? AND user_id = ? ORDER BY id',
+                [$convId, $userId]
+            );
+            JsonResponse::success(['messages' => $results, 'conversation' => $conv]);
+        }
+
+        $results = $db->selectMulti(
             // N-30: `id` defter kaydı için (bot mesajının kimliği) — eklemeli alan.
             'id, message, sent_by FROM chatbot_chats WHERE chatbot_id = ? AND user_id = ? ORDER BY id',
             [$chatbotId, $userId]
@@ -197,18 +219,8 @@ class ChatController {
             JsonResponse::error('Bu sohbet üzerinde yetkiniz yok.', 403, AppConfig::ERR_PERMISSION);
         }
 
+        $db->delete('chatbot_chats', 'conversation_id = ? AND user_id = ?', [$id, $userId]);
         $db->delete('chatbot_conversations', 'id = ?', [$id]);
-
-        // chatbot_chats has no per-conversation column (rows are keyed by
-        // chatbot_id + user_id only), so this can only scope to "this user's
-        // messages with this bot" — not the single conversation. That's still
-        // correct in the common case of one conversation per bot per user.
-        // Previously this used the conversation's own id as if it were the
-        // chatbot's id, which could wipe an unrelated bot's messages for
-        // every user that happened to share that numeric id.
-        if ($conv) {
-            $db->delete('chatbot_chats', 'chatbot_id = ? AND user_id = ?', [$conv['chatbot_id'], $conv['user_id']]);
-        }
 
         JsonResponse::success(['message' => 'Sohbet başarıyla silindi.', 'deleted_id' => $id]);
     }
@@ -216,20 +228,17 @@ class ChatController {
     public static function getHistory(): void {
         $userId = AuthMiddleware::requireAuth();
 
-        // chatbot_chats has no per-conversation column (rows are keyed by
-        // chatbot_id + user_id only — see the same note in
-        // deleteConversation), so "latest message" can only be scoped to
-        // "this user's messages with this bot", not the single conversation.
-        // Previously this used the conversation's own id (cc.id) as if it
-        // were the chatbot id, so the subquery never matched anything and
-        // latest_message/latest_sent_time were always null.
         $results = Database::getInstance()->selectMulti(
-            "cc.id, cc.chatbot_id, cc.conversation_name, cb.profil_fotografi,
-             (SELECT bc_inner.message FROM chatbot_chats bc_inner WHERE bc_inner.chatbot_id = cc.chatbot_id AND bc_inner.user_id = cc.user_id ORDER BY bc_inner.sent_time DESC LIMIT 1) AS latest_message,
-             (SELECT bc_inner.sent_time FROM chatbot_chats bc_inner WHERE bc_inner.chatbot_id = cc.chatbot_id AND bc_inner.user_id = cc.user_id ORDER BY bc_inner.sent_time DESC LIMIT 1) AS latest_sent_time
-             FROM chatbot_conversations cc
-             INNER JOIN chatbotlar cb ON cc.chatbot_id = cb.id
-             WHERE cc.user_id = ? ORDER BY cc.id DESC",
+            "t.* FROM (
+               SELECT cc.id, cc.chatbot_id, cc.conversation_name, cb.profil_fotografi,
+                 (SELECT m.message FROM chatbot_chats m WHERE m.conversation_id = cc.id AND m.user_id = cc.user_id ORDER BY m.id DESC LIMIT 1) AS latest_message,
+                 (SELECT m.sent_time FROM chatbot_chats m WHERE m.conversation_id = cc.id AND m.user_id = cc.user_id ORDER BY m.id DESC LIMIT 1) AS latest_sent_time
+               FROM chatbot_conversations cc
+               INNER JOIN chatbotlar cb ON cc.chatbot_id = cb.id
+               WHERE cc.user_id = ?
+             ) t
+             WHERE t.latest_sent_time IS NOT NULL
+             ORDER BY t.latest_sent_time DESC, t.id DESC",
             [$userId]
         );
 
@@ -303,6 +312,9 @@ class ChatController {
     public static function generateReply(): void {
         require_method('POST');
         $userId = AuthMiddleware::requireAuth();
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_write_close();
+        }
         require_once __DIR__ . '/../../../functions/coin_engine.php';
         require_once __DIR__ . '/../../../functions/gemini.php';
         require_once __DIR__ . '/../../../functions/dialog_book.php';
@@ -431,7 +443,8 @@ class ChatController {
 
         // N-50 geçmişi; N-60 — takip sorusu ("peki örnek?") için önceki
         // kullanıcı mesajı bilgi bankası seçiminde de kullanılıyor.
-        $historyRows = chatHistoryRows($db, $userId, $chatbotId, InputSanitizer::positiveInt($data['conversation_id'] ?? 0));
+        $conversationId = chatOwnedConversation($db, $userId, $chatbotId, InputSanitizer::positiveInt($data['conversation_id'] ?? 0));
+        $historyRows = chatHistoryRows($db, $userId, $chatbotId, $conversationId);
         $prevUser    = '';
         foreach (array_reverse($historyRows) as $r) {
             if (($r['sent_by'] ?? '') === 'user' && trim((string) $r['message']) !== trim($message)) {
@@ -530,12 +543,17 @@ class ChatController {
             $allowance['remaining'] = $fileAllowance['remaining'] ?? $allowance['remaining'] ?? null;
         }
 
+        if ($conversationId === 0) {
+            $conversationId = chatStartConversation($db, $userId, $chatbotId, $message);
+        }
+        chatSaveUserMessage($db, $userId, $chatbotId, $conversationId, $message);
+
         // OpenAI (RAG) — OPENAI_API_KEY + OPENAI_CHAT_MODEL tanımlıysa. Değilse
         // aşağıdaki Gemini yolu aynen çalışır (geçiş anahtarla açılıp kapanır).
         require_once __DIR__ . '/../../../functions/openai.php';
         if (openaiChatEnabled()) {
             self::streamOpenAiReply($db, $userId, $chatbotId, $bot, $message, $prevUser, $historyRows,
-                $fileParts, $corpus, $allowance, $allowanceSource, $fileAllowanceSources);
+                $fileParts, $corpus, $allowance, $allowanceSource, $fileAllowanceSources, $conversationId);
         }
 
         $apiKey = AppConfig::googleGeminiApiKey();
@@ -590,6 +608,7 @@ class ChatController {
             'remaining' => $allowance['remaining'] ?? null,
             'source'    => $allowanceSource,
             'after_id'  => $afterId,
+            'conversation_id' => $conversationId,
         ], JSON_UNESCAPED_UNICODE) . "\n\n";
         @flush();
 
@@ -679,7 +698,7 @@ class ChatController {
         if ($outcome === 'save') {
             // Kimlik son SSE karesiyle istemciye gidiyor; Diyalog Defteri
             // kaydı bu kimliğe dayanıyor ve metni DB'den kopyalıyor.
-            $savedId = chatSaveBotReply($db, $userId, $chatbotId, $replyText);
+            $savedId = chatSaveBotReply($db, $userId, $chatbotId, $replyText, $conversationId);
             echo "event: saved\n";
             echo 'data: ' . json_encode(['saved' => ['message_id' => $savedId]]) . "\n\n";
             @flush();
@@ -726,7 +745,7 @@ class ChatController {
     private static function streamOpenAiReply(
         Database $db, int $userId, int $chatbotId, array $bot, string $message, string $prevUser,
         array $historyRows, array $fileParts, string $legacyCorpus,
-        array $allowance, string $allowanceSource, array $fileAllowanceSources
+        array $allowance, string $allowanceSource, array $fileAllowanceSources, int $conversationId = 0
     ): never {
         require_once __DIR__ . '/../../../functions/kb.php';
         require_once __DIR__ . '/../../../functions/chat_openai.php';
@@ -769,6 +788,7 @@ class ChatController {
             'remaining' => $allowance['remaining'] ?? null,
             'source'    => $allowanceSource,
             'after_id'  => $afterId,
+            'conversation_id' => $conversationId,
         ], JSON_UNESCAPED_UNICODE) . "\n\n";
         @flush();
 
@@ -852,7 +872,7 @@ class ChatController {
                 echo "event: sources\n";
                 echo 'data: ' . json_encode(['sources' => chatSourceNames($chunks)], JSON_UNESCAPED_UNICODE) . "\n\n";
             }
-            $savedId = chatSaveBotReply($db, $userId, $chatbotId, $replyText);
+            $savedId = chatSaveBotReply($db, $userId, $chatbotId, $replyText, $conversationId);
             echo "event: saved\n";
             echo 'data: ' . json_encode(['saved' => ['message_id' => $savedId]]) . "\n\n";
             @flush();

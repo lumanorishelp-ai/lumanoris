@@ -49,6 +49,7 @@ import {
   Clock,
   RotateCcw,
 } from "lucide-react";
+import { shrinkImage, IMAGE_MAX_BYTES } from "@/shared/lib/shrink-image";
 
 // Deny-by-default limits used whenever the server's real limits cannot be
 // read. Creation stays blocked rather than being optimistically allowed.
@@ -589,14 +590,15 @@ function ChatbotForm({
     }
   };
 
-  const pickImage = (file, setFile, setPreview) => {
-    if (!file) return;
-    if (!file.type.startsWith("image/")) {
+  const pickImage = async (picked, setFile, setPreview, maxSide) => {
+    if (!picked) return;
+    if (!picked.type.startsWith("image/")) {
       setSubmitError("Yalnızca görsel dosyası yükleyebilirsiniz.");
       return;
     }
-    if (file.size > 5 * 1024 * 1024) {
-      setSubmitError("Görsel boyutu 5 MB'ı aşamaz.");
+    const file = await shrinkImage(picked, maxSide);
+    if (file.size > IMAGE_MAX_BYTES) {
+      setSubmitError("Görsel boyutu 5 MB'ı aşamaz. Lütfen daha küçük bir görsel seçin.");
       return;
     }
     setSubmitError(null);
@@ -916,7 +918,7 @@ function ChatbotForm({
                 preview={coverPreview}
                 inputRef={coverInputRef}
                 aspect="aspect-[16/10]"
-                onPick={(f) => pickImage(f, setCoverFile, setCoverPreview)}
+                onPick={(f) => pickImage(f, setCoverFile, setCoverPreview, 1600)}
                 onClear={() => {
                   setCoverFile(null);
                   setCoverPreview("");
@@ -929,7 +931,7 @@ function ChatbotForm({
                 preview={profilePreview}
                 inputRef={profileInputRef}
                 aspect="aspect-square"
-                onPick={(f) => pickImage(f, setProfileFile, setProfilePreview)}
+                onPick={(f) => pickImage(f, setProfileFile, setProfilePreview, 512)}
                 onClear={() => {
                   setProfileFile(null);
                   setProfilePreview("");

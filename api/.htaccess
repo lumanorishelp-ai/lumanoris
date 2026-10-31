@@ -33,6 +33,8 @@
 <IfModule mod_rewrite.c>
     RewriteEngine On
     RewriteRule (^|/)(db_backup|src|vendor|migrations|database|functions|cron|\.git)(/|$) - [F,L,NC]
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteRule ^assets/((?:kapak|profil)_fotografi/[0-9]+_[0-9a-f]+\.(?:png|jpe?g|webp|gif))$ asset_restore.php?p=$1 [L,QSA]
 </IfModule>
 
 # --- do not leak the directory listing when an index is missing -------------

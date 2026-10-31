@@ -16,7 +16,7 @@
 ?>
 <main class="bg-gray-50 p-6 min-h-screen">
     <div class="max-w-screen-xl mx-auto">
-        <?php pageTitle("Pazaryeri Başvuruları", "Şirket başvurularını inceleyin. \"İncelendi\" satıcıyı otomatik aktif yapmaz; ücretli satış ödeme altyapısına (B1) bağlıdır."); ?>
+        <?php pageTitle("Pazaryeri Başvuruları", "Başvuruları inceleyip onaylayın ya da açıklamayla reddedin. Kullanıcı sonucu bildirimlerinde görür."); ?>
 
         <div class="bg-white rounded-xl shadow-lg border border-gray-100 p-6">
             <div class="flex flex-wrap items-center gap-3 mb-4">
@@ -25,14 +25,9 @@
                     <option value="">Tümü</option>
                     <option value="submitted" selected>İnceleme bekleyen</option>
                     <option value="rejected">Reddedilen</option>
-                    <option value="reviewed">İncelenen</option>
+                    <option value="reviewed">Onaylanan</option>
                 </select>
                 <span id="msg" class="text-sm"></span>
-            </div>
-            <div class="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
-                "İncelendi" başvurudaki IBAN'ı kullanıcının para çekme IBAN'ı olarak kaydeder ve
-                değişikliği işlem loguna yazar. Kullanıcının bekleyen para çekme talebi varsa IBAN
-                güncellenmez; talep sonuçlandıktan sonra "IBAN'ı aktar" ile yeniden deneyin.
             </div>
             <div id="list" class="space-y-4">
                 <p class="text-sm text-gray-400">Yükleniyor…</p>
@@ -46,7 +41,7 @@
     const filterEl = document.getElementById('statusFilter');
     const msgEl    = document.getElementById('msg');
 
-    const STATUS_TR = { submitted: 'İnceleme bekliyor', reviewed: 'İncelendi', rejected: 'Reddedildi' };
+    const STATUS_TR = { submitted: 'İnceleme bekliyor', reviewed: 'Onaylandı', rejected: 'Reddedildi' };
     const TYPE_TR   = { sahis: 'Şahıs şirketi', kurumsal: 'Kurumsal' };
 
     function say(text, ok) {
@@ -69,12 +64,18 @@
     function card(a) {
         const c = el('div', 'rounded-lg border border-gray-200 p-4');
         const head = el('div', 'flex flex-wrap items-center justify-between gap-2 mb-3');
-        head.appendChild(el('h3', 'font-semibold text-gray-900', a.company_title + ' · ' + (TYPE_TR[a.account_type] || a.account_type)));
+        const simple = !a.company_title;
+        head.appendChild(el('h3', 'font-semibold text-gray-900', simple ? (a.full_name || '—') : a.company_title + ' · ' + (TYPE_TR[a.account_type] || a.account_type)));
         head.appendChild(el('span', 'text-xs font-semibold rounded-full px-2 py-1 bg-gray-100 text-gray-700', STATUS_TR[a.status] || a.status));
         c.appendChild(head);
 
         const dl = el('dl', 'grid grid-cols-1 md:grid-cols-3 gap-3');
-        [
+        (simple ? [
+            ['Kullanıcı', (a.kullanici_adi || '—') + ' (#' + a.user_id + ') · ' + (a.eposta || '')],
+            ['Telefon', a.phone],
+            ['E-posta', a.email],
+            ['Son güncelleme', a.updated_at + (a.reviewed_at ? ' · incelendi: ' + a.reviewed_at : '')],
+        ] : [
             ['Kullanıcı', (a.kullanici_adi || '—') + ' (#' + a.user_id + ') · ' + (a.eposta || '')],
             ['Vergi no / dairesi', a.tax_number + ' · ' + a.tax_office],
             ['MERSİS', a.mersis_no],
@@ -84,13 +85,20 @@
             ['Başvurudaki IBAN (yeni)', a.iban],
             ['Kullanıcının mevcut IBAN\'ı', a.current_iban || 'kayıtlı IBAN yok'],
             ['Son güncelleme', a.updated_at + (a.reviewed_at ? ' · incelendi: ' + a.reviewed_at : '')],
-        ].forEach(([l, v]) => dl.appendChild(field(l, v)));
+        ]).forEach(([l, v]) => dl.appendChild(field(l, v)));
         c.appendChild(dl);
+
+        if (simple) {
+            const desc = el('div', 'mt-3');
+            desc.appendChild(el('dt', 'text-xs text-gray-500', 'Açıklama'));
+            desc.appendChild(el('dd', 'text-sm text-gray-900 whitespace-pre-wrap break-words', a.description || '—'));
+            c.appendChild(desc);
+        }
 
         if (a.iban_differs) {
             c.appendChild(el('p', 'mt-2 text-xs text-amber-700', 'Başvurudaki IBAN mevcut IBAN\'dan farklı.'));
         }
-        if (a.pending_withdrawals > 0) {
+        if (!simple && a.pending_withdrawals > 0) {
             c.appendChild(el('p', 'mt-1 text-xs text-red-700',
                 'Kullanıcının ' + a.pending_withdrawals + ' bekleyen para çekme talebi var — bu durumda IBAN güncellenmez.'));
         }
@@ -100,7 +108,7 @@
 
         // İncelenmiş ama IBAN'ı aktarılamamış (bekleyen çekim vardı) başvuru:
         // yalnızca aktarımı yeniden deneme düğmesi.
-        const needsTransfer = a.status === 'reviewed' && (a.iban_differs || !a.current_iban);
+        const needsTransfer = a.status === 'reviewed' && !!a.iban && (a.iban_differs || !a.current_iban);
         if (needsTransfer) {
             const retry = el('button', 'mt-3 bg-indigo-600 text-white text-sm font-semibold px-3 py-2 rounded-lg', 'IBAN\x27ı aktar');
             retry.type = 'button';
@@ -113,7 +121,7 @@
             const note = el('input', 'flex-1 min-w-[200px] border border-gray-300 rounded-lg px-3 py-2 text-sm');
             note.placeholder = 'Ret açıklaması (kullanıcı görür)';
             note.maxLength = 1000;
-            const ok  = el('button', 'bg-emerald-600 text-white text-sm font-semibold px-3 py-2 rounded-lg', 'İncelendi');
+            const ok  = el('button', 'bg-emerald-600 text-white text-sm font-semibold px-3 py-2 rounded-lg', 'Onayla');
             const bad = el('button', 'bg-red-600 text-white text-sm font-semibold px-3 py-2 rounded-lg', 'Reddet');
             ok.type = bad.type = 'button';
             ok.addEventListener('click', () => save(a.id, 'reviewed', '', ok));
@@ -146,7 +154,7 @@
     }
 
     async function save(id, status, note, button) {
-        if (status === 'reviewed' && !confirm(id + ' numaralı başvuruyu "incelendi" olarak işaretlemek istiyor musunuz?\n\nBaşvurudaki IBAN kullanıcının para çekme IBAN\'ı olarak kaydedilecek (bekleyen çekim talebi yoksa).\nBu, satıcıyı aktif yapmaz.')) return;
+        if (status === 'reviewed' && !confirm(id + ' numaralı başvuruyu onaylamak istiyor musunuz?')) return;
         if (status === 'rejected' && !note.trim()) { say('Reddetmek için açıklama yazın.', false); return; }
         button.disabled = true;
         try {

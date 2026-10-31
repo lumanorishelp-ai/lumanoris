@@ -30,7 +30,11 @@ function loadStatus(userId) {
         if (!data || data.success === false) {
           throw new Error(data?.message || "Pazaryeri kaydı durumu alınamadı.");
         }
-        return { registered: data.registered === true, application: data.application ?? null };
+        return {
+          registered: data.registered === true,
+          application: data.application ?? null,
+          defaults: data.defaults ?? null,
+        };
       })
       .catch((err) => {
         cache.delete(userId); // hata önbelleğe alınmasın, tekrar denenebilsin
@@ -46,25 +50,26 @@ export function useMarketplaceRegistration(userId) {
     loading: true,
     registered: false,
     application: null,
+    defaults: null,
     error: null,
   });
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
     if (!userId) {
-      setState({ loading: false, registered: false, application: null, error: null });
+      setState({ loading: false, registered: false, application: null, defaults: null, error: null });
       return;
     }
     let cancelled = false;
     setState((prev) => ({ ...prev, loading: true, error: null }));
     loadStatus(userId)
-      .then(({ registered, application }) => {
+      .then(({ registered, application, defaults }) => {
         if (cancelled) return;
-        setState({ loading: false, registered, application, error: null });
+        setState({ loading: false, registered, application, defaults, error: null });
       })
       .catch((err) => {
         if (cancelled) return;
-        setState({ loading: false, registered: false, application: null, error: err.message || String(err) });
+        setState({ loading: false, registered: false, application: null, defaults: null, error: err.message || String(err) });
       });
     return () => {
       cancelled = true;

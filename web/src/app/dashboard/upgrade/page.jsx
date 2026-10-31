@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useContext } from "react";
 import { toast } from "@/shared/hooks/use-toast";
 import { UserContext } from "@/shared/contexts/UserContext";
-import PricingPageHeader from "./components/PricingPageHeader";
+import { PageLayout, PageHeader, PageSection } from "@/shared/ui/page-layout";
 import PricingLoadingState from "./components/PricingLoadingState";
 import PricingCard from "./components/PricingCard";
 import SubscriptionCard from "./components/SubscriptionCard";
@@ -233,73 +233,72 @@ export default function PricingPlans() {
     }
   };
 
+  const header = (
+    <PageHeader
+      eyebrow="Abonelik"
+      title="Abonelikler"
+      description="Size uygun paketi seçin. Paketler 30 gün geçerlidir ve otomatik yenilenmez."
+    />
+  );
+
   if (loading) {
     return (
-      <div className="min-h-screen bg-zinc-950 text-zinc-100 selection:bg-violet-500 selection:text-white px-4 sm:px-6 lg:px-8 py-12 lg:py-20 font-display">
-        <div>
-          <PricingPageHeader
-            eyebrow="Planlar ve Fiyatlandırma"
-            title="Hesabını Yükselt"
-          />
-          <PricingLoadingState />
-        </div>
-      </div>
+      <PageLayout>
+        {header}
+        <PricingLoadingState />
+      </PageLayout>
     );
   }
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 selection:bg-violet-500 selection:text-white px-4 sm:px-6 lg:px-8 py-12 lg:py-20 font-display">
-      <div>
-        <PricingPageHeader
-          eyebrow="Esnek Fiyatlandırma"
-          title="Geleceğin Yapay Zeka Altyapısı"
+    <PageLayout>
+      {header}
+
+      {error && (
+        <StatusBanner variant="error">
+          Paketler yüklenemedi: {error}
+        </StatusBanner>
+      )}
+      {!error && plansData.length === 0 && (
+        <StatusBanner variant="error">
+          Şu anda gösterilebilecek bir paket yok.
+        </StatusBanner>
+      )}
+      {paymentResult === "paid" && (
+        <StatusBanner variant="success">
+          Ödemeniz alındı; paketiniz 30 gün için etkinleştirildi.
+        </StatusBanner>
+      )}
+      {paymentResult === "failed" && (
+        <StatusBanner variant="error">
+          {PAYMENT_FAIL_REASONS[failReason] ?? "Ödeme tamamlanamadı"} ve paketiniz değişmedi. Dilerseniz tekrar deneyebilirsiniz.
+        </StatusBanner>
+      )}
+      {paymentResult === "pending" && (
+        <StatusBanner variant="error">
+          Ödemeniz tamamlanmadı. Ödeme sayfasını yarıda bıraktıysanız paketi yeniden seçebilirsiniz.
+        </StatusBanner>
+      )}
+      {upgradedPlan && (
+        <StatusBanner variant="success">
+          Tebrikler! "{upgradedPlan}" paketi başarıyla etkinleştirildi.
+        </StatusBanner>
+      )}
+
+      <PageSection>
+        <SubscriptionCard
+          sub={subscription}
+          onRebuy={(name) => {
+            const i = plansData.findIndex((p) => p.title === name);
+            if (i >= 0) handleChoosePlan(plansData[i], i);
+          }}
         />
+      </PageSection>
 
-        {/* N-28 — "Yıllık Faturalandırma · %20 İndirim" anahtarı kaldırıldı:
-            yıllık ürün ve indirim yok, anahtar yalnızca etiketi değiştiriyordu. */}
-
-        <div>
-          {error && (
-            <StatusBanner variant="error">
-              Paketler yüklenemedi: {error}
-            </StatusBanner>
-          )}
-          {!error && plansData.length === 0 && (
-            <StatusBanner variant="error">
-              Şu anda gösterilebilecek bir paket yok.
-            </StatusBanner>
-          )}
-          {paymentResult === "paid" && (
-            <StatusBanner variant="success">
-              Ödemeniz alındı; paketiniz 30 gün için etkinleştirildi.
-            </StatusBanner>
-          )}
-          {paymentResult === "failed" && (
-            <StatusBanner variant="error">
-              {PAYMENT_FAIL_REASONS[failReason] ?? "Ödeme tamamlanamadı"} ve paketiniz değişmedi. Dilerseniz tekrar deneyebilirsiniz.
-            </StatusBanner>
-          )}
-          {paymentResult === "pending" && (
-            <StatusBanner variant="error">
-              Ödemeniz tamamlanmadı. Ödeme sayfasını yarıda bıraktıysanız paketi yeniden seçebilirsiniz.
-            </StatusBanner>
-          )}
-          {upgradedPlan && (
-            <StatusBanner variant="success">
-              Tebrikler! "{upgradedPlan}" paketi başarıyla etkinleştirildi.
-            </StatusBanner>
-          )}
-
-          <SubscriptionCard
-            sub={subscription}
-            onRebuy={(name) => {
-              const i = plansData.findIndex((p) => p.title === name);
-              if (i >= 0) handleChoosePlan(plansData[i], i);
-            }}
-          />
-
-          {/* Pricing Cards Grid */}
-          <div className="grid grid-cols-1 gap-8 sm:grid-cols-2 lg:grid-cols-4 pt-4">
+      {plansData.length > 0 && (
+        <PageSection>
+          <h2 className="mb-4 font-display text-lg font-semibold text-white">Paketler</h2>
+          <div className="grid grid-cols-1 gap-5 md:grid-cols-2 2xl:grid-cols-4">
             {plansData.map((plan, index) => (
               <PricingCard
                 key={index}
@@ -310,14 +309,16 @@ export default function PricingPlans() {
               />
             ))}
           </div>
+        </PageSection>
+      )}
 
-          <EnterpriseContactFooter
-            sending={salesContactSending}
-            sent={salesContactSent}
-            onContact={handleContactSales}
-          />
-        </div>
-      </div>
+      <PageSection>
+        <EnterpriseContactFooter
+          sending={salesContactSending}
+          sent={salesContactSent}
+          onContact={handleContactSales}
+        />
+      </PageSection>
 
       <PlanPaymentModal
         open={!!pendingPlan}
@@ -328,6 +329,6 @@ export default function PricingPlans() {
         starting={startingPayment}
         unavailable={paymentUnavailable}
       />
-    </div>
+    </PageLayout>
   );
 }

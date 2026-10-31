@@ -108,6 +108,8 @@ function admin_store_uploads(array $files, array $data): array {
         }
 
         $data[$column] = 'assets/' . $column . '/' . $fileName;
+        require_once __DIR__ . '/../../functions/uploads.php';
+        uploadsBackupCopy($data[$column]);
     }
 
     return $data;

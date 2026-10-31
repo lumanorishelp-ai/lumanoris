@@ -62,7 +62,7 @@ if ($method === 'GET') {
 
     foreach ($rows as &$r) {
         $r['pending_withdrawals'] = (int) $r['pending_withdrawals'];
-        $r['iban_differs']        = ($r['current_iban'] ?? null) !== null
+        $r['iban_differs']        = ($r['iban'] ?? null) !== null && ($r['current_iban'] ?? null) !== null
             && preg_replace('/\s+/', '', (string) $r['current_iban']) !== $r['iban'];
     }
     unset($r);

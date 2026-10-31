@@ -16,22 +16,27 @@ require_once __DIR__ . '/db.php';
 const MARKETPLACE_APPLICATIONS_TABLE = 'marketplace_applications';
 
 /** İstemcinin gönderebileceği alanlar (beyaz liste). */
-const MARKETPLACE_APPLICATION_FIELDS = [
-    'account_type', 'company_title', 'tax_number', 'tax_office', 'mersis_no',
-    'authorized_first_name', 'authorized_last_name', 'authorized_birth_date',
-    'iban', 'il', 'ilce', 'address',
-];
+const MARKETPLACE_APPLICATION_FIELDS = ['full_name', 'phone', 'email', 'description'];
 
-/** Zorunlu metin alanları ve azami uzunlukları (016 şemasıyla aynı). */
-const MARKETPLACE_APPLICATION_TEXT_FIELDS = [
-    'company_title'         => 255,
-    'tax_office'            => 100,
-    'authorized_first_name' => 100,
-    'authorized_last_name'  => 100,
-    'il'                    => 100,
-    'ilce'                  => 100,
-    'address'               => 500,
-];
+const MARKETPLACE_APPLICATION_NAME_MAX        = 150;
+const MARKETPLACE_APPLICATION_EMAIL_MAX       = 190;
+const MARKETPLACE_APPLICATION_DESCRIPTION_MIN = 20;
+const MARKETPLACE_APPLICATION_DESCRIPTION_MAX = 2000;
+
+function normalizeApplicationPhone(string $raw): ?string {
+    $raw = trim($raw);
+    if ($raw === '') return null;
+    $plus   = str_starts_with($raw, '+') || str_starts_with($raw, '00');
+    $digits = preg_replace('/\D/', '', $raw) ?? '';
+    if (str_starts_with($raw, '00')) $digits = substr($digits, 2);
+
+    if ($plus && str_starts_with($digits, '90')) $digits = substr($digits, 2);
+    elseif (!$plus && strlen($digits) === 12 && str_starts_with($digits, '90')) $digits = substr($digits, 2);
+    elseif (!$plus && strlen($digits) === 11 && str_starts_with($digits, '0')) $digits = substr($digits, 1);
+    elseif ($plus) return (strlen($digits) >= 8 && strlen($digits) <= 15) ? '+' . $digits : null;
+
+    return preg_match('/^[2-5]\d{9}$/', $digits) ? '+90' . $digits : null;
+}
 
 /**
  * Ham girdiyi doğrular ve yazılmaya hazır temiz diziyi döndürür.
@@ -50,69 +55,42 @@ function validateMarketplaceApplication(array $input): array {
     $errors = [];
     $clean  = [];
 
-    // Hesap türü — GK-8: yalnızca şirketler.
-    $type = (string) ($data['account_type'] ?? '');
-    if (!in_array($type, ['sahis', 'kurumsal'], true)) {
-        $errors['account_type'] = 'Hesap türü şahıs şirketi ya da kurumsal olmalıdır.';
+    $name = preg_replace('/\s+/u', ' ', trim(InputSanitizer::text($data['full_name'] ?? '', 500))) ?? '';
+    if ($name === '') {
+        $errors['full_name'] = 'Adınızı ve soyadınızı girin.';
+    } elseif (mb_strlen($name) > MARKETPLACE_APPLICATION_NAME_MAX) {
+        $errors['full_name'] = 'En fazla ' . MARKETPLACE_APPLICATION_NAME_MAX . ' karakter olabilir.';
+    } elseif (count(explode(' ', $name)) < 2 || !preg_match("/^[\\p{L}\\p{M}'’. -]+$/u", $name)) {
+        $errors['full_name'] = 'Adınızı ve soyadınızı birlikte, yalnızca harf kullanarak yazın.';
     }
-    $clean['account_type'] = $type;
+    $clean['full_name'] = $name;
 
-    foreach (MARKETPLACE_APPLICATION_TEXT_FIELDS as $field => $max) {
-        $value = trim(InputSanitizer::text($data[$field] ?? '', $max));
-        if ($value === '') {
-            $errors[$field] = 'Bu alan zorunludur.';
-        } elseif (mb_strlen($value) > $max) {
-            $errors[$field] = "En fazla $max karakter olabilir.";
-        }
-        $clean[$field] = $value;
+    $phone = normalizeApplicationPhone((string) ($data['phone'] ?? ''));
+    if (trim((string) ($data['phone'] ?? '')) === '') {
+        $errors['phone'] = 'Telefon numaranızı girin.';
+    } elseif ($phone === null) {
+        $errors['phone'] = 'Geçerli bir telefon numarası girin (örn. 0532 123 45 67).';
     }
+    $clean['phone'] = $phone;
 
-    // Vergi no — GK-24: kurumsal VKN (10); şahıs TCKN (11) ya da VKN (10).
-    $taxRaw    = preg_replace('/\D/', '', (string) ($data['tax_number'] ?? '')) ?? '';
-    try {
-        if ($type === 'kurumsal') {
-            $clean['tax_number'] = BankIdentity::normalizeVkn($taxRaw);
-        } elseif (strlen($taxRaw) === 11) {
-            $clean['tax_number'] = BankIdentity::normalizeTckn($taxRaw);
-        } else {
-            $clean['tax_number'] = BankIdentity::normalizeVkn($taxRaw);
-        }
-    } catch (ValidationException $e) {
-        $errors['tax_number'] = $type === 'sahis'
-            ? 'Şahıs şirketinde vergi no 11 haneli T.C. Kimlik No ya da 10 haneli Vergi Kimlik No olmalıdır.'
-            : $e->getMessage();
+    $email = mb_strtolower(trim((string) ($data['email'] ?? '')));
+    if ($email === '') {
+        $errors['email'] = 'E-posta adresinizi girin.';
+    } elseif (mb_strlen($email) > MARKETPLACE_APPLICATION_EMAIL_MAX || filter_var($email, FILTER_VALIDATE_EMAIL) === false) {
+        $errors['email'] = 'Geçerli bir e-posta adresi girin.';
     }
+    $clean['email'] = $email;
 
-    // MERSİS — GK-24: kurumsalda zorunlu, şahısta isteğe bağlı; 16 hane rakam.
-    $mersis = preg_replace('/\s+/', '', (string) ($data['mersis_no'] ?? '')) ?? '';
-    if ($mersis === '') {
-        if ($type === 'kurumsal') {
-            $errors['mersis_no'] = 'Kurumsal başvuruda MERSİS numarası zorunludur.';
-        }
-        $clean['mersis_no'] = null;
-    } elseif (!preg_match('/^\d{16}$/', $mersis)) {
-        $errors['mersis_no'] = 'MERSİS numarası 16 haneli olmalıdır.';
-        $clean['mersis_no'] = null;
-    } else {
-        $clean['mersis_no'] = $mersis;
+    $desc = trim(InputSanitizer::text($data['description'] ?? '', MARKETPLACE_APPLICATION_DESCRIPTION_MAX + 1000));
+    $len  = mb_strlen($desc);
+    if ($desc === '') {
+        $errors['description'] = 'Kendinizi ve pazaryerinde ne sunmak istediğinizi kısaca anlatın.';
+    } elseif ($len < MARKETPLACE_APPLICATION_DESCRIPTION_MIN) {
+        $errors['description'] = 'Açıklama en az ' . MARKETPLACE_APPLICATION_DESCRIPTION_MIN . ' karakter olmalıdır.';
+    } elseif ($len > MARKETPLACE_APPLICATION_DESCRIPTION_MAX) {
+        $errors['description'] = 'Açıklama en fazla ' . MARKETPLACE_APPLICATION_DESCRIPTION_MAX . ' karakter olabilir.';
     }
-
-    // Yetkili doğum tarihi — geçerli tarih ve en az MIN_REGISTRATION_AGE.
-    $birthRaw = (string) ($data['authorized_birth_date'] ?? '');
-    $birth    = DateTimeImmutable::createFromFormat('!Y-m-d', $birthRaw);
-    if (!$birth || $birth->format('Y-m-d') !== $birthRaw) {
-        $errors['authorized_birth_date'] = 'Geçerli bir doğum tarihi girin (YYYY-AA-GG).';
-    } elseif ($birth->diff(new DateTimeImmutable('today'))->y < AppConfig::MIN_REGISTRATION_AGE) {
-        $errors['authorized_birth_date'] = 'Yetkili kişi en az ' . AppConfig::MIN_REGISTRATION_AGE . ' yaşında olmalıdır.';
-    }
-    $clean['authorized_birth_date'] = $birthRaw;
-
-    // IBAN — TR + mod97 (BankIdentity; COMP-004).
-    try {
-        $clean['iban'] = BankIdentity::normalizeIban($data['iban'] ?? '');
-    } catch (ValidationException $e) {
-        $errors['iban'] = $e->getMessage();
-    }
+    $clean['description'] = $desc;
 
     if ($errors !== []) {
         throw new ValidationException('Başvuru formunda hatalı alanlar var.', $errors);
@@ -153,7 +131,7 @@ function submitMarketplaceApplication(Database $db, int $userId, array $clean): 
     $existing = getMarketplaceApplication($db, $userId);
     if ($existing && $existing['status'] === 'reviewed') {
         throw new DuplicateException(
-            'Başvurunuz incelendi; bilgilerinizi değiştirmek için destek ekibiyle iletişime geçin.'
+            'Başvurunuz onaylandı; bilgilerinizi değiştirmek için destek ekibiyle iletişime geçin.'
         );
     }
 
@@ -297,7 +275,7 @@ function reviewMarketplaceApplication(
     );
 
     $ibanResult = 'not_applicable';
-    if ($status === 'reviewed') {
+    if ($status === 'reviewed' && trim((string) $app['iban']) !== '') {
         $newIban = strtoupper(preg_replace('/\s+/', '', (string) $app['iban']) ?? '');
         $oldRow  = $db->selectSingle('iban FROM banka_bilgileri WHERE user_id = ? FOR UPDATE', [$userId]);
         $oldIban = $oldRow ? strtoupper(preg_replace('/\s+/', '', (string) $oldRow['iban']) ?? '') : '';
@@ -347,13 +325,13 @@ function reviewMarketplaceApplication(
         [
             $userId,
             'marketplace_application',
-            $reviewed ? 'Pazaryeri başvurunuz incelendi' : 'Pazaryeri başvurunuz onaylanmadı',
-            $reviewed ? 'Your marketplace application was reviewed' : 'Your marketplace application was not approved',
+            $reviewed ? 'Pazaryeri başvurunuz onaylandı' : 'Pazaryeri başvurunuz onaylanmadı',
+            $reviewed ? 'Your marketplace application was approved' : 'Your marketplace application was not approved',
             $reviewed
-                ? 'Başvurunuz incelendi. Pazaryerinde ücretli satış, ödeme altyapısı tamamlandığında açılacaktır.'
-                : 'Başvurunuz onaylanmadı. Açıklamayı Pazaryeri Başvurusu sayfasında görebilir, düzeltip yeniden gönderebilirsiniz.',
+                ? 'Başvurunuz onaylandı. Ekibimiz pazaryeri süreciyle ilgili sizinle iletişime geçecek.'
+                : 'Başvurunuz onaylanmadı. Açıklamayı Pazaryeri Başvurusu sayfasında görebilir, düzenleyip yeniden başvurabilirsiniz.',
             $reviewed
-                ? 'Your application was reviewed. Paid marketplace sales will open once the payment infrastructure is ready.'
+                ? 'Your application was approved. Our team will contact you about the marketplace process.'
                 : 'Your application was not approved. See the note on the Marketplace Application page, fix it and resubmit.',
         ]
     );

@@ -10,105 +10,73 @@ export default function PricingCard({
   onChoose,
 }) {
   const isFeatured = !!plan.badge;
+  const isFree = plan.title === "Ücretsiz";
+  const canChoose = !isFree && (!plan.is_active_paid || plan.can_renew);
 
   return (
     <div
       className={cn(
-        "group relative flex flex-col justify-between rounded-3xl p-8 transition-all duration-300 ease-out backdrop-blur-2xl",
+        "group relative flex h-full flex-col rounded-2xl border p-6 transition-all duration-300",
         isFeatured
-          ? "bg-gradient-to-b from-zinc-900/90 via-zinc-900/60 to-zinc-950/90 border-2 border-fuchsia-500/40 shadow-[0_0_50px_rgba(192,38,211,0.15)] hover:border-fuchsia-400/70 hover:shadow-[0_0_70px_rgba(192,38,211,0.25)] -translate-y-2"
-          : "bg-zinc-900/40 border border-zinc-800/80 hover:border-zinc-700/80 hover:bg-zinc-900/70 hover:-translate-y-0.5 shadow-xl",
-        isSelected && "ring-2 ring-violet-500 border-transparent",
+          ? "border-fuchsia-500/40 bg-gradient-to-b from-fuchsia-500/[0.08] via-luma-panel to-luma-panel shadow-[0_0_40px_rgba(192,38,211,0.12)] hover:border-fuchsia-400/60"
+          : "border-fuchsia-400/10 bg-gradient-card shadow-card hover:border-fuchsia-400/20",
+        isSelected && "ring-2 ring-fuchsia-500/60",
       )}
     >
-      {/* Ambient Glow for Featured Card */}
-      {isFeatured && (
-        <div className="absolute -top-20 -right-20 w-40 h-40 bg-fuchsia-600/20 rounded-full blur-[70px] pointer-events-none transition-opacity duration-500 group-hover:opacity-100" />
-      )}
-
-      <div>
-        {/* Header & Badge */}
-        <div className="flex items-center justify-between mb-6">
-          <div className="w-12 h-12 rounded-2xl bg-zinc-800/80 border border-zinc-700/60 flex items-center justify-center shadow-inner group-hover:scale-105 transition-transform duration-300">
-            <Crown
-              className={cn(
-                "w-6 h-6",
-                isFeatured ? "text-fuchsia-400" : "text-violet-400",
-              )}
-            />
-          </div>
-          {plan.badge && <PlanBadge variant="default">{plan.badge}</PlanBadge>}
+      <div className="mb-5 flex h-11 items-center justify-between gap-3">
+        <div className="flex h-11 w-11 items-center justify-center rounded-xl border border-white/10 bg-white/[0.04]">
+          <Crown className={cn("h-5 w-5", isFeatured ? "text-fuchsia-300" : "text-violet-300")} />
         </div>
-
-        <h3 className="text-xl font-bold text-white mb-2 tracking-tight">
-          {plan.title}
-        </h3>
-
-        <p className="text-zinc-400 text-xs sm:text-sm leading-relaxed mb-6 min-h-[40px]">
-          {plan.description}
-        </p>
-
-        {/* Pricing */}
-        <div className="mb-6 pb-6 border-b border-zinc-800/80 flex items-baseline gap-1">
-          <span className="text-4xl font-extrabold text-white tracking-tight">
-            {plan.monthly_price}
-          </span>
-          {plan.monthly_price !== "₺0" && (
-            <span className="text-xs text-zinc-400 font-medium">
-              /Aylık
-            </span>
-          )}
-        </div>
+        {plan.badge && <PlanBadge variant="default">{plan.badge}</PlanBadge>}
       </div>
 
-      <div>
-        {/* Action Button */}
-        {/* N-63/N-67 — aktif ücretli paket yeniden satın alınamaz (sunucu da
-            reddeder); bitişe ≤7 gün kala "Yenile (+30 gün)" açılır. */}
+      <h3 className="font-display text-lg font-bold tracking-tight text-white">{plan.title}</h3>
+      <p className="mt-1.5 line-clamp-3 min-h-[2.5rem] text-sm leading-5 text-white/55">
+        {plan.description}
+      </p>
+
+      <div className="mt-5 flex min-h-[2.5rem] flex-wrap items-baseline gap-x-1.5 border-b border-white/[0.06] pb-5">
+        <span className="font-display text-3xl font-extrabold tracking-tight text-white">
+          {plan.monthly_price}
+        </span>
+        {plan.monthly_price !== "₺0" && (
+          <span className="text-xs font-medium text-white/45">/ Aylık</span>
+        )}
+      </div>
+
+      <div className="mt-5">
         <PricingButton
-          disabled={plan.title === "Ücretsiz" || (plan.is_active_paid && !plan.can_renew) || isUpgrading}
+          disabled={isFree || (plan.is_active_paid && !plan.can_renew) || isUpgrading}
           onClick={onChoose}
-          variant={
-            plan.buttonType === "primary"
-              ? "primary"
-              : plan.title === "Ücretsiz"
-                ? "secondary"
-                : "outline"
-          }
-          className="w-full rounded-xl py-3.5 text-xs font-semibold tracking-wide mb-8 group/btn"
+          variant={plan.buttonType === "primary" ? "primary" : isFree ? "secondary" : "outline"}
+          className="group/btn h-11 w-full rounded-xl text-sm font-semibold"
         >
           <span>{isUpgrading ? "İşleniyor..." : plan.buttonText}</span>
-          {plan.title !== "Ücretsiz" && (!plan.is_active_paid || plan.can_renew) && !isUpgrading && (
-            <ArrowRight className="w-4 h-4 ml-2 group-hover/btn:translate-x-1 transition-transform" />
+          {canChoose && !isUpgrading && (
+            <ArrowRight className="ml-2 h-4 w-4 transition-transform group-hover/btn:translate-x-1" />
           )}
         </PricingButton>
-        {plan.is_active_paid && (
-          <p className="-mt-6 mb-8 text-center text-caption text-zinc-400">
-            {plan.current_expires_at
-              ? `Bitiş: ${new Date(plan.current_expires_at.replace(" ", "T")).toLocaleDateString("tr-TR")}${plan.can_renew ? " · yenilerseniz kalan günleriniz korunur" : ""}`
-              : "Süresiz"}
-          </p>
-        )}
+        <p className="mt-2 min-h-[1rem] text-center text-caption text-white/45">
+          {plan.is_active_paid
+            ? plan.current_expires_at
+              ? `Bitiş: ${new Date(plan.current_expires_at.replace(" ", "T")).toLocaleDateString("tr-TR")}${plan.can_renew ? " · kalan günleriniz korunur" : ""}`
+              : "Süresiz"
+            : ""}
+        </p>
+      </div>
 
-        {/* Features List */}
-        <div className="space-y-4">
-          <div className="text-xs font-bold uppercase tracking-wider text-zinc-400">
-            Neler Dahil?
-          </div>
-          <ul className="flex flex-col gap-3">
-            {plan.features.map((feature, i) => (
-              <li
-                key={i}
-                className="flex items-start gap-3 text-xs sm:text-sm text-zinc-300"
-              >
-                <div className="w-5 h-5 rounded-full bg-violet-500/10 border border-violet-500/20 flex items-center justify-center shrink-0 mt-0.5">
-                  <Check className="w-3 h-3 text-violet-400" />
-                </div>
-                <span className="leading-tight">{feature}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
+      <div className="mt-4 flex-1">
+        <p className="mb-3 text-caption font-bold uppercase tracking-wider text-white/45">Neler dahil?</p>
+        <ul className="flex flex-col gap-2.5">
+          {plan.features.map((feature, i) => (
+            <li key={i} className="flex items-start gap-2.5 text-sm text-white/75">
+              <span className="mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-violet-400/25 bg-violet-500/10">
+                <Check className="h-2.5 w-2.5 text-violet-300" />
+              </span>
+              <span className="leading-5">{feature}</span>
+            </li>
+          ))}
+        </ul>
       </div>
     </div>
   );

@@ -797,6 +797,8 @@ class ChatbotController {
             $fileName = time() . '_' . bin2hex(random_bytes(8)) . '.' . $ext;
             if (move_uploaded_file($file['tmp_name'], $uploadDir . '/' . $fileName)) {
                 $data[$dbCol] = 'assets/' . $dbCol . '/' . $fileName;
+                require_once __DIR__ . '/../../../functions/uploads.php';
+                uploadsBackupCopy($data[$dbCol]);
             }
         }
         return $data;

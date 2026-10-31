@@ -92,31 +92,72 @@ function chatBuildContents(array $rows, string $greeting, string $message, array
  */
 function chatHistoryRows(Database $db, int $userId, int $chatbotId, int $conversationId): array
 {
-    $conv = null;
-    if ($conversationId > 0) {
-        $conv = $db->selectSingle(
-            'started_at FROM chatbot_conversations WHERE id = ? AND user_id = ? AND chatbot_id = ?',
-            [$conversationId, $userId, $chatbotId]
-        );
+    if ($conversationId <= 0) {
+        return [];
     }
-    if (!$conv) {
-        $conv = $db->selectSingle(
-            'started_at FROM chatbot_conversations WHERE user_id = ? AND chatbot_id = ? ORDER BY started_at DESC, id DESC LIMIT 1',
-            [$userId, $chatbotId]
-        );
-    }
-
-    $limit = CHAT_HISTORY_MAX_MESSAGES * 2; // karşılama vb. elenecekler için pay
-    $rows = $conv
-        ? $db->selectMulti(
-            "sent_by, message FROM chatbot_chats WHERE chatbot_id = ? AND user_id = ? AND sent_time >= ? ORDER BY id DESC LIMIT $limit",
-            [$chatbotId, $userId, $conv['started_at']]
-        )
-        : $db->selectMulti(
-            "sent_by, message FROM chatbot_chats WHERE chatbot_id = ? AND user_id = ? ORDER BY id DESC LIMIT $limit",
-            [$chatbotId, $userId]
-        );
+    $limit = CHAT_HISTORY_MAX_MESSAGES * 2;
+    $rows = $db->selectMulti(
+        "sent_by, message FROM chatbot_chats WHERE conversation_id = ? AND chatbot_id = ? AND user_id = ? ORDER BY id DESC LIMIT $limit",
+        [$conversationId, $chatbotId, $userId]
+    );
     return array_reverse($rows ?: []);
+}
+
+function chatOwnedConversation(Database $db, int $userId, int $chatbotId, int $conversationId): int
+{
+    if ($conversationId <= 0) {
+        return 0;
+    }
+    $row = $db->selectSingle(
+        'id FROM chatbot_conversations WHERE id = ? AND user_id = ? AND chatbot_id = ?',
+        [$conversationId, $userId, $chatbotId]
+    );
+    return $row ? (int) $row['id'] : 0;
+}
+
+function chatConversationTitle(string $message): string
+{
+    $words = preg_split('/\s+/u', trim($message), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+    $title = implode(' ', array_slice($words, 0, 5));
+    if (count($words) > 5) {
+        $title .= ' ...';
+    }
+    $title = mb_substr($title, 0, 50);
+    return $title !== '' ? $title : 'Yeni Sohbet';
+}
+
+function chatStartConversation(Database $db, int $userId, int $chatbotId, string $message): int
+{
+    return (int) $db->insert('chatbot_conversations', [
+        'user_id'           => $userId,
+        'chatbot_id'        => $chatbotId,
+        'conversation_name' => chatConversationTitle($message),
+    ]);
+}
+
+function chatTouchConversation(Database $db, int $conversationId): void
+{
+    $db->execute('UPDATE chatbot_conversations SET last_message_at = NOW() WHERE id = ?', [$conversationId]);
+}
+
+function chatSaveUserMessage(Database $db, int $userId, int $chatbotId, int $conversationId, string $message): int
+{
+    $last = $db->selectSingle(
+        'id, sent_by, message FROM chatbot_chats WHERE conversation_id = ? AND user_id = ? ORDER BY id DESC LIMIT 1',
+        [$conversationId, $userId]
+    );
+    if ($last && $last['sent_by'] === 'user' && trim((string) $last['message']) === trim($message)) {
+        return (int) $last['id'];
+    }
+    $id = (int) $db->insert('chatbot_chats', [
+        'chatbot_id'      => $chatbotId,
+        'user_id'         => $userId,
+        'conversation_id' => $conversationId,
+        'sent_by'         => 'user',
+        'message'         => $message,
+    ]);
+    chatTouchConversation($db, $conversationId);
+    return $id;
 }
 
 // ── N-60: bilgi bankasından yalnızca soruyla ilgili parçalar ────────────────

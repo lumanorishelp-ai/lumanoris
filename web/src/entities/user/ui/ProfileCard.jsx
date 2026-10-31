@@ -188,7 +188,7 @@ export default function ProfileCard({bot, comments}) {
     // "Örnek Geçmiş" — this bot's own past conversations with the current
     // user, so they can jump straight back into one instead of starting over.
     useAbortableEffect((signal, isActive) => {
-        if (!userId || !profile.id) return;
+        if (!userId || !profile.id || !infoOpen) return;
 
         (async () => {
             try {
@@ -204,7 +204,7 @@ export default function ProfileCard({bot, comments}) {
                 if (!isAbortError(err)) console.error("Geçmiş sohbetler alınamadı:", err);
             }
         })();
-    }, [userId, profile.id]);
+    }, [userId, profile.id, infoOpen]);
 
     useAbortableEffect((signal, isActive) => {
         if (!userId) return;

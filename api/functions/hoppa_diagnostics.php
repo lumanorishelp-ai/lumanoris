@@ -75,7 +75,7 @@ function hoppaUserMessage(string $code, string $status = '', string $providerMes
     $maintenance = 'Ödeme sistemi şu an bakımda. Lütfen biraz sonra tekrar deneyin; sorun sürerse bizimle iletişime geçin.';
 
     // Banka reddi: "51-Limit Yetersiz", "05-Genel Red" … — kullanıcıya anlamlı.
-    if (preg_match('/^\s*\d{1,3}\s*-\s*(\S.{1,80})$/u', $providerMessage, $m)) {
+    if (preg_match('/^\s*\d{1,4}\s*-\s*(\S.{1,80})$/u', $providerMessage, $m)) {
         return 'Kartınız reddedildi: ' . trim($m[1]) . '. Başka bir kartla deneyebilir ya da bankanızla görüşebilirsiniz.';
     }
     if ($status === 'AUTHENTICATION_ERROR') {
@@ -111,8 +111,8 @@ function hoppaFailureReason(string $providerMessage, string $code = ''): string 
     if ($code === '34' || preg_match('/kara\s*liste|blacklist|fraud|güvenlik/iu', $providerMessage)) {
         return 'guvenlik';
     }
-    if (preg_match('/^\s*(\d{1,3})\s*-/u', $providerMessage, $m)) {
-        return $m[1] === '51' ? 'limit' : 'kart';
+    if (preg_match('/^\s*(\d{1,4})\s*-/u', $providerMessage, $m)) {
+        return ltrim($m[1], '0') === '51' ? 'limit' : 'kart';
     }
     if ($code === '106') {
         return 'kart';

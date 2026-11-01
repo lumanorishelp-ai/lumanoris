@@ -106,6 +106,8 @@ check('bilinmeyen → genel ama boş değil', $m !== '' && str_contains($m, 'tek
 echo "\n=== B2) Dönüş nedeni (URL'de taşınan izinli kod) ===\n\n";
 foreach ([
     ['51-Limit Yetersiz', '', 'limit'],
+    ['0051-Yetersiz Limit Hatası. Lütfen Bankanızla İletişime Geçiniz.', '', 'limit'],
+    ['0005-Genel Red', '', 'kart'],
     ['05-Genel Red', '', 'kart'],
     ['54-Kartın süresi dolmuş', '', 'kart'],
     ['3D doğrulama başarısız', '', '3d'],

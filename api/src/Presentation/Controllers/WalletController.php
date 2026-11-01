@@ -667,6 +667,17 @@ class WalletController {
         $lastName  = count($nameParts) > 1 ? (string) array_pop($nameParts) : '-';
         $firstName = $nameParts !== [] ? implode(' ', $nameParts) : '-';
 
+        require_once __DIR__ . '/../../../functions/checkout_payments.php';
+        $gsm = normalizeTurkishGsm((string) ($buyer['telefon'] ?? ''));
+        if ($gsm === null) {
+            return [
+                'success' => false,
+                'message' => 'Ödeme için hesabınızda geçerli bir cep telefonu numarası olmalı. Ayarlar sayfasından telefon numaranızı ekleyip tekrar deneyin.',
+                'http'    => 422,
+                'code'    => AppConfig::ERR_VALIDATION,
+            ];
+        }
+
         $db->insert('param_marketplace_payments', [
             'order_id'            => $orderId,
             'user_id'             => $userId,
@@ -693,7 +704,7 @@ class WalletController {
                 'first_name' => $firstName,
                 'last_name'  => $lastName,
                 'email'      => (string) ($buyer['eposta'] ?? ''),
-                'phone'      => trim((string) ($buyer['telefon'] ?? '')) ?: '-',
+                'phone'      => '0' . substr($gsm, 3),
                 'city'       => '-',
                 'state'      => '-',
                 'address'    => '-',
